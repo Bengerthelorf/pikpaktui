@@ -1,15 +1,15 @@
 [package]
 name = "pikpaktui"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2024"
 
 [dependencies]
 anyhow = "1"
 crossterm = "0.29"
-ratatui = "0.29"
+ratatui = "0.30.0"
 dirs = "6"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
-serde_yaml = "0.9"
-toml = "0.8"
+serde_yaml = "0.9.34-deprecated"
+toml = "0.9.8"
