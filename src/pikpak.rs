@@ -28,6 +28,7 @@ pub struct Entry {
     pub name: String,
     pub kind: EntryKind,
     pub size: u64,
+    pub created_time: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -262,6 +263,7 @@ impl PikPak {
                     EntryKind::File
                 },
                 size: f.size.unwrap_or(0),
+                created_time: f.created_time.unwrap_or_default(),
             })
             .collect();
         Ok(entries)
@@ -363,6 +365,7 @@ impl PikPak {
             name: f.name,
             kind: EntryKind::Folder,
             size: 0,
+            created_time: f.created_time.unwrap_or_default(),
         })
     }
 
@@ -986,6 +989,8 @@ struct DriveFile {
     kind: String,
     #[serde(default, deserialize_with = "de_opt_u64")]
     size: Option<u64>,
+    #[serde(default)]
+    created_time: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

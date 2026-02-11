@@ -80,3 +80,27 @@ pub fn color(category: FileCategory) -> Color {
         FileCategory::Default => Color::White,
     }
 }
+
+/// Icon for CLI output. Returns "" when nerd_font is off (colors are enough).
+pub fn cli_icon(category: FileCategory, nerd_font: bool) -> &'static str {
+    if nerd_font {
+        icon(category, true)
+    } else {
+        ""
+    }
+}
+
+/// ANSI colored text for CLI output, using eza-style colors.
+pub fn cli_colored(text: &str, category: FileCategory) -> String {
+    let code = match category {
+        FileCategory::Folder => "1;34",  // bold blue
+        FileCategory::Archive => "1;31", // bold red
+        FileCategory::Image => "35",     // magenta
+        FileCategory::Video => "1;35",   // bold magenta
+        FileCategory::Audio => "36",     // cyan
+        FileCategory::Document => "1;33",// bold yellow
+        FileCategory::Code => "1;32",    // bold green
+        FileCategory::Default => "0",    // reset
+    };
+    format!("\x1b[{}m{}\x1b[0m", code, text)
+}

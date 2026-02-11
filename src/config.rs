@@ -65,13 +65,12 @@ fn home_config_dir() -> Option<PathBuf> {
 pub struct TuiConfig {
     #[serde(default)]
     pub nerd_font: bool,
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub show_hidden: bool,
     #[serde(default = "default_move_mode")]
     pub move_mode: String, // "picker" or "input"
     #[serde(default = "default_true")]
     pub show_help_bar: bool,
+    #[serde(default)]
+    pub cli_nerd_font: bool,
 }
 
 fn default_true() -> bool {
@@ -86,9 +85,9 @@ impl Default for TuiConfig {
     fn default() -> Self {
         Self {
             nerd_font: false,
-            show_hidden: false,
             move_mode: "picker".to_string(),
             show_help_bar: true,
+            cli_nerd_font: false,
         }
     }
 }

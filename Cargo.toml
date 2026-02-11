@@ -1,6 +1,6 @@
 [package]
 name = "pikpaktui"
-version = "0.0.3"
+version = "0.0.4"
 edition = "2024"
 description = "A TUI and CLI client for PikPak cloud storage"
 license = "Apache-2.0"
@@ -21,6 +21,7 @@ toml = "0.9.8"
 sha1 = "0.10"
 hmac = "0.12"
 base64 = "0.22"
+unicode-width = "0.2"
 
 [profile.release]
 codegen-units = 1

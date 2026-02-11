@@ -57,8 +57,8 @@ If no valid session exists, a login form will appear. After login, credentials a
 ### CLI mode
 
 ```bash
-pikpaktui ls /                                        # List root directory
-pikpaktui ls "/My Pack"                               # List a folder
+pikpaktui ls /                                        # List files in colored multi-column grid
+pikpaktui ls -l "/My Pack"                            # Long format (id + size + date + name)
 pikpaktui mv "/My Pack/file.txt" /Archive             # Move file
 pikpaktui cp "/My Pack/file.txt" /Backup              # Copy file
 pikpaktui rename "/My Pack/old.txt" new.txt           # Rename
@@ -133,8 +133,8 @@ password: "your-password"
 ```
 
 ```toml
-nerd_font = false       # Enable Nerd Font icons
-show_hidden = false     # Show hidden files
+nerd_font = false       # Enable Nerd Font icons (TUI)
+cli_nerd_font = false   # Enable Nerd Font icons (CLI)
 move_mode = "picker"    # "picker" (two-pane) or "input" (text input)
 show_help_bar = true    # Show help bar at the bottom
 ```

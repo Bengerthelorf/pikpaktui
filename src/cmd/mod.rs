@@ -14,6 +14,10 @@ use crate::config::AppConfig;
 use crate::pikpak::{self, PikPak};
 use anyhow::{Result, anyhow};
 
+pub fn cli_config() -> crate::config::TuiConfig {
+    crate::config::TuiConfig::load()
+}
+
 pub fn cli_client() -> Result<PikPak> {
     let mut client = PikPak::new()?;
 

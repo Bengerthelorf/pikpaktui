@@ -6,7 +6,7 @@ pub fn run() -> Result<()> {
     println!("Usage: pikpaktui [command] [args...]");
     println!();
     println!("  (no command)    Launch interactive TUI");
-    println!("  ls <path>       List files in a directory");
+    println!("  ls [-l] [path]  List files (colored grid by default, long with -l)");
     println!("  mv <src> <dst>  Move a file or folder");
     println!("  cp <src> <dst>  Copy a file or folder");
     println!("  rename <path> <new_name>  Rename a file or folder");
