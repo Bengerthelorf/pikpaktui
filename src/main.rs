@@ -4,7 +4,10 @@ mod pikpak;
 mod tui;
 
 use crate::backend::Backend;
-use crate::native::{NativeBackend, auth::SessionToken};
+use crate::native::{
+    NativeBackend,
+    auth::{AuthConfig, NativeAuth, SessionToken},
+};
 use crate::pikpak::CliBackend;
 use anyhow::Result;
 use std::env;
@@ -22,6 +25,11 @@ fn entry() -> Result<()> {
 
     if args.len() > 1 && args[1] == "--smoke-auth" {
         smoke_auth_roundtrip()?;
+        return Ok(());
+    }
+
+    if args.len() > 1 && args[1] == "--smoke-native-login" {
+        smoke_native_login()?;
         return Ok(());
     }
 
@@ -68,5 +76,48 @@ fn smoke_auth_roundtrip() -> Result<()> {
         restored.expires_at_unix
     );
 
+    Ok(())
+}
+
+fn smoke_native_login() -> Result<()> {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
+
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let addr = listener.local_addr()?;
+
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept failed");
+        let mut buf = [0_u8; 4096];
+        let _ = stream.read(&mut buf).expect("read failed");
+
+        let body = r#"{"access_token":"tok-a","refresh_token":"tok-r","expires_in":3600}"#;
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        stream
+            .write_all(response.as_bytes())
+            .expect("write failed");
+    });
+
+    let auth = NativeAuth::from_config(AuthConfig {
+        session_path: std::env::temp_dir().join("pikpaktui-smoke-login-session.json"),
+        auth_base_url: format!("http://{}", addr),
+        client_id: "smoke-client".into(),
+        client_secret: "smoke-secret".into(),
+    })?;
+
+    let token = auth.login_with_password("smoke@example.com", "***")?;
+    auth.clear_session()?;
+    server.join().expect("server thread failed");
+
+    println!(
+        "smoke-native-login-ok access_len={} refresh_len={}",
+        token.access_token.len(),
+        token.refresh_token.len()
+    );
     Ok(())
 }

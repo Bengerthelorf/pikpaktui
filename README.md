@@ -68,6 +68,14 @@ cargo run -- --smoke-auth
 
 成功时会输出 `smoke-auth-ok ...`。
 
+可运行以下命令验证 native 登录流程最小调用（本地 mock auth server）：
+
+```bash
+cargo run -- --smoke-native-login
+```
+
+成功时会输出 `smoke-native-login-ok ...`。
+
 ## 参数兼容策略（passthrough）
 
 当 `pikpaktui` 启动时带任意参数，不进入 TUI，等价于：
