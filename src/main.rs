@@ -25,6 +25,10 @@ fn entry() -> Result<()> {
     }
 
     match args[0].as_str() {
+        "--version" | "-V" | "version" => {
+            println!("pikpaktui {}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
         "--help" | "-h" | "help" => cmd::help::run(),
         "ls" => cmd::ls::run(&args[1..]),
         "mv" => cmd::mv::run(&args[1..]),

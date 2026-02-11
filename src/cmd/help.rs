@@ -1,21 +1,56 @@
 use anyhow::Result;
 
+const BOLD: &str = "\x1b[1m";
+const DIM: &str = "\x1b[2m";
+const CYAN: &str = "\x1b[36m";
+const GREEN: &str = "\x1b[32m";
+const YELLOW: &str = "\x1b[33m";
+const RESET: &str = "\x1b[0m";
+
 pub fn run() -> Result<()> {
-    println!("pikpaktui - A TUI and CLI client for PikPak cloud storage");
+    let version = env!("CARGO_PKG_VERSION");
+
+    println!(
+        "{BOLD}{CYAN}pikpaktui{RESET} {DIM}v{version}{RESET}  {DIM}─{RESET}  A TUI and CLI client for PikPak cloud storage"
+    );
     println!();
-    println!("Usage: pikpaktui [command] [args...]");
+    println!("{BOLD}Usage:{RESET}  {GREEN}pikpaktui{RESET} {DIM}[command] [args...]{RESET}");
     println!();
-    println!("  (no command)    Launch interactive TUI");
-    println!("  ls [-l] [path]  List files (colored grid by default, long with -l)");
-    println!("  mv <src> <dst>  Move a file or folder");
-    println!("  cp <src> <dst>  Copy a file or folder");
-    println!("  rename <path> <new_name>  Rename a file or folder");
-    println!("  rm <path>       Remove a file or folder (to trash)");
-    println!("  mkdir <parent> <name>     Create a new folder");
-    println!("  download <path> [local]   Download a file");
-    println!("  upload <local> [remote]   Upload a local file");
-    println!("  share <path> [-o file]    Share file(s) as PikPak links");
-    println!("  quota           Show storage quota");
-    println!("  help, --help    Show this help message");
+    println!("{BOLD}Commands:{RESET}");
+    println!(
+        "  {YELLOW}{BOLD}(no command){RESET}                    Launch interactive TUI"
+    );
+
+    let commands: &[(&str, &str)] = &[
+        ("ls [-l] [path]",           "List files (colored grid; long with -l)"),
+        ("mv <src> <dst>",           "Move a file or folder"),
+        ("cp <src> <dst>",           "Copy a file or folder"),
+        ("rename <path> <new_name>", "Rename a file or folder"),
+        ("rm <path>",                "Remove a file or folder (to trash)"),
+        ("mkdir <parent> <name>",    "Create a new folder"),
+        ("download <path> [local]",  "Download a file"),
+        ("upload <local> [remote]",  "Upload a local file"),
+        ("share <path> [-o file]",   "Share file(s) as PikPak links"),
+        ("quota",                    "Show storage quota"),
+    ];
+
+    for (cmd, desc) in commands {
+        // Split command into name and args parts
+        let (name, args) = match cmd.find(' ') {
+            Some(i) => (&cmd[..i], &cmd[i..]),
+            None => (*cmd, ""),
+        };
+        println!(
+            "  {GREEN}{name}{RESET}{DIM}{args}{RESET}  {:>width$}{DIM}{desc}{RESET}",
+            "",
+            width = 28usize.saturating_sub(cmd.len()),
+        );
+    }
+
+    println!();
+    println!("{BOLD}Options:{RESET}");
+    println!("  {GREEN}-h{RESET}, {GREEN}--help{RESET}                   Show this help message");
+    println!("  {GREEN}-V{RESET}, {GREEN}--version{RESET}                Show version");
+
     Ok(())
 }
