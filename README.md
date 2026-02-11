@@ -1,92 +1,156 @@
 # pikpaktui
 
-Rust 编写的 PikPak 文件管理工具，支持 TUI 交互界面和 CLI 子命令，纯 Rust 实现，无外部运行时依赖。
+A TUI and CLI client for [PikPak](https://mypikpak.com) cloud storage, written in pure Rust with no external runtime dependencies.
 
-## 功能
+![pikpaktui screenshot](assets/screenshot.png)
 
-- TUI 文件浏览器：进入目录、返回上级、breadcrumb 导航
-- CLI 子命令：ls / mv / cp / rename / rm / mkdir / download / quota
-- 移动 / 复制 / 重命名 / 删除（回收站）/ 新建文件夹
-- 文件下载（支持断点续传）
-- 配额查询
-- TUI 内登录表单，登录后自动保存凭据
-- session 持久化，重启免登录
+## Features
 
-## 安装与运行
+- **TUI file browser** - Navigate folders, breadcrumb path display, Nerd Font icons
+- **CLI subcommands** - `ls` / `mv` / `cp` / `rename` / `rm` / `mkdir` / `download` / `quota`
+- **File operations** - Move, copy, rename, delete (trash), create folder
+- **Folder picker** - Visual two-pane picker for move/copy destinations, with tab-completion text input as alternative
+- **File download** - Download files with resume support
+- **Quota query** - Check storage usage
+- **Login** - TUI login form with auto-saved credentials and persistent sessions
+- **Pure Rust** - Built with `ratatui` + `crossterm` + `reqwest` (rustls), no OpenSSL or C dependencies
+
+## Install
+
+### Homebrew (macOS / Linux)
 
 ```bash
+brew install Bengerthelorf/tap/pikpaktui
+```
+
+### Cargo
+
+```bash
+cargo install pikpaktui
+```
+
+### From source
+
+```bash
+git clone https://github.com/Bengerthelorf/pikpaktui.git
+cd pikpaktui
 cargo build --release
 ./target/release/pikpaktui
 ```
 
-或直接：
+### GitHub Releases
+
+Pre-built binaries for Linux (x86_64, static musl), macOS Intel, and macOS Apple Silicon are available on the [Releases](https://github.com/Bengerthelorf/pikpaktui/releases) page.
+
+## Usage
+
+### TUI mode
+
+Run without arguments to launch the interactive file browser:
 
 ```bash
-cargo run
+pikpaktui
 ```
 
-## CLI 子命令
+If no valid session exists, a login form will appear. After login, credentials are saved to `config.yaml` and the session is persisted to `session.json`.
+
+### CLI mode
 
 ```bash
-pikpaktui ls /                           # 列出根目录
-pikpaktui ls "/My Pack"                  # 列出 My Pack
-pikpaktui mv "/My Pack/file.txt" /Archive  # 移动文件
-pikpaktui cp "/My Pack/file.txt" /Backup   # 复制文件
-pikpaktui rename "/My Pack/old.txt" new.txt  # 重命名
-pikpaktui rm "/My Pack/file.txt"           # 删除（回收站）
-pikpaktui mkdir "/My Pack" newfolder       # 创建文件夹
-pikpaktui download "/My Pack/file.txt"     # 下载到当前目录
-pikpaktui download "/My Pack/file.txt" /tmp/file.txt  # 下载到指定路径
-pikpaktui quota                            # 显示配额
+pikpaktui ls /                                        # List root directory
+pikpaktui ls "/My Pack"                               # List a folder
+pikpaktui mv "/My Pack/file.txt" /Archive             # Move file
+pikpaktui cp "/My Pack/file.txt" /Backup              # Copy file
+pikpaktui rename "/My Pack/old.txt" new.txt           # Rename
+pikpaktui rm "/My Pack/file.txt"                      # Delete (to trash)
+pikpaktui mkdir "/My Pack" newfolder                  # Create folder
+pikpaktui download "/My Pack/file.txt"                # Download to current dir
+pikpaktui download "/My Pack/file.txt" /tmp/file.txt  # Download to path
+pikpaktui quota                                       # Show storage quota
 ```
 
-CLI 模式需要登录：先查 session，再查 config.yaml，都没有则提示用 TUI 登录。
+CLI mode requires login: it checks for a valid session first, then falls back to `config.yaml` credentials. If neither exists, run `pikpaktui` (TUI) to login.
 
-## 登录方式
+## TUI Keybindings
 
-### 1) TUI 登录表单（推荐）
+| Key | Action |
+|-----|--------|
+| `j` / `↓` | Move down |
+| `k` / `↑` | Move up |
+| `Enter` | Open folder |
+| `Backspace` | Go back |
+| `r` | Refresh |
+| `c` | Copy |
+| `m` | Move |
+| `n` | Rename |
+| `d` | Remove (trash) |
+| `f` | New folder |
+| `h` | Help panel |
+| `q` | Quit |
 
-直接启动 `pikpaktui`，如果没有有效 session，会显示登录表单。
+### Folder Picker (Move/Copy)
 
-- `Tab`：在 Email / Password 之间切换
-- `Enter`：提交登录
-- `Esc`：退出
+| Key | Action |
+|-----|--------|
+| `j` / `↓` | Move down |
+| `k` / `↑` | Move up |
+| `Enter` | Open folder |
+| `Backspace` | Go back |
+| `Space` | Confirm destination |
+| `/` | Switch to text input |
+| `h` | Help panel |
+| `Esc` | Cancel |
 
-登录成功后，凭据自动保存到 `config.yaml`，session 写入 `session.json`。
+### Text Input (Move/Copy)
 
-### 2) config.yaml
+| Key | Action |
+|-----|--------|
+| `Tab` | Autocomplete path |
+| `Enter` | Select candidate / confirm |
+| `Ctrl+B` | Switch to picker |
+| `Esc` | Close candidates / cancel |
 
-手动创建配置文件：
+## Configuration
 
-- macOS: `~/Library/Application Support/pikpaktui/config.yaml`
-- Linux: `~/.config/pikpaktui/config.yaml`
+### Credentials (`config.yaml`)
+
+```
+~/.config/pikpaktui/config.yaml
+```
 
 ```yaml
 username: "you@example.com"
 password: "your-password"
 ```
 
-启动时如果没有有效 session，会自动读取 config.yaml 尝试登录。
+### TUI settings (`config.toml`)
 
-## TUI 键位
+```
+~/.config/pikpaktui/config.toml
+```
 
-| 按键 | 操作 |
-|------|------|
-| `j` / `↓` | 下移 |
-| `k` / `↑` | 上移 |
-| `Enter` | 进入目录 |
-| `Backspace` | 返回上级 |
-| `r` | 刷新 |
-| `c` | 复制（输入目标路径） |
-| `m` | 移动（输入目标路径） |
-| `n` | 重命名（输入新名字） |
-| `d` | 删除（回收站，二次确认） |
-| `f` | 新建文件夹 |
-| `q` | 退出 |
+```toml
+nerd_font = false       # Enable Nerd Font icons
+show_hidden = false     # Show hidden files
+move_mode = "picker"    # "picker" (two-pane) or "input" (text input)
+show_help_bar = true    # Show help bar at the bottom
+```
 
-## 代码结构
+## Project Structure
 
-- `src/main.rs` — 入口、CLI 子命令分发
-- `src/config.rs` — config.yaml 读写
-- `src/pikpak.rs` — PikPak API client（认证、文件操作、下载）
-- `src/tui.rs` — TUI 界面与交互（ID-based 导航、登录表单）
+```
+src/
+  main.rs           Entry point, CLI subcommand dispatch
+  config.rs         config.yaml / config.toml loading
+  pikpak.rs         PikPak API client (auth, file ops, download)
+  theme.rs          File icons and colors
+  tui/
+    mod.rs          App state and event loop
+    draw.rs         UI rendering (file list, picker, help sheet)
+    handler.rs      Keyboard input handling
+    completion.rs   Path tab-completion
+```
+
+## License
+
+[Apache-2.0](LICENSE)

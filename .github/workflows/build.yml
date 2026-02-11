@@ -190,7 +190,6 @@ jobs:
 
       - name: Publish to crates.io
         run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        continue-on-error: true
 
   update-tap:
     name: Update Homebrew Formula
@@ -239,10 +238,10 @@ jobs:
 
           cat > pikpaktui.rb <<EOF
           class Pikpaktui < Formula
-            desc "A TUI client for PikPak cloud storage"
+            desc "A TUI and CLI client for PikPak cloud storage"
             homepage "https://github.com/Bengerthelorf/pikpaktui"
             version "${{ steps.release.outputs.FORMULA_VERSION }}"
-            license "MIT"
+            license "Apache-2.0"
 
             if OS.mac?
               if Hardware::CPU.arm?

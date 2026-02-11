@@ -51,9 +51,14 @@ impl AppConfig {
 }
 
 pub fn config_path() -> Result<PathBuf> {
-    let base = dirs::config_dir()
+    let base = home_config_dir()
         .ok_or_else(|| anyhow::anyhow!("unable to locate config dir"))?;
     Ok(base.join("pikpaktui").join("config.yaml"))
+}
+
+/// Returns ~/.config on all platforms instead of platform-specific config dirs.
+fn home_config_dir() -> Option<PathBuf> {
+    dirs::home_dir().map(|h| h.join(".config"))
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -96,7 +101,7 @@ impl TuiConfig {
 
 impl TuiConfig {
     pub fn load() -> Self {
-        let path = match dirs::config_dir() {
+        let path = match home_config_dir() {
             Some(base) => base.join("pikpaktui").join("config.toml"),
             None => return Self::default(),
         };
