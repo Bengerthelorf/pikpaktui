@@ -224,9 +224,13 @@ impl Backend for NativeBackend {
     }
 
     fn rename(&self, current_path: &str, old_name: &str, new_name: &str) -> Result<String> {
+        let target = new_name.trim();
+        if target.is_empty() {
+            return Err(anyhow!("new name is empty"));
+        }
         let file_id = self.file_id_by_name(current_path, old_name)?;
-        self.rename_file(&file_id, new_name)?;
-        Ok(format!("renamed '{}' -> '{}'", old_name, new_name))
+        self.rename_file(&file_id, target)?;
+        Ok(format!("renamed '{}' -> '{}'", old_name, target))
     }
 
     fn remove(&self, current_path: &str, name: &str) -> Result<String> {
