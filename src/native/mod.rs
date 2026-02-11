@@ -82,7 +82,7 @@ impl NativeBackend {
 
     fn move_file(&self, file_id: &str, to_path: &str) -> Result<()> {
         let token = self.access_token()?;
-        let url = format!(
+        let batch_url = format!(
             "{}/drive/v1/files:batchMove",
             self.drive_base_url.trim_end_matches('/')
         );
@@ -95,11 +95,31 @@ impl NativeBackend {
 
         let response = self
             .http
-            .post(url)
-            .bearer_auth(token)
+            .post(batch_url)
+            .bearer_auth(&token)
             .json(&payload)
             .send()
             .context("native move request failed")?;
+
+        if response.status().is_success() {
+            return Ok(());
+        }
+
+        // fallback for APIs that use PATCH /drive/v1/files/{id}
+        let patch_url = format!(
+            "{}/drive/v1/files/{}",
+            self.drive_base_url.trim_end_matches('/'),
+            file_id
+        );
+        let response = self
+            .http
+            .patch(patch_url)
+            .bearer_auth(token)
+            .json(&MoveFallbackRequest {
+                parent_path: to_path.to_string(),
+            })
+            .send()
+            .context("native move fallback request failed")?;
 
         ensure_success(response, "native move")
     }
@@ -247,6 +267,11 @@ struct BatchMoveRequest {
 
 #[derive(Serialize)]
 struct MoveTarget {
+    parent_path: String,
+}
+
+#[derive(Serialize)]
+struct MoveFallbackRequest {
     parent_path: String,
 }
 
