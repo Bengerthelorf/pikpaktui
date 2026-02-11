@@ -65,6 +65,12 @@ pub struct TuiConfig {
     pub show_hidden: bool,
     #[serde(default = "default_move_mode")]
     pub move_mode: String, // "picker" or "input"
+    #[serde(default = "default_true")]
+    pub show_help_bar: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_move_mode() -> String {
@@ -77,6 +83,7 @@ impl Default for TuiConfig {
             nerd_font: false,
             show_hidden: false,
             move_mode: "picker".to_string(),
+            show_help_bar: true,
         }
     }
 }

@@ -9,6 +9,12 @@ use super::{handle_text_input, App, InputMode, LoginField, OpResult, PickerState
 
 impl App {
     pub(super) fn handle_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> Result<bool> {
+        // Help sheet: any key closes it
+        if self.show_help_sheet {
+            self.show_help_sheet = false;
+            return Ok(false);
+        }
+
         let mode = std::mem::replace(&mut self.input, InputMode::Normal);
         match mode {
             InputMode::Login {
@@ -241,6 +247,9 @@ impl App {
                     value: String::new(),
                 };
             }
+            KeyCode::Char('h') => {
+                self.show_help_sheet = true;
+            }
             _ => {}
         }
         Ok(false)
@@ -281,13 +290,28 @@ impl App {
 
         match code {
             KeyCode::Esc => {
-                let op = if is_move { "Move" } else { "Copy" };
-                self.push_log(format!("{} cancelled", op));
+                if !input.candidates.is_empty() {
+                    // Close candidate list
+                    input.candidates.clear();
+                    input.candidate_idx = None;
+                    input.completion_base.clear();
+                    self.restore_path_input(source, input, is_move);
+                } else {
+                    let op = if is_move { "Move" } else { "Copy" };
+                    self.push_log(format!("{} cancelled", op));
+                }
             }
             KeyCode::Enter => {
-                let target = input.value.trim().to_string();
-                if !target.is_empty() {
-                    self.execute_move_copy(source, &target, is_move);
+                if !input.candidates.is_empty() {
+                    // Select current candidate: close candidate list, keep value
+                    input.candidates.clear();
+                    input.candidate_idx = None;
+                    self.restore_path_input(source, input, is_move);
+                } else {
+                    let target = input.value.trim().to_string();
+                    if !target.is_empty() {
+                        self.execute_move_copy(source, &target, is_move);
+                    }
                 }
             }
             KeyCode::Tab => {
@@ -441,6 +465,10 @@ impl App {
                 let dest_id = picker.folder_id.clone();
                 let dest_path = Self::picker_path_display(picker);
                 self.spawn_move_copy(source, dest_id, dest_path, is_move);
+            }
+            KeyCode::Char('h') => {
+                self.show_help_sheet = true;
+                self.restore_picker(source, picker, is_move);
             }
             _ => {
                 self.restore_picker(source, picker, is_move);

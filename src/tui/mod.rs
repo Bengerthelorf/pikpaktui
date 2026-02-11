@@ -117,6 +117,7 @@ struct App {
     loading: bool,
     spinner_idx: usize,
     last_spinner: Instant,
+    show_help_sheet: bool,
     result_rx: Receiver<OpResult>,
     result_tx: Sender<OpResult>,
 }
@@ -138,6 +139,7 @@ impl App {
             loading: false,
             spinner_idx: 0,
             last_spinner: Instant::now(),
+            show_help_sheet: false,
             result_rx: rx,
             result_tx: tx,
         };
@@ -178,6 +180,7 @@ impl App {
             loading: false,
             spinner_idx: 0,
             last_spinner: Instant::now(),
+            show_help_sheet: false,
             result_rx: rx,
             result_tx: tx,
         }
