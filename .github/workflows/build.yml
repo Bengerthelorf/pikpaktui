@@ -1,0 +1,274 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [ main, master ]
+    tags:
+      - 'v*.*.*'
+
+  pull_request:
+    branches: [ main, master ]
+
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Test Suite
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check compilation
+        run: cargo check --verbose
+
+      - name: Run unit tests
+        run: cargo test --verbose
+
+      - name: Run clippy (advisory only)
+        run: cargo clippy -- -W clippy::all
+        continue-on-error: true
+
+      - name: Check formatting (advisory only)
+        run: cargo fmt --check
+        continue-on-error: true
+
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            name: pikpaktui-x86_64-linux
+            strip: true
+
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            name: pikpaktui-x86_64-macos
+            strip: true
+
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            name: pikpaktui-aarch64-macos
+            strip: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install musl tools (Linux)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Configure build environment
+        shell: bash
+        run: |
+          echo "TARGET_FLAGS=--target ${{ matrix.target }}" >> $GITHUB_ENV
+          echo "TARGET_DIR=./target/${{ matrix.target }}" >> $GITHUB_ENV
+
+      - name: Build binary
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Strip binary
+        if: matrix.strip
+        run: strip target/${{ matrix.target }}/release/pikpaktui
+
+      - name: Prepare binary
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/pikpaktui dist/
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: dist/*
+
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Prepare release assets
+        run: |
+          cd dist
+          for dir in */; do
+            cd "$dir"
+            tar czf "../${dir%/}.tar.gz" pikpaktui
+            cd ..
+          done
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          CURRENT_TAG=${GITHUB_REF#refs/tags/}
+          PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+
+          echo "## Changelog" > CHANGELOG.md
+          echo "" >> CHANGELOG.md
+
+          if [ -n "$PREVIOUS_TAG" ]; then
+            echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREVIOUS_TAG}...${CURRENT_TAG}" >> CHANGELOG.md
+            echo "" >> CHANGELOG.md
+            echo "### Changes since ${PREVIOUS_TAG}:" >> CHANGELOG.md
+            git log --pretty=format:"- %s (%h)" ${PREVIOUS_TAG}..HEAD >> CHANGELOG.md
+          else
+            echo "### Initial Release" >> CHANGELOG.md
+            git log --pretty=format:"- %s (%h)" >> CHANGELOG.md
+          fi
+
+          echo "" >> CHANGELOG.md
+          echo "## Download" >> CHANGELOG.md
+          echo "Choose the appropriate binary for your platform:" >> CHANGELOG.md
+          echo "- **Linux x86_64**: pikpaktui-x86_64-linux.tar.gz (statically linked)" >> CHANGELOG.md
+          echo "- **macOS Intel**: pikpaktui-x86_64-macos.tar.gz" >> CHANGELOG.md
+          echo "- **macOS Apple Silicon**: pikpaktui-aarch64-macos.tar.gz" >> CHANGELOG.md
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: dist/*.tar.gz
+          body_path: CHANGELOG.md
+          draft: false
+          prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-crate:
+    name: Publish to crates.io
+    runs-on: ubuntu-latest
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Publish to crates.io
+        run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        continue-on-error: true
+
+  update-tap:
+    name: Update Homebrew Formula
+    runs-on: ubuntu-latest
+    needs: release
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get Release Info
+        id: release
+        run: |
+          echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          TAG=${GITHUB_REF#refs/tags/}
+          echo "FORMULA_VERSION=${TAG#v}" >> $GITHUB_OUTPUT
+
+      - name: Download Release Artifacts
+        run: |
+          VERSION=${{ steps.release.outputs.VERSION }}
+          URL_ARM_MAC="https://github.com/Bengerthelorf/pikpaktui/releases/download/${VERSION}/pikpaktui-aarch64-macos.tar.gz"
+          URL_INTEL_MAC="https://github.com/Bengerthelorf/pikpaktui/releases/download/${VERSION}/pikpaktui-x86_64-macos.tar.gz"
+          URL_LINUX="https://github.com/Bengerthelorf/pikpaktui/releases/download/${VERSION}/pikpaktui-x86_64-linux.tar.gz"
+
+          wget -q -O pikpaktui-aarch64-macos.tar.gz "$URL_ARM_MAC"
+          wget -q -O pikpaktui-x86_64-macos.tar.gz "$URL_INTEL_MAC"
+          wget -q -O pikpaktui-x86_64-linux.tar.gz "$URL_LINUX"
+
+      - name: Calculate SHA256
+        id: shasum
+        run: |
+          echo "SHA_ARM_MAC=$(sha256sum pikpaktui-aarch64-macos.tar.gz | cut -d ' ' -f 1)" >> $GITHUB_OUTPUT
+          echo "SHA_INTEL_MAC=$(sha256sum pikpaktui-x86_64-macos.tar.gz | cut -d ' ' -f 1)" >> $GITHUB_OUTPUT
+          echo "SHA_LINUX=$(sha256sum pikpaktui-x86_64-linux.tar.gz | cut -d ' ' -f 1)" >> $GITHUB_OUTPUT
+
+      - name: Checkout Tap Repository
+        uses: actions/checkout@v4
+        with:
+          repository: Bengerthelorf/homebrew-tap
+          token: ${{ secrets.TAP_GITHUB_TOKEN }}
+          path: homebrew-tap
+
+      - name: Update Formula
+        run: |
+          cd homebrew-tap/Formula
+
+          cat > pikpaktui.rb <<EOF
+          class Pikpaktui < Formula
+            desc "A TUI client for PikPak cloud storage"
+            homepage "https://github.com/Bengerthelorf/pikpaktui"
+            version "${{ steps.release.outputs.FORMULA_VERSION }}"
+            license "MIT"
+
+            if OS.mac?
+              if Hardware::CPU.arm?
+                url "https://github.com/Bengerthelorf/pikpaktui/releases/download/${{ steps.release.outputs.VERSION }}/pikpaktui-aarch64-macos.tar.gz"
+                sha256 "${{ steps.shasum.outputs.SHA_ARM_MAC }}"
+              else
+                url "https://github.com/Bengerthelorf/pikpaktui/releases/download/${{ steps.release.outputs.VERSION }}/pikpaktui-x86_64-macos.tar.gz"
+                sha256 "${{ steps.shasum.outputs.SHA_INTEL_MAC }}"
+              end
+            elsif OS.linux?
+              url "https://github.com/Bengerthelorf/pikpaktui/releases/download/${{ steps.release.outputs.VERSION }}/pikpaktui-x86_64-linux.tar.gz"
+              sha256 "${{ steps.shasum.outputs.SHA_LINUX }}"
+            end
+
+            def install
+              bin.install "pikpaktui"
+            end
+
+            test do
+              system "#{bin}/pikpaktui", "--version"
+            end
+          end
+          EOF
+
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add pikpaktui.rb
+          git commit -m "Update pikpaktui to ${{ steps.release.outputs.VERSION }}" || echo "No changes to commit"
+          git push origin main
