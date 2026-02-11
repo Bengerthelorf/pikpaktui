@@ -183,10 +183,27 @@ impl NativeBackend {
         let response = self
             .http
             .post(url)
-            .bearer_auth(token)
+            .bearer_auth(&token)
             .json(&payload)
             .send()
             .context("native remove request failed")?;
+
+        if response.status().is_success() {
+            return Ok(());
+        }
+
+        // fallback for APIs with direct DELETE /drive/v1/files/{id}
+        let delete_url = format!(
+            "{}/drive/v1/files/{}",
+            self.drive_base_url.trim_end_matches('/'),
+            file_id
+        );
+        let response = self
+            .http
+            .delete(delete_url)
+            .bearer_auth(token)
+            .send()
+            .context("native remove fallback request failed")?;
 
         ensure_success(response, "native remove")
     }
