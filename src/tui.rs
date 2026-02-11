@@ -1,8 +1,10 @@
-use crate::pikpak::{Entry, Pikpak};
+use crate::backend::{Backend, Entry};
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::execute;
-use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode};
+use crossterm::terminal::{
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+};
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Text};
@@ -14,12 +16,12 @@ use std::time::Duration;
 
 const DEFAULT_PATH: &str = "/My Pack";
 
-pub fn run() -> Result<()> {
+pub fn run(backend: Box<dyn Backend>) -> Result<()> {
     enable_raw_mode()?;
     execute!(io::stdout(), EnterAlternateScreen)?;
     let mut terminal = ratatui::init();
 
-    let res = App::new().run(&mut terminal);
+    let res = App::new(backend).run(&mut terminal);
 
     ratatui::restore();
     execute!(io::stdout(), LeaveAlternateScreen)?;
@@ -29,6 +31,7 @@ pub fn run() -> Result<()> {
 }
 
 struct App {
+    backend: Box<dyn Backend>,
     current_path: String,
     entries: Vec<Entry>,
     selected: usize,
@@ -45,8 +48,9 @@ enum InputMode {
 }
 
 impl App {
-    fn new() -> Self {
+    fn new(backend: Box<dyn Backend>) -> Self {
         let mut app = Self {
+            backend,
             current_path: DEFAULT_PATH.to_string(),
             entries: Vec::new(),
             selected: 0,
@@ -163,12 +167,19 @@ impl App {
             }
             InputMode::ConfirmDelete => {
                 f.render_widget(Clear, area);
-                let name = self.current_entry().map(|e| e.name.as_str()).unwrap_or("<none>");
+                let name = self
+                    .current_entry()
+                    .map(|e| e.name.as_str())
+                    .unwrap_or("<none>");
                 let p = Paragraph::new(format!(
                     "Delete `{}` to trash?\n\nPress y to confirm, n/Esc to cancel",
                     name
                 ))
-                .block(Block::default().borders(Borders::ALL).title("Confirm Remove"));
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("Confirm Remove"),
+                );
                 f.render_widget(p, area);
             }
         }
@@ -184,8 +195,11 @@ impl App {
                         if let Some(entry) = self.current_entry().cloned() {
                             let target = value.trim().to_string();
                             if !target.is_empty() {
-                                match Pikpak::mv(&self.current_path, &entry.name, &target) {
-                                    Ok(_) => self.push_log(format!("Moved '{}' -> '{}'", entry.name, target)),
+                                match self.backend.mv(&self.current_path, &entry.name, &target) {
+                                    Ok(_) => self.push_log(format!(
+                                        "Moved '{}' -> '{}'",
+                                        entry.name, target
+                                    )),
                                     Err(e) => self.push_log(format!("Move failed: {e:#}")),
                                 }
                                 self.refresh();
@@ -203,8 +217,11 @@ impl App {
                         if let Some(entry) = self.current_entry().cloned() {
                             let target = value.trim().to_string();
                             if !target.is_empty() {
-                                match Pikpak::cp(&self.current_path, &entry.name, &target) {
-                                    Ok(_) => self.push_log(format!("Copied '{}' -> '{}'", entry.name, target)),
+                                match self.backend.cp(&self.current_path, &entry.name, &target) {
+                                    Ok(_) => self.push_log(format!(
+                                        "Copied '{}' -> '{}'",
+                                        entry.name, target
+                                    )),
                                     Err(e) => self.push_log(format!("Copy failed: {e:#}")),
                                 }
                                 self.refresh();
@@ -222,8 +239,15 @@ impl App {
                         if let Some(entry) = self.current_entry().cloned() {
                             let new_name = value.trim().to_string();
                             if !new_name.is_empty() {
-                                match Pikpak::rename(&self.current_path, &entry.name, &new_name) {
-                                    Ok(_) => self.push_log(format!("Renamed '{}' -> '{}'", entry.name, new_name)),
+                                match self.backend.rename(
+                                    &self.current_path,
+                                    &entry.name,
+                                    &new_name,
+                                ) {
+                                    Ok(_) => self.push_log(format!(
+                                        "Renamed '{}' -> '{}'",
+                                        entry.name, new_name
+                                    )),
                                     Err(e) => self.push_log(format!("Rename failed: {e:#}")),
                                 }
                                 self.refresh();
@@ -239,8 +263,10 @@ impl App {
                 match code {
                     KeyCode::Char('y') => {
                         if let Some(entry) = self.current_entry().cloned() {
-                            match Pikpak::remove(&self.current_path, &entry.name) {
-                                Ok(_) => self.push_log(format!("Removed '{}' (to trash)", entry.name)),
+                            match self.backend.remove(&self.current_path, &entry.name) {
+                                Ok(_) => {
+                                    self.push_log(format!("Removed '{}' (to trash)", entry.name))
+                                }
                                 Err(e) => self.push_log(format!("Remove failed: {e:#}")),
                             }
                             self.refresh();
@@ -329,7 +355,7 @@ impl App {
     }
 
     fn refresh(&mut self) {
-        match Pikpak::ls(&self.current_path) {
+        match self.backend.ls(&self.current_path) {
             Ok(entries) => {
                 self.entries = entries;
                 if self.selected >= self.entries.len() {
@@ -384,7 +410,11 @@ fn join_path(base: &str, name: &str) -> String {
     }
 }
 
-fn centered_rect(percent_x: u16, percent_y: u16, area: ratatui::layout::Rect) -> ratatui::layout::Rect {
+fn centered_rect(
+    percent_x: u16,
+    percent_y: u16,
+    area: ratatui::layout::Rect,
+) -> ratatui::layout::Rect {
     let popup_layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
