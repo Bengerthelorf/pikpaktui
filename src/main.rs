@@ -1,8 +1,10 @@
 mod backend;
+mod config;
 mod native;
 mod tui;
 
 use crate::backend::Backend;
+use crate::config::AppConfig;
 use crate::native::{
     NativeBackend, NativeBackendConfig,
     auth::{AuthConfig, NativeAuth, SessionToken},
@@ -46,13 +48,34 @@ fn entry() -> Result<()> {
         return Ok(());
     }
 
-    let backend = select_backend()?;
-    tui::run(backend)?;
+    // 1. Try loading existing session
+    let auth = NativeAuth::new()?;
+    if let Ok(Some(session)) = auth.load_session() {
+        if !session.is_expired(now_unix()) {
+            // Valid session exists, go straight to TUI with backend
+            let backend = NativeBackend::new()?;
+            return tui::run_with_backend(Box::new(backend));
+        }
+    }
+
+    // 2. No valid session — check config.yaml for credentials
+    let cfg = AppConfig::load()?;
+    let credentials = match (cfg.username, cfg.password) {
+        (Some(u), Some(p)) if !u.is_empty() && !p.is_empty() => Some((u, p)),
+        _ => None,
+    };
+
+    // 3. Launch TUI (with or without credentials)
+    tui::run(credentials)?;
     Ok(())
 }
 
-fn select_backend() -> Result<Box<dyn Backend>> {
-    Ok(Box::new(NativeBackend::new()?))
+fn now_unix() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 fn native_login_from_env() -> Result<()> {

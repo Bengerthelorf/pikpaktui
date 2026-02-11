@@ -32,7 +32,7 @@ impl NativeBackend {
             auth: cfg.auth,
             drive_base_url: cfg.drive_base_url,
             http: reqwest::blocking::Client::builder()
-                .user_agent("pikpaktui-native/0.1")
+                .user_agent("ANDROID-com.pikcloud.pikpak/1.21.0")
                 .build()
                 .context("failed to build drive http client")?,
         })
