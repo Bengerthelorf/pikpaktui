@@ -7,7 +7,7 @@ A TUI and CLI client for [PikPak](https://mypikpak.com) cloud storage, written i
 ## Features
 
 - **TUI file browser** - Navigate folders, breadcrumb path display, Nerd Font icons
-- **CLI subcommands** - `ls` / `mv` / `cp` / `rename` / `rm` / `mkdir` / `download` / `quota`
+- **CLI subcommands** - `ls` / `mv` / `cp` / `rename` / `rm` / `mkdir` / `download` / `upload` / `share` / `quota`
 - **File operations** - Move, copy, rename, delete (trash), create folder
 - **Folder picker** - Visual two-pane picker for move/copy destinations, with tab-completion text input as alternative
 - **File download** - Download files with resume support
@@ -66,6 +66,9 @@ pikpaktui rm "/My Pack/file.txt"                      # Delete (to trash)
 pikpaktui mkdir "/My Pack" newfolder                  # Create folder
 pikpaktui download "/My Pack/file.txt"                # Download to current dir
 pikpaktui download "/My Pack/file.txt" /tmp/file.txt  # Download to path
+pikpaktui upload ./local-file.txt "/My Pack"          # Upload a file
+pikpaktui share "/My Pack/file.txt"                   # Print PikPak share links
+pikpaktui share "/My Pack" -o links.txt               # Save share links to file
 pikpaktui quota                                       # Show storage quota
 ```
 
@@ -140,10 +143,23 @@ show_help_bar = true    # Show help bar at the bottom
 
 ```
 src/
-  main.rs           Entry point, CLI subcommand dispatch
+  main.rs           Entry point, TUI launcher
   config.rs         config.yaml / config.toml loading
-  pikpak.rs         PikPak API client (auth, file ops, download)
+  pikpak.rs         PikPak API client (auth, file ops, download, upload)
   theme.rs          File icons and colors
+  cmd/
+    mod.rs          Shared CLI helpers (client init, path utils)
+    ls.rs           ls command
+    mv.rs           mv command
+    cp.rs           cp command
+    rename.rs       rename command
+    rm.rs           rm command
+    mkdir.rs        mkdir command
+    download.rs     download command
+    upload.rs       upload command
+    share.rs        share command
+    quota.rs        quota command
+    help.rs         help command
   tui/
     mod.rs          App state and event loop
     draw.rs         UI rendering (file list, picker, help sheet)

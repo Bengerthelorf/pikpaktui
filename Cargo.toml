@@ -1,6 +1,6 @@
 [package]
 name = "pikpaktui"
-version = "0.0.2"
+version = "0.0.3"
 edition = "2024"
 description = "A TUI and CLI client for PikPak cloud storage"
 license = "Apache-2.0"
@@ -18,6 +18,9 @@ serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 serde_yaml = "0.9.34-deprecated"
 toml = "0.9.8"
+sha1 = "0.10"
+hmac = "0.12"
+base64 = "0.22"
 
 [profile.release]
 codegen-units = 1
