@@ -1,8 +1,9 @@
 mod config;
 mod pikpak;
+mod theme;
 mod tui;
 
-use crate::config::AppConfig;
+use crate::config::{AppConfig, TuiConfig};
 use crate::pikpak::PikPak;
 use anyhow::{Result, anyhow};
 use std::env;
@@ -37,9 +38,10 @@ fn entry() -> Result<()> {
 
 fn run_tui() -> Result<()> {
     let client = PikPak::new()?;
+    let tui_config = TuiConfig::load();
 
     if client.has_valid_session() {
-        return tui::run(client);
+        return tui::run(client, tui_config);
     }
 
     // Check config.yaml for credentials
@@ -49,7 +51,7 @@ fn run_tui() -> Result<()> {
         _ => None,
     };
 
-    tui::run_with_credentials(client, credentials)
+    tui::run_with_credentials(client, credentials, tui_config)
 }
 
 fn cli_client() -> Result<PikPak> {

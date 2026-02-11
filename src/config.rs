@@ -55,3 +55,51 @@ pub fn config_path() -> Result<PathBuf> {
         .ok_or_else(|| anyhow::anyhow!("unable to locate config dir"))?;
     Ok(base.join("pikpaktui").join("config.yaml"))
 }
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct TuiConfig {
+    #[serde(default)]
+    pub nerd_font: bool,
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub show_hidden: bool,
+    #[serde(default = "default_move_mode")]
+    pub move_mode: String, // "picker" or "input"
+}
+
+fn default_move_mode() -> String {
+    "picker".to_string()
+}
+
+impl Default for TuiConfig {
+    fn default() -> Self {
+        Self {
+            nerd_font: false,
+            show_hidden: false,
+            move_mode: "picker".to_string(),
+        }
+    }
+}
+
+impl TuiConfig {
+    pub fn use_picker(&self) -> bool {
+        self.move_mode != "input"
+    }
+}
+
+impl TuiConfig {
+    pub fn load() -> Self {
+        let path = match dirs::config_dir() {
+            Some(base) => base.join("pikpaktui").join("config.toml"),
+            None => return Self::default(),
+        };
+        if !path.exists() {
+            return Self::default();
+        }
+        let raw = match fs::read_to_string(&path) {
+            Ok(r) => r,
+            Err(_) => return Self::default(),
+        };
+        toml::from_str(&raw).unwrap_or_default()
+    }
+}
