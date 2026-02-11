@@ -1,7 +1,7 @@
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::Frame;
 
 use crate::pikpak::EntryKind;
@@ -80,15 +80,16 @@ impl App {
                 lines.push(Line::from(""));
             }
             lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(
-                "  Tab: switch field | Enter: login | Esc: quit",
-                Style::default().fg(Color::DarkGray),
-            )));
+            let login_hints = vec![("Tab", "switch"), ("Enter", "login"), ("Esc", "quit")];
+            let mut hint_spans = vec![Span::raw("  ")];
+            hint_spans.extend(Self::styled_help_spans(&login_hints));
+            lines.push(Line::from(hint_spans));
 
             let p = Paragraph::new(Text::from(lines))
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
+                        .border_type(BorderType::Rounded)
                         .title(" PikPak Login ")
                         .border_style(Style::default().fg(Color::Cyan)),
                 )
@@ -154,16 +155,17 @@ impl App {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
                     .title(left_title)
                     .title_style(Style::default().fg(Color::Green))
                     .border_style(Style::default().fg(Color::Cyan)),
             )
             .highlight_style(
                 Style::default()
-                    .fg(Color::Yellow)
+                    .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD),
             )
-            .highlight_symbol("> ");
+            .highlight_symbol("› ");
         f.render_stateful_widget(list, chunks[0], &mut state);
 
         // Logs (without help text)
@@ -179,6 +181,7 @@ impl App {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
                     .title(" Logs ")
                     .title_style(Style::default().fg(Color::Green))
                     .border_style(Style::default().fg(Color::Cyan)),
@@ -188,11 +191,10 @@ impl App {
 
         // Help bar
         if self.config.show_help_bar {
-            let help = self.help_text();
-            let bar = Paragraph::new(Span::styled(
-                format!(" {}", help),
-                Style::default().fg(Color::DarkGray),
-            ));
+            let pairs = self.help_pairs();
+            let mut spans = vec![Span::raw(" ")];
+            spans.extend(Self::styled_help_spans(&pairs));
+            let bar = Paragraph::new(Line::from(spans));
             f.render_widget(bar, outer[1]);
         }
 
@@ -203,22 +205,64 @@ impl App {
         }
     }
 
-    fn help_text(&self) -> &str {
+    fn help_pairs(&self) -> Vec<(&str, &str)> {
         match &self.input {
-            InputMode::Normal => {
-                "j/k:move Enter:open Bksp:back r:refresh c:copy m:move n:rename d:rm f:mkdir h:help q:quit"
-            }
-            InputMode::MovePicker { .. } | InputMode::CopyPicker { .. } => {
-                "j/k:nav Enter:open Bksp:back Space:confirm /:input h:help Esc:cancel"
-            }
-            InputMode::MoveInput { .. } | InputMode::CopyInput { .. } => {
-                "Tab:complete Enter:confirm Ctrl+B:picker Esc:cancel"
-            }
-            InputMode::Rename { .. } => "Enter:confirm Esc:cancel",
-            InputMode::Mkdir { .. } => "Enter:confirm Esc:cancel",
-            InputMode::ConfirmDelete => "y:confirm n/Esc:cancel",
-            _ => "",
+            InputMode::Normal => vec![
+                ("j/k", "move"),
+                ("Enter", "open"),
+                ("Bksp", "back"),
+                ("r", "refresh"),
+                ("c", "copy"),
+                ("m", "move"),
+                ("n", "rename"),
+                ("d", "rm"),
+                ("f", "mkdir"),
+                ("h", "help"),
+                ("q", "quit"),
+            ],
+            InputMode::MovePicker { .. } | InputMode::CopyPicker { .. } => vec![
+                ("j/k", "nav"),
+                ("Enter", "open"),
+                ("Bksp", "back"),
+                ("Space", "confirm"),
+                ("/", "input"),
+                ("h", "help"),
+                ("Esc", "cancel"),
+            ],
+            InputMode::MoveInput { .. } | InputMode::CopyInput { .. } => vec![
+                ("Tab", "complete"),
+                ("Enter", "confirm"),
+                ("Ctrl+B", "picker"),
+                ("Esc", "cancel"),
+            ],
+            InputMode::Rename { .. } | InputMode::Mkdir { .. } => vec![
+                ("Enter", "confirm"),
+                ("Esc", "cancel"),
+            ],
+            InputMode::ConfirmDelete => vec![
+                ("y", "confirm"),
+                ("n/Esc", "cancel"),
+            ],
+            _ => vec![],
         }
+    }
+
+    fn styled_help_spans(pairs: &[(&str, &str)]) -> Vec<Span<'static>> {
+        let key_style = Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD);
+        let desc_style = Style::default().fg(Color::DarkGray);
+        let sep_style = Style::default().fg(Color::DarkGray);
+
+        let mut spans = Vec::new();
+        for (i, (key, desc)) in pairs.iter().enumerate() {
+            if i > 0 {
+                spans.push(Span::styled(" • ", sep_style));
+            }
+            spans.push(Span::styled(key.to_string(), key_style));
+            spans.push(Span::styled(format!(" {}", desc), desc_style));
+        }
+        spans
     }
 
     fn draw_overlay(&self, f: &mut Frame) {
@@ -239,6 +283,9 @@ impl App {
             InputMode::Rename { value } => {
                 let area = centered_rect(60, 20, f.area());
                 f.render_widget(Clear, area);
+                let rename_hints = vec![("Enter", "confirm"), ("Esc", "cancel")];
+                let mut hint_spans = vec![Span::raw("  ")];
+                hint_spans.extend(Self::styled_help_spans(&rename_hints));
                 let p = Paragraph::new(Text::from(vec![
                     Line::from(""),
                     Line::from(vec![
@@ -249,14 +296,12 @@ impl App {
                         ),
                     ]),
                     Line::from(""),
-                    Line::from(Span::styled(
-                        "  Enter: confirm | Esc: cancel",
-                        Style::default().fg(Color::DarkGray),
-                    )),
+                    Line::from(hint_spans),
                 ]))
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
+                        .border_type(BorderType::Rounded)
                         .title(" Rename ")
                         .title_style(Style::default().fg(Color::Yellow))
                         .border_style(Style::default().fg(Color::Cyan)),
@@ -266,6 +311,9 @@ impl App {
             InputMode::Mkdir { value } => {
                 let area = centered_rect(60, 20, f.area());
                 f.render_widget(Clear, area);
+                let mkdir_hints = vec![("Enter", "confirm"), ("Esc", "cancel")];
+                let mut hint_spans = vec![Span::raw("  ")];
+                hint_spans.extend(Self::styled_help_spans(&mkdir_hints));
                 let p = Paragraph::new(Text::from(vec![
                     Line::from(""),
                     Line::from(vec![
@@ -276,14 +324,12 @@ impl App {
                         ),
                     ]),
                     Line::from(""),
-                    Line::from(Span::styled(
-                        "  Enter: confirm | Esc: cancel",
-                        Style::default().fg(Color::DarkGray),
-                    )),
+                    Line::from(hint_spans),
                 ]))
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
+                        .border_type(BorderType::Rounded)
                         .title(" New Folder ")
                         .title_style(Style::default().fg(Color::Yellow))
                         .border_style(Style::default().fg(Color::Cyan)),
@@ -297,6 +343,9 @@ impl App {
                     .current_entry()
                     .map(|e| e.name.as_str())
                     .unwrap_or("<none>");
+                let del_hints = vec![("y", "confirm"), ("n/Esc", "cancel")];
+                let mut hint_spans = vec![Span::raw("  ")];
+                hint_spans.extend(Self::styled_help_spans(&del_hints));
                 let p = Paragraph::new(Text::from(vec![
                     Line::from(""),
                     Line::from(vec![
@@ -310,14 +359,12 @@ impl App {
                         Span::styled(" to trash?", Style::default().fg(Color::Red)),
                     ]),
                     Line::from(""),
-                    Line::from(Span::styled(
-                        "  y: confirm | n/Esc: cancel",
-                        Style::default().fg(Color::DarkGray),
-                    )),
+                    Line::from(hint_spans),
                 ]))
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
+                        .border_type(BorderType::Rounded)
                         .title(" Confirm Remove ")
                         .title_style(Style::default().fg(Color::Red))
                         .border_style(Style::default().fg(Color::Red)),
@@ -383,14 +430,20 @@ impl App {
         }
 
         lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            "  Tab: complete | Enter: confirm | Ctrl+B: picker | Esc: cancel",
-            Style::default().fg(Color::DarkGray),
-        )));
+        let input_hints = vec![
+            ("Tab", "complete"),
+            ("Enter", "confirm"),
+            ("Ctrl+B", "picker"),
+            ("Esc", "cancel"),
+        ];
+        let mut hint_spans = vec![Span::raw("  ")];
+        hint_spans.extend(Self::styled_help_spans(&input_hints));
+        lines.push(Line::from(hint_spans));
 
         let p = Paragraph::new(Text::from(lines)).block(
             Block::default()
                 .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
                 .title(format!(" {} ", title))
                 .title_style(Style::default().fg(Color::Yellow))
                 .border_style(Style::default().fg(Color::Cyan)),
@@ -442,6 +495,7 @@ impl App {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
                     .title(format!(" Source: {} ", self.current_path_display()))
                     .title_style(Style::default().fg(Color::DarkGray))
                     .border_style(Style::default().fg(Color::DarkGray)),
@@ -495,25 +549,31 @@ impl App {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
                     .title(title)
                     .title_style(Style::default().fg(Color::Yellow))
                     .border_style(Style::default().fg(Color::Yellow)),
             )
             .highlight_style(
                 Style::default()
-                    .fg(Color::Yellow)
+                    .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD),
             )
-            .highlight_symbol("> ");
+            .highlight_symbol("› ");
         f.render_stateful_widget(plist, chunks[1], &mut picker_state);
 
         // Help bar
         if self.config.show_help_bar {
-            let help = self.help_text();
-            let bar = Paragraph::new(Span::styled(
-                format!(" {} '{}' | {}", op, source_entry.name, help),
-                Style::default().fg(Color::DarkGray),
-            ));
+            let pairs = self.help_pairs();
+            let mut spans = vec![
+                Span::styled(
+                    format!(" {} '{}' ", op, source_entry.name),
+                    Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled("│ ", Style::default().fg(Color::DarkGray)),
+            ];
+            spans.extend(Self::styled_help_spans(&pairs));
+            let bar = Paragraph::new(Line::from(spans));
             f.render_widget(bar, outer[1]);
         }
 
@@ -524,146 +584,113 @@ impl App {
 
     fn draw_help_sheet(&self, f: &mut Frame) {
         let area = f.area();
-        // ~40% height from bottom, ~60% width centered
-        let sheet_h = (area.height * 40 / 100).max(12);
-        let sheet_w = (area.width * 60 / 100).max(36);
+
+        let (left_title, left_items, right_title, right_items): (
+            &str,
+            Vec<(&str, &str)>,
+            &str,
+            Vec<(&str, &str)>,
+        ) = match &self.input {
+            InputMode::MovePicker { .. } | InputMode::CopyPicker { .. } => (
+                "Navigation",
+                vec![
+                    ("j / \u{2193}", "Move down"),
+                    ("k / \u{2191}", "Move up"),
+                    ("Enter", "Open folder"),
+                    ("Bksp", "Go back"),
+                ],
+                "Actions",
+                vec![
+                    ("Space", "Confirm dest"),
+                    ("/", "Text input"),
+                    ("Esc", "Cancel"),
+                ],
+            ),
+            _ => (
+                "Navigation",
+                vec![
+                    ("j / \u{2193}", "Move down"),
+                    ("k / \u{2191}", "Move up"),
+                    ("Enter", "Open folder"),
+                    ("Bksp", "Go back"),
+                ],
+                "Actions",
+                vec![
+                    ("c", "Copy"),
+                    ("m", "Move"),
+                    ("n", "Rename"),
+                    ("d", "Remove"),
+                    ("f", "New folder"),
+                    ("r", "Refresh"),
+                    ("h", "Help"),
+                    ("q", "Quit"),
+                ],
+            ),
+        };
+
+        let max_rows = left_items.len().max(right_items.len());
+        // title row + item rows + hint row + 2 borders
+        let sheet_h = ((max_rows + 3) as u16).min(area.height);
+        let sheet_w = area.width.saturating_sub(4).min(56).max(30);
         let x = (area.width.saturating_sub(sheet_w)) / 2;
         let y = area.height.saturating_sub(sheet_h);
         let sheet_area = ratatui::layout::Rect::new(x, y, sheet_w, sheet_h);
 
         f.render_widget(Clear, sheet_area);
 
-        let lines = match &self.input {
-            InputMode::MovePicker { .. } | InputMode::CopyPicker { .. } => vec![
-                Line::from(""),
-                Line::from(Span::styled(
-                    "  Navigation",
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                )),
-                Line::from(vec![
-                    Span::styled("    j / \u{2193}     ", Style::default().fg(Color::Yellow)),
-                    Span::raw("Move down"),
-                ]),
-                Line::from(vec![
-                    Span::styled("    k / \u{2191}     ", Style::default().fg(Color::Yellow)),
-                    Span::raw("Move up"),
-                ]),
-                Line::from(vec![
-                    Span::styled("    Enter     ", Style::default().fg(Color::Yellow)),
-                    Span::raw("Open folder"),
-                ]),
-                Line::from(vec![
-                    Span::styled("    Backspace ", Style::default().fg(Color::Yellow)),
-                    Span::raw("Go back"),
-                ]),
-                Line::from(""),
-                Line::from(Span::styled(
-                    "  Actions",
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                )),
-                Line::from(vec![
-                    Span::styled("    Space     ", Style::default().fg(Color::Yellow)),
-                    Span::raw("Confirm destination"),
-                ]),
-                Line::from(vec![
-                    Span::styled("    /         ", Style::default().fg(Color::Yellow)),
-                    Span::raw("Switch to text input"),
-                ]),
-                Line::from(vec![
-                    Span::styled("    Esc       ", Style::default().fg(Color::Yellow)),
-                    Span::raw("Cancel"),
-                ]),
-                Line::from(""),
-                Line::from(Span::styled(
-                    "  Press any key to close",
-                    Style::default().fg(Color::DarkGray),
-                )),
-            ],
-            _ => vec![
-                Line::from(""),
-                Line::from(Span::styled(
-                    "  Navigation",
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                )),
-                Line::from(vec![
-                    Span::styled("    j / \u{2193}     ", Style::default().fg(Color::Yellow)),
-                    Span::raw("Move down"),
-                ]),
-                Line::from(vec![
-                    Span::styled("    k / \u{2191}     ", Style::default().fg(Color::Yellow)),
-                    Span::raw("Move up"),
-                ]),
-                Line::from(vec![
-                    Span::styled("    Enter     ", Style::default().fg(Color::Yellow)),
-                    Span::raw("Open folder"),
-                ]),
-                Line::from(vec![
-                    Span::styled("    Backspace ", Style::default().fg(Color::Yellow)),
-                    Span::raw("Go back"),
-                ]),
-                Line::from(""),
-                Line::from(Span::styled(
-                    "  File Operations",
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                )),
-                Line::from(vec![
-                    Span::styled("    c         ", Style::default().fg(Color::Yellow)),
-                    Span::raw("Copy"),
-                ]),
-                Line::from(vec![
-                    Span::styled("    m         ", Style::default().fg(Color::Yellow)),
-                    Span::raw("Move"),
-                ]),
-                Line::from(vec![
-                    Span::styled("    n         ", Style::default().fg(Color::Yellow)),
-                    Span::raw("Rename"),
-                ]),
-                Line::from(vec![
-                    Span::styled("    d         ", Style::default().fg(Color::Yellow)),
-                    Span::raw("Remove (trash)"),
-                ]),
-                Line::from(vec![
-                    Span::styled("    f         ", Style::default().fg(Color::Yellow)),
-                    Span::raw("New folder"),
-                ]),
-                Line::from(""),
-                Line::from(Span::styled(
-                    "  Other",
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                )),
-                Line::from(vec![
-                    Span::styled("    r         ", Style::default().fg(Color::Yellow)),
-                    Span::raw("Refresh"),
-                ]),
-                Line::from(vec![
-                    Span::styled("    h         ", Style::default().fg(Color::Yellow)),
-                    Span::raw("Toggle help"),
-                ]),
-                Line::from(vec![
-                    Span::styled("    q         ", Style::default().fg(Color::Yellow)),
-                    Span::raw("Quit"),
-                ]),
-                Line::from(""),
-                Line::from(Span::styled(
-                    "  Press any key to close",
-                    Style::default().fg(Color::DarkGray),
-                )),
-            ],
-        };
+        let inner_w = sheet_w.saturating_sub(2) as usize; // inside borders
+        let half = inner_w / 2;
+
+        let title_style = Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD);
+        let key_style = Style::default().fg(Color::Yellow);
+
+        let mut lines: Vec<Line> = Vec::new();
+
+        // Section titles row
+        lines.push(Line::from(vec![
+            Span::styled(format!(" {:<w$}", left_title, w = half - 1), title_style),
+            Span::styled(right_title, title_style),
+        ]));
+
+        // Item rows — left and right side by side
+        for i in 0..max_rows {
+            let mut spans = Vec::new();
+            if i < left_items.len() {
+                let (k, d) = left_items[i];
+                let key_w = 8.min(half.saturating_sub(2));
+                let desc_w = half.saturating_sub(key_w + 2);
+                spans.push(Span::styled(
+                    format!(" {:<key_w$} ", k, key_w = key_w),
+                    key_style,
+                ));
+                spans.push(Span::raw(format!("{:<desc_w$}", d, desc_w = desc_w)));
+            } else {
+                spans.push(Span::raw(format!("{:<half$}", "", half = half)));
+            }
+            if i < right_items.len() {
+                let (k, d) = right_items[i];
+                let key_w = 8.min(half.saturating_sub(2));
+                spans.push(Span::styled(
+                    format!("{:<key_w$} ", k, key_w = key_w),
+                    key_style,
+                ));
+                spans.push(Span::raw(d));
+            }
+            lines.push(Line::from(spans));
+        }
+
+        // Close hint
+        lines.push(Line::from(Span::styled(
+            " Press any key to close",
+            Style::default().fg(Color::DarkGray),
+        )));
 
         let p = Paragraph::new(Text::from(lines)).block(
             Block::default()
                 .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
                 .title(" Help ")
                 .title_style(Style::default().fg(Color::Cyan))
                 .border_style(Style::default().fg(Color::Cyan)),
