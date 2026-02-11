@@ -2,20 +2,21 @@
 
 `pikpaktui` 是一个 Rust 编写的 PikPak 文件管理 TUI。
 
-当前处于重构阶段：
-- TUI 交互已可用（浏览、复制、移动、重命名、删除）
-- 后端已抽象为 `Backend` trait
-- 默认后端为 `cli`（调用 `pikpakcli`）
-- `native` 后端已支持：登录（凭证换 token/session）、`ls`；其余操作逐步替换中
+当前版本已经默认使用 **纯 Rust native backend**，不再依赖 `pikpakcli` 运行时。
 
-运行方式：
-- 无参数启动：进入 TUI 文件管理
-- 有参数启动：透传给 `pikpakcli`（兼容模式）
+## 当前能力
+
+- native auth：`captcha/init + signin + session 持久化`
+- native ls
+- native move
+- native rename
+- native remove（回收站语义）
+- native copy
 
 ## 依赖
 
-- Rust (建议 stable)
-- 已可用的 `pikpakcli`（当前默认后端需要在 `PATH` 中）
+- Rust (stable)
+- 无 `pikpakcli` 运行时依赖
 
 ## 安装与运行
 
@@ -31,17 +32,29 @@ cargo build --release
 ./target/release/pikpaktui
 ```
 
-## 后端选择
+## 登录（native）
 
-通过环境变量切换后端：
+### 1) 环境变量
 
 ```bash
-# 默认：cli
-PIKPAKTUI_BACKEND=cli cargo run
-
-# 实验中：native（目前为骨架，操作接口尚在逐步实现）
-PIKPAKTUI_BACKEND=native cargo run
+export PIKPAK_EMAIL='you@example.com'
+export PIKPAK_PASSWORD='***'
 ```
+
+可选：
+
+```bash
+# 当 captcha init 响应不直接返回 token 时，先完成 challenge 再注入
+export PIKPAK_CAPTCHA_TOKEN='***'
+```
+
+### 2) 执行登录
+
+```bash
+cargo run -- --native-login
+```
+
+成功后会写入 session 文件（默认在系统 config 目录下）。
 
 ## TUI 键位
 
@@ -51,64 +64,33 @@ PIKPAKTUI_BACKEND=native cargo run
 - `k` / `↑`：上移
 - `Enter`：进入目录（`size=0` 视为目录）
 - `Backspace`：返回上级
-- `r`：刷新（执行 `pikpakcli ls -l -p <path>`）
+- `r`：刷新
 - `c`：复制（输入目标路径）
 - `m`：移动（输入目标路径）
 - `n`：重命名（输入新名字）
-- `d`：删除（默认回收站，带二次确认）
+- `d`：删除（回收站，二次确认）
 - `q`：退出
 
-## smoke test（native auth/session）
-
-可运行以下命令验证 session 持久化 roundtrip：
+## smoke tests
 
 ```bash
 cargo run -- --smoke-auth
-```
-
-成功时会输出 `smoke-auth-ok ...`。
-
-可运行以下命令验证 native 登录流程最小调用（本地 mock auth server）：
-
-```bash
 cargo run -- --smoke-native-login
-```
-
-成功时会输出 `smoke-native-login-ok ...`。
-
-可运行以下命令验证 native `ls` 最小调用（本地 mock drive server）：
-
-```bash
 cargo run -- --smoke-native-ls
+cargo run -- --smoke-native-ops
 ```
 
-成功时会输出 `smoke-native-ls-ok ...`。
+成功会分别输出：
 
-## 参数兼容策略（passthrough）
-
-当 `pikpaktui` 启动时带任意参数，不进入 TUI，等价于：
-
-```bash
-pikpakcli <原样参数>
-```
-
-例如：
-
-```bash
-pikpaktui ls -p "/My Pack"
-pikpaktui rm -p "/My Pack" --name "foo.txt"
-```
-
-输出和退出码会直接继承 `pikpakcli`。
+- `smoke-auth-ok ...`
+- `smoke-native-login-ok ...`
+- `smoke-native-ls-ok ...`
+- `smoke-native-ops-ok`
 
 ## 代码结构
 
-- `src/main.rs`：参数分流、后端选择（`PIKPAKTUI_BACKEND`）
+- `src/main.rs`：入口、smoke 命令、native login 命令
 - `src/backend.rs`：后端抽象（`Backend` trait + `Entry`）
-- `src/tui.rs`：界面、事件循环、键位与交互弹窗
-- `src/pikpak.rs`：`CliBackend`（`pikpakcli` 子进程实现）
-- `src/native/`：`NativeBackend` 与 auth/session 骨架
-
-## 说明
-
-当前重点是把 `native` 后端逐步补齐（auth 登录流程、ls/mv/rename/remove），并保持 TUI 体验连续可用。
+- `src/tui.rs`：界面与交互
+- `src/native/auth.rs`：captcha/init + signin + session
+- `src/native/mod.rs`：native drive API（ls/mv/cp/rename/remove）
