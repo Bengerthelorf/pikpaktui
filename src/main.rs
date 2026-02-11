@@ -5,7 +5,7 @@ mod tui;
 
 use crate::backend::Backend;
 use crate::native::{
-    NativeBackend,
+    NativeBackend, NativeBackendConfig,
     auth::{AuthConfig, NativeAuth, SessionToken},
 };
 use crate::pikpak::CliBackend;
@@ -30,6 +30,11 @@ fn entry() -> Result<()> {
 
     if args.len() > 1 && args[1] == "--smoke-native-login" {
         smoke_native_login()?;
+        return Ok(());
+    }
+
+    if args.len() > 1 && args[1] == "--smoke-native-ls" {
+        smoke_native_ls()?;
         return Ok(());
     }
 
@@ -119,5 +124,55 @@ fn smoke_native_login() -> Result<()> {
         token.access_token.len(),
         token.refresh_token.len()
     );
+    Ok(())
+}
+
+fn smoke_native_ls() -> Result<()> {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
+
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let addr = listener.local_addr()?;
+
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept failed");
+        let mut buf = [0_u8; 4096];
+        let _ = stream.read(&mut buf).expect("read failed");
+
+        let body = r#"{"files":[{"name":"Docs","kind":"folder"},{"name":"notes.txt","kind":"file","size":"12"}]}"#;
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        stream
+            .write_all(response.as_bytes())
+            .expect("write failed");
+    });
+
+    let auth = NativeAuth::from_config(AuthConfig {
+        session_path: std::env::temp_dir().join("pikpaktui-smoke-ls-session.json"),
+        auth_base_url: "http://127.0.0.1:9".into(),
+        client_id: "smoke-client".into(),
+        client_secret: "smoke-secret".into(),
+    })?;
+
+    auth.save_session(&SessionToken {
+        access_token: "tok-a".into(),
+        refresh_token: "tok-r".into(),
+        expires_at_unix: 4_102_444_800,
+    })?;
+
+    let backend = NativeBackend::from_config(NativeBackendConfig {
+        auth,
+        drive_base_url: format!("http://{}", addr),
+    })?;
+
+    let entries = backend.ls("/My Pack")?;
+    backend.auth().clear_session()?;
+    server.join().expect("server thread failed");
+
+    println!("smoke-native-ls-ok count={}", entries.len());
     Ok(())
 }

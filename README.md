@@ -6,7 +6,7 @@
 - TUI 交互已可用（浏览、复制、移动、重命名、删除）
 - 后端已抽象为 `Backend` trait
 - 默认后端为 `cli`（调用 `pikpakcli`）
-- 已引入 `native` 后端骨架与 session 持久化能力（逐步替换中）
+- `native` 后端已支持：登录（凭证换 token/session）、`ls`；其余操作逐步替换中
 
 运行方式：
 - 无参数启动：进入 TUI 文件管理
@@ -75,6 +75,14 @@ cargo run -- --smoke-native-login
 ```
 
 成功时会输出 `smoke-native-login-ok ...`。
+
+可运行以下命令验证 native `ls` 最小调用（本地 mock drive server）：
+
+```bash
+cargo run -- --smoke-native-ls
+```
+
+成功时会输出 `smoke-native-ls-ok ...`。
 
 ## 参数兼容策略（passthrough）
 
