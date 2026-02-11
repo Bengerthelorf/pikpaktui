@@ -33,6 +33,7 @@ cargo build --release
 - `Enter`：进入目录（`size=0` 视为目录）
 - `Backspace`：返回上级
 - `r`：刷新（执行 `pikpakcli ls -l -p <path>`）
+- `c`：复制（输入目标路径）
 - `m`：移动（输入目标路径）
 - `n`：重命名（输入新名字）
 - `d`：删除（默认回收站，带二次确认）
@@ -59,7 +60,7 @@ pikpaktui rm -p "/My Pack" --name "foo.txt"
 
 - `src/main.rs`：参数分流（TUI / passthrough）
 - `src/tui.rs`：界面、事件循环、键位与交互弹窗
-- `src/pikpak.rs`：`pikpakcli` 子进程调用封装（`ls/mv/rename/remove`）
+- `src/pikpak.rs`：`pikpakcli` 子进程调用封装（`ls/cp/mv/rename/remove`）
 
 ## 说明
 

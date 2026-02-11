@@ -39,6 +39,7 @@ struct App {
 enum InputMode {
     None,
     Move { value: String },
+    Copy { value: String },
     Rename { value: String },
     ConfirmDelete,
 }
@@ -115,7 +116,7 @@ impl App {
             .map(|s| Line::from(s.as_str()))
             .collect();
 
-        let help = "j/k, ↑/↓: move | Enter: open dir | Backspace: up | r: refresh | m: move | n: rename | d: remove | q: quit";
+        let help = "j/k, ↑/↓: move | Enter: open dir | Backspace: up | r: refresh | c: copy | m: move | n: rename | d: remove | q: quit";
         let mut lines = log_lines;
         lines.push(Line::from(""));
         lines.push(Line::from(help));
@@ -140,6 +141,15 @@ impl App {
                     value
                 ))
                 .block(Block::default().borders(Borders::ALL).title("Move"));
+                f.render_widget(p, area);
+            }
+            InputMode::Copy { value } => {
+                f.render_widget(Clear, area);
+                let p = Paragraph::new(format!(
+                    "Copy target path:\n{}\n\nEnter to confirm, Esc to cancel",
+                    value
+                ))
+                .block(Block::default().borders(Borders::ALL).title("Copy"));
                 f.render_widget(p, area);
             }
             InputMode::Rename { value } => {
@@ -184,6 +194,25 @@ impl App {
                     }
                 } else {
                     self.input = InputMode::Move { value };
+                }
+                Ok(false)
+            }
+            InputMode::Copy { mut value } => {
+                if let Some(done) = handle_text_input(&mut value, code) {
+                    if done {
+                        if let Some(entry) = self.current_entry().cloned() {
+                            let target = value.trim().to_string();
+                            if !target.is_empty() {
+                                match Pikpak::cp(&self.current_path, &entry.name, &target) {
+                                    Ok(_) => self.push_log(format!("Copied '{}' -> '{}'", entry.name, target)),
+                                    Err(e) => self.push_log(format!("Copy failed: {e:#}")),
+                                }
+                                self.refresh();
+                            }
+                        }
+                    }
+                } else {
+                    self.input = InputMode::Copy { value };
                 }
                 Ok(false)
             }
@@ -257,6 +286,13 @@ impl App {
                 self.refresh();
             }
             KeyCode::Char('r') => self.refresh(),
+            KeyCode::Char('c') => {
+                if self.current_entry().is_some() {
+                    self.input = InputMode::Copy {
+                        value: String::new(),
+                    };
+                }
+            }
             KeyCode::Char('m') => {
                 if self.current_entry().is_some() {
                     self.input = InputMode::Move {

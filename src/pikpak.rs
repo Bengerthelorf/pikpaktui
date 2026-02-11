@@ -23,6 +23,14 @@ impl Pikpak {
         Self::try_attempts(&attempts)
     }
 
+    pub fn cp(current_path: &str, name: &str, target_path: &str) -> Result<String> {
+        let attempts: [Vec<&str>; 2] = [
+            vec!["cp", "-p", current_path, "--name", name, "--to", target_path],
+            vec!["copy", "-p", current_path, "--name", name, "--to", target_path],
+        ];
+        Self::try_attempts(&attempts)
+    }
+
     pub fn rename(current_path: &str, old_name: &str, new_name: &str) -> Result<String> {
         let attempts: [Vec<&str>; 2] = [
             vec![
