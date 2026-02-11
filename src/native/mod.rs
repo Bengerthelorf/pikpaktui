@@ -140,10 +140,30 @@ impl NativeBackend {
         let response = self
             .http
             .post(url)
-            .bearer_auth(token)
+            .bearer_auth(&token)
             .json(&payload)
             .send()
             .context("native copy request failed")?;
+
+        if response.status().is_success() {
+            return Ok(());
+        }
+
+        // fallback for APIs with POST /drive/v1/files/{id}/copy
+        let copy_url = format!(
+            "{}/drive/v1/files/{}/copy",
+            self.drive_base_url.trim_end_matches('/'),
+            file_id
+        );
+        let response = self
+            .http
+            .post(copy_url)
+            .bearer_auth(token)
+            .json(&MoveFallbackRequest {
+                parent_path: to_path.to_string(),
+            })
+            .send()
+            .context("native copy fallback request failed")?;
 
         ensure_success(response, "native copy")
     }
