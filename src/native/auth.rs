@@ -114,17 +114,35 @@ impl NativeAuth {
             return Err(anyhow!("password is empty"));
         }
 
+        let captcha = self.init_captcha(email)?;
+        let captcha_token = captcha
+            .captcha_token
+            .clone()
+            .or_else(|| env::var("PIKPAK_CAPTCHA_TOKEN").ok())
+            .ok_or_else(|| {
+                let hint = captcha
+                    .url
+                    .as_deref()
+                    .unwrap_or("<no challenge url in response>");
+                anyhow!(
+                    "captcha token unavailable; complete challenge and set PIKPAK_CAPTCHA_TOKEN. challenge_url={}",
+                    sanitize(hint)
+                )
+            })?;
+
         let url = format!("{}/v1/auth/signin", self.auth_base_url.trim_end_matches('/'));
         let payload = SigninRequest {
             username: email,
             password,
             client_id: &self.client_id,
             client_secret: &self.client_secret,
+            captcha_token: Some(&captcha_token),
         };
 
         let response = self
             .http
             .post(url)
+            .header("x-captcha-token", &captcha_token)
             .json(&payload)
             .send()
             .context("signin request failed")?;
@@ -149,9 +167,65 @@ impl NativeAuth {
         Ok(token)
     }
 
+    pub fn init_captcha(&self, email: &str) -> Result<CaptchaInitResponse> {
+        let url = format!(
+            "{}/v1/shield/captcha/init",
+            self.auth_base_url.trim_end_matches('/')
+        );
+
+        let payload = CaptchaInitRequest {
+            action: "POST:/v1/auth/signin",
+            client_id: &self.client_id,
+            device_id: "pikpaktui-native",
+            meta: CaptchaMeta { email },
+        };
+
+        let response = self
+            .http
+            .post(url)
+            .json(&payload)
+            .send()
+            .context("captcha init request failed")?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().unwrap_or_default();
+            return Err(anyhow!(
+                "captcha init failed with status {}: {}",
+                status,
+                sanitize(&body)
+            ));
+        }
+
+        response
+            .json::<CaptchaInitResponse>()
+            .context("invalid captcha init response json")
+    }
+
     pub fn session_path(&self) -> &PathBuf {
         &self.session_path
     }
+}
+
+#[derive(Serialize)]
+struct CaptchaInitRequest<'a> {
+    action: &'a str,
+    client_id: &'a str,
+    device_id: &'a str,
+    meta: CaptchaMeta<'a>,
+}
+
+#[derive(Serialize)]
+struct CaptchaMeta<'a> {
+    email: &'a str,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CaptchaInitResponse {
+    #[serde(default)]
+    pub captcha_token: Option<String>,
+    #[serde(default)]
+    pub url: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -160,6 +234,8 @@ struct SigninRequest<'a> {
     password: &'a str,
     client_id: &'a str,
     client_secret: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    captcha_token: Option<&'a str>,
 }
 
 #[derive(Debug, Deserialize)]
