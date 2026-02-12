@@ -416,7 +416,7 @@ impl App {
                 // Offline tasks view
                 self.open_offline_tasks_view();
             }
-            KeyCode::Char('i') => {
+            KeyCode::Char(' ') => {
                 if let Some(entry) = self.current_entry().cloned() {
                     if self.config.show_preview {
                         // Fill right preview pane

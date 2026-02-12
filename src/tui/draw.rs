@@ -335,7 +335,7 @@ impl App {
                 let hint = if self.config.lazy_preview {
                     "Select an item"
                 } else {
-                    "Press 'i' to load preview"
+                    "Press Space to load preview"
                 };
                 let p = Paragraph::new(Text::from(vec![
                     Line::from(""),
@@ -426,7 +426,7 @@ impl App {
                     }
                     lines.push(Line::from(""));
                     lines.push(Line::from(Span::styled(
-                        "  Press 'i' for details",
+                        "  Press Space for details",
                         Style::default().fg(Color::DarkGray),
                     )));
                 }
@@ -537,9 +537,9 @@ impl App {
                 // show_preview=false: i=info popup; show_preview=true + !lazy: i=preview
                 // show_preview=true + lazy: i hidden (auto-loads)
                 if !self.config.show_preview {
-                    pairs.push(("i", "info"));
+                    pairs.push(("Space", "info"));
                 } else if !self.config.lazy_preview {
-                    pairs.push(("i", "preview"));
+                    pairs.push(("Space", "preview"));
                 }
                 pairs.extend_from_slice(&[
                     ("l", "logs"),
@@ -1092,9 +1092,9 @@ impl App {
                         ("O", "Offline tasks"),
                     ];
                     if !self.config.show_preview {
-                        actions.push(("i", "File info"));
+                        actions.push(("Space", "File info"));
                     } else if !self.config.lazy_preview {
-                        actions.push(("i", "Preview"));
+                        actions.push(("Space", "Preview"));
                     }
                     actions.extend_from_slice(&[
                         ("l", "Logs"),
