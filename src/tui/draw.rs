@@ -11,7 +11,7 @@ use crate::theme;
 use super::completion::PathInput;
 use super::download::TaskStatus;
 use super::local_completion::LocalPathInput;
-use super::{centered_rect, format_size, App, InputMode, LoginField, SPINNER_FRAMES};
+use super::{centered_rect, format_size, App, InputMode, LoginField, PreviewState, SPINNER_FRAMES};
 
 impl App {
     pub(super) fn draw(&self, f: &mut Frame) {
@@ -156,14 +156,121 @@ impl App {
         };
         let main_area = outer[0];
 
-        let chunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(65), Constraint::Percentage(35)])
-            .split(main_area);
+        if self.config.show_preview {
+            // Three-column miller columns: parent 20% | current 40% | preview 40%
+            let chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Percentage(20),
+                    Constraint::Percentage(40),
+                    Constraint::Percentage(40),
+                ])
+                .split(main_area);
 
-        // File list
+            self.draw_parent_pane(f, chunks[0]);
+            self.draw_current_pane(f, chunks[1]);
+            self.draw_preview_pane(f, chunks[2]);
+
+            // Log overlay (covers right pane area)
+            if self.show_logs_overlay {
+                self.draw_log_overlay(f, chunks[2]);
+            }
+        } else {
+            // Two-column: parent 25% | current 75%
+            let chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Percentage(25),
+                    Constraint::Percentage(75),
+                ])
+                .split(main_area);
+
+            self.draw_parent_pane(f, chunks[0]);
+            self.draw_current_pane(f, chunks[1]);
+
+            // Log overlay (covers current pane area)
+            if self.show_logs_overlay {
+                self.draw_log_overlay(f, chunks[1]);
+            }
+        }
+
+        // Help bar
+        if self.config.show_help_bar {
+            let pairs = self.help_pairs();
+            let mut spans = vec![Span::raw(" ")];
+            spans.extend(Self::styled_help_spans(&pairs));
+            let bar = Paragraph::new(Line::from(spans));
+            f.render_widget(bar, outer[1]);
+        }
+
+        self.draw_overlay(f);
+
+        if self.show_help_sheet {
+            self.draw_help_sheet(f);
+        }
+    }
+
+    fn draw_parent_pane(&self, f: &mut Frame, area: ratatui::layout::Rect) {
+        if self.breadcrumb.is_empty() {
+            // At root — show empty panel
+            let p = Paragraph::new(Text::from(vec![]))
+                .block(
+                    self.styled_block()
+                        .title(" / ")
+                        .title_style(Style::default().fg(Color::DarkGray))
+                        .border_style(Style::default().fg(Color::DarkGray)),
+                );
+            f.render_widget(p, area);
+        } else {
+            let parent_path = if self.breadcrumb.len() <= 1 {
+                " / ".to_string()
+            } else {
+                let path: Vec<&str> = self.breadcrumb[..self.breadcrumb.len() - 1]
+                    .iter()
+                    .map(|(_, n)| n.as_str())
+                    .collect();
+                format!(" /{} ", path.join("/"))
+            };
+
+            let items: Vec<ListItem> = self
+                .parent_entries
+                .iter()
+                .map(|e| {
+                    let cat = theme::categorize(e);
+                    let ico = theme::icon(cat, self.config.nerd_font);
+                    let c = self.file_color(cat);
+                    ListItem::new(Line::from(vec![
+                        Span::styled(ico, Style::default().fg(c)),
+                        Span::styled(" ", Style::default()),
+                        Span::styled(&e.name, Style::default().fg(c)),
+                    ]))
+                })
+                .collect();
+
+            let mut state = ListState::default();
+            if !self.parent_entries.is_empty() {
+                state.select(Some(self.parent_selected.min(self.parent_entries.len() - 1)));
+            }
+
+            let list = List::new(items)
+                .block(
+                    self.styled_block()
+                        .title(parent_path)
+                        .title_style(Style::default().fg(Color::DarkGray))
+                        .border_style(Style::default().fg(Color::DarkGray)),
+                )
+                .highlight_style(
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                );
+            f.render_stateful_widget(list, area, &mut state);
+        }
+    }
+
+    fn draw_current_pane(&self, f: &mut Frame, area: ratatui::layout::Rect) {
         let path_display = self.current_path_display();
-        let left_title = if self.loading {
+        let title = if self.loading {
             format!(" {} {} ", SPINNER_FRAMES[self.spinner_idx], path_display)
         } else {
             format!(" {} ", path_display)
@@ -213,20 +320,184 @@ impl App {
         let list = List::new(items)
             .block(
                 self.styled_block()
-                    .title(left_title)
+                    .title(title)
                     .title_style(Style::default().fg(file_tc))
                     .border_style(Style::default().fg(file_bc)),
             )
             .highlight_style(self.highlight_style())
-            .highlight_symbol("› ");
-        f.render_stateful_widget(list, chunks[0], &mut state);
+            .highlight_symbol("\u{203a} ");
+        f.render_stateful_widget(list, area, &mut state);
+    }
 
-        // Logs (without help text)
+    fn draw_preview_pane(&self, f: &mut Frame, area: ratatui::layout::Rect) {
+        match &self.preview_state {
+            PreviewState::Empty => {
+                let hint = if self.config.lazy_preview {
+                    "Select an item"
+                } else {
+                    "Press 'i' to load preview"
+                };
+                let p = Paragraph::new(Text::from(vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        format!("  {}", hint),
+                        Style::default().fg(Color::DarkGray),
+                    )),
+                ]))
+                .block(
+                    self.styled_block()
+                        .title(" Preview ")
+                        .title_style(Style::default().fg(Color::DarkGray))
+                        .border_style(Style::default().fg(Color::DarkGray)),
+                );
+                f.render_widget(p, area);
+            }
+            PreviewState::Loading => {
+                let spinner = SPINNER_FRAMES[self.spinner_idx];
+                let p = Paragraph::new(Text::from(vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        format!("  {} Loading...", spinner),
+                        Style::default().fg(Color::Cyan),
+                    )),
+                ]))
+                .block(
+                    self.styled_block()
+                        .title(" Preview ")
+                        .title_style(Style::default().fg(Color::DarkGray))
+                        .border_style(Style::default().fg(Color::DarkGray)),
+                );
+                f.render_widget(p, area);
+            }
+            PreviewState::FolderListing(children) => {
+                let items: Vec<ListItem> = children
+                    .iter()
+                    .map(|e| {
+                        let cat = theme::categorize(e);
+                        let ico = theme::icon(cat, self.config.nerd_font);
+                        let c = self.file_color(cat);
+                        ListItem::new(Line::from(vec![
+                            Span::styled(ico, Style::default().fg(c)),
+                            Span::styled(" ", Style::default()),
+                            Span::styled(&e.name, Style::default().fg(c)),
+                        ]))
+                    })
+                    .collect();
+
+                let title = if children.is_empty() {
+                    " Preview (empty) ".to_string()
+                } else {
+                    format!(" Preview ({}) ", children.len())
+                };
+
+                let list = List::new(items)
+                    .block(
+                        self.styled_block()
+                            .title(title)
+                            .title_style(Style::default().fg(Color::DarkGray))
+                            .border_style(Style::default().fg(Color::DarkGray)),
+                    );
+                f.render_widget(list, area);
+            }
+            PreviewState::FileBasicInfo => {
+                let mut lines = vec![Line::from("")];
+                if let Some(entry) = self.entries.get(self.selected) {
+                    lines.push(Line::from(vec![
+                        Span::styled("  Name:  ", Style::default().fg(Color::Cyan)),
+                        Span::styled(&entry.name, Style::default().fg(Color::White)),
+                    ]));
+                    if entry.kind == EntryKind::File {
+                        lines.push(Line::from(vec![
+                            Span::styled("  Size:  ", Style::default().fg(Color::Cyan)),
+                            Span::styled(
+                                format_size(entry.size),
+                                Style::default().fg(Color::White),
+                            ),
+                        ]));
+                    }
+                    if !entry.created_time.is_empty() {
+                        lines.push(Line::from(vec![
+                            Span::styled("  Time:  ", Style::default().fg(Color::Cyan)),
+                            Span::styled(
+                                &entry.created_time,
+                                Style::default().fg(Color::DarkGray),
+                            ),
+                        ]));
+                    }
+                    lines.push(Line::from(""));
+                    lines.push(Line::from(Span::styled(
+                        "  Press 'i' for details",
+                        Style::default().fg(Color::DarkGray),
+                    )));
+                }
+
+                let p = Paragraph::new(Text::from(lines))
+                    .block(
+                        self.styled_block()
+                            .title(" Preview ")
+                            .title_style(Style::default().fg(Color::DarkGray))
+                            .border_style(Style::default().fg(Color::DarkGray)),
+                    );
+                f.render_widget(p, area);
+            }
+            PreviewState::FileDetailedInfo(info) => {
+                let mut lines = vec![Line::from("")];
+                lines.push(Line::from(vec![
+                    Span::styled("  Name:  ", Style::default().fg(Color::Cyan)),
+                    Span::styled(&info.name, Style::default().fg(Color::White)),
+                ]));
+                if let Some(size) = &info.size {
+                    let size_n: u64 = size.parse().unwrap_or(0);
+                    lines.push(Line::from(vec![
+                        Span::styled("  Size:  ", Style::default().fg(Color::Cyan)),
+                        Span::styled(
+                            format!("{} ({})", format_size(size_n), size),
+                            Style::default().fg(Color::White),
+                        ),
+                    ]));
+                }
+                if let Some(hash) = &info.hash {
+                    lines.push(Line::from(vec![
+                        Span::styled("  Hash:  ", Style::default().fg(Color::Cyan)),
+                        Span::styled(hash.as_str(), Style::default().fg(Color::DarkGray)),
+                    ]));
+                }
+                if let Some(link) = &info.web_content_link {
+                    let display = if link.len() > 50 {
+                        format!("{}...", &link[..50])
+                    } else {
+                        link.clone()
+                    };
+                    lines.push(Line::from(vec![
+                        Span::styled("  Link:  ", Style::default().fg(Color::Cyan)),
+                        Span::styled(display, Style::default().fg(Color::Blue)),
+                    ]));
+                }
+
+                let p = Paragraph::new(Text::from(lines))
+                    .block(
+                        self.styled_block()
+                            .title(format!(" \u{2139} {} ", truncate_name(&info.name, 25)))
+                            .title_style(
+                                Style::default()
+                                    .fg(Color::Cyan)
+                                    .add_modifier(Modifier::BOLD),
+                            )
+                            .border_style(Style::default().fg(Color::DarkGray)),
+                    )
+                    .wrap(Wrap { trim: false });
+                f.render_widget(p, area);
+            }
+        }
+    }
+
+    fn draw_log_overlay(&self, f: &mut Frame, area: ratatui::layout::Rect) {
+        f.render_widget(Clear, area);
         let log_lines: Vec<Line> = self
             .logs
             .iter()
             .rev()
-            .take(chunks[1].height.saturating_sub(2) as usize)
+            .take(area.height.saturating_sub(2) as usize)
             .rev()
             .map(|s| Line::from(s.as_str()))
             .collect();
@@ -238,50 +509,39 @@ impl App {
         let logs = Paragraph::new(Text::from(log_lines))
             .block(
                 self.styled_block()
-                    .title(" Logs ")
+                    .title(" Logs (l to close) ")
                     .title_style(Style::default().fg(log_tc))
                     .border_style(Style::default().fg(log_bc)),
             )
             .wrap(Wrap { trim: false });
-        f.render_widget(logs, chunks[1]);
-
-        // Help bar
-        if self.config.show_help_bar {
-            let pairs = self.help_pairs();
-            let mut spans = vec![Span::raw(" ")];
-            spans.extend(Self::styled_help_spans(&pairs));
-            let bar = Paragraph::new(Line::from(spans));
-            f.render_widget(bar, outer[1]);
-        }
-
-        self.draw_overlay(f);
-
-        if self.show_help_sheet {
-            self.draw_help_sheet(f);
-        }
+        f.render_widget(logs, area);
     }
 
     fn help_pairs(&self) -> Vec<(&str, &str)> {
         match &self.input {
-            InputMode::Normal => vec![
-                ("j/k", "move"),
-                ("Enter", "open"),
-                ("Bksp", "back"),
-                ("r", "refresh"),
-                ("c", "copy"),
-                ("m", "move"),
-                ("n", "rename"),
-                ("d", "rm"),
-                ("f", "mkdir"),
-                ("s", "star"),
-                ("a", "cart"),
-                ("o", "offline"),
-                ("i", "info"),
-                ("D", "dl"),
-                ("O", "tasks"),
-                ("h", "help"),
-                ("q", "quit"),
-            ],
+            InputMode::Normal => {
+                let i_label = if self.config.show_preview { "preview" } else { "info" };
+                vec![
+                    ("j/k", "move"),
+                    ("Enter", "open"),
+                    ("Bksp", "back"),
+                    ("r", "refresh"),
+                    ("c", "copy"),
+                    ("m", "move"),
+                    ("n", "rename"),
+                    ("d", "rm"),
+                    ("f", "mkdir"),
+                    ("s", "star"),
+                    ("a", "cart"),
+                    ("o", "offline"),
+                    ("i", i_label),
+                    ("l", "logs"),
+                    ("D", "dl"),
+                    ("O", "tasks"),
+                    ("h", "help"),
+                    ("q", "quit"),
+                ]
+            }
             InputMode::MovePicker { .. } | InputMode::CopyPicker { .. } => vec![
                 ("j/k", "nav"),
                 ("Enter", "open"),
@@ -339,12 +599,6 @@ impl App {
                 ("R", "retry"),
                 ("x", "delete"),
                 ("Esc", "back"),
-            ],
-            InputMode::InfoLoading => vec![
-                ("Esc", "cancel"),
-            ],
-            InputMode::InfoView { .. } => vec![
-                ("any key", "close"),
             ],
             _ => vec![],
         }
@@ -552,12 +806,6 @@ impl App {
             }
             InputMode::OfflineInput { value } => {
                 self.draw_offline_input_overlay(f, value, cur);
-            }
-            InputMode::InfoLoading => {
-                self.draw_info_loading_overlay(f);
-            }
-            InputMode::InfoView { info } => {
-                self.draw_info_overlay(f, info);
             }
             InputMode::OfflineTasksView { .. } => {
                 // Full screen, handled in draw() dispatch
@@ -818,7 +1066,8 @@ impl App {
                     ("D", "Downloads"),
                     ("o", "Offline DL"),
                     ("O", "Offline tasks"),
-                    ("i", "File info"),
+                    ("i", if self.config.show_preview { "Preview" } else { "File info" }),
+                    ("l", "Logs"),
                     ("r", "Refresh"),
                     ("h", "Help"),
                     ("q", "Quit"),
@@ -1367,102 +1616,6 @@ impl App {
         }
     }
 
-    // --- Info loading overlay ---
-
-    fn draw_info_loading_overlay(&self, f: &mut Frame) {
-        let area = centered_rect(45, 20, f.area());
-        f.render_widget(Clear, area);
-
-        let spinner = SPINNER_FRAMES[self.spinner_idx];
-        let (in_bc, in_tc) = if self.is_vibrant() {
-            (Color::LightCyan, Color::LightCyan)
-        } else {
-            (Color::Cyan, Color::Cyan)
-        };
-
-        let p = Paragraph::new(Text::from(vec![
-            Line::from(""),
-            Line::from(Span::styled(
-                format!("  {} Loading file info...", spinner),
-                Style::default().fg(Color::Cyan),
-            )),
-            Line::from(""),
-            Line::from(Span::styled(
-                "  Esc to cancel",
-                Style::default().fg(Color::DarkGray),
-            )),
-        ]))
-        .block(
-            self.styled_block()
-                .title(" \u{2139} Info ")
-                .title_style(Style::default().fg(in_tc).add_modifier(Modifier::BOLD))
-                .border_style(Style::default().fg(in_bc)),
-        );
-        f.render_widget(p, area);
-    }
-
-    // --- Info overlay ---
-
-    fn draw_info_overlay(&self, f: &mut Frame, info: &crate::pikpak::FileInfoResponse) {
-        let area = centered_rect(65, 40, f.area());
-        f.render_widget(Clear, area);
-
-        let mut lines = vec![Line::from("")];
-
-        lines.push(Line::from(vec![
-            Span::styled("  Name:  ", Style::default().fg(Color::Cyan)),
-            Span::styled(&info.name, Style::default().fg(Color::White)),
-        ]));
-
-        if let Some(size) = &info.size {
-            let size_n: u64 = size.parse().unwrap_or(0);
-            lines.push(Line::from(vec![
-                Span::styled("  Size:  ", Style::default().fg(Color::Cyan)),
-                Span::styled(
-                    format!("{} ({})", format_size(size_n), size),
-                    Style::default().fg(Color::White),
-                ),
-            ]));
-        }
-
-        if let Some(hash) = &info.hash {
-            lines.push(Line::from(vec![
-                Span::styled("  Hash:  ", Style::default().fg(Color::Cyan)),
-                Span::styled(hash.as_str(), Style::default().fg(Color::DarkGray)),
-            ]));
-        }
-
-        if let Some(link) = &info.web_content_link {
-            let display = if link.len() > 60 {
-                format!("{}...", &link[..60])
-            } else {
-                link.clone()
-            };
-            lines.push(Line::from(vec![
-                Span::styled("  Link:  ", Style::default().fg(Color::Cyan)),
-                Span::styled(display, Style::default().fg(Color::Blue)),
-            ]));
-        }
-
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            "  Press any key to close",
-            Style::default().fg(Color::DarkGray),
-        )));
-
-        let (in_bc, in_tc) = if self.is_vibrant() {
-            (Color::LightCyan, Color::LightCyan)
-        } else {
-            (Color::Cyan, Color::Cyan)
-        };
-        let p = Paragraph::new(Text::from(lines)).block(
-            self.styled_block()
-                .title(format!(" \u{2139} Info: {} ", truncate_name(&info.name, 30)))
-                .title_style(Style::default().fg(in_tc).bg(Color::DarkGray).add_modifier(Modifier::BOLD))
-                .border_style(Style::default().fg(in_bc)),
-        );
-        f.render_widget(p, area);
-    }
 }
 
 fn truncate_name(name: &str, max_len: usize) -> String {

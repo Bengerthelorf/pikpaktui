@@ -9,7 +9,7 @@ use crate::pikpak::{Entry, EntryKind};
 use super::completion::PathInput;
 use super::download::{DownloadTask, TaskStatus};
 use super::local_completion::LocalPathInput;
-use super::{handle_text_input, App, InputMode, LoginField, OpResult, PickerState};
+use super::{handle_text_input, App, InputMode, LoginField, OpResult, PickerState, PreviewState};
 
 impl App {
     pub(super) fn handle_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> Result<bool> {
@@ -245,18 +245,6 @@ impl App {
                 self.handle_offline_tasks_key(code, &mut tasks, &mut selected);
                 Ok(false)
             }
-            InputMode::InfoLoading => {
-                // Esc cancels info loading
-                if code == KeyCode::Esc {
-                    self.input = InputMode::Normal;
-                    self.loading = false;
-                }
-                Ok(false)
-            }
-            InputMode::InfoView { .. } => {
-                // Any key closes info view
-                Ok(false)
-            }
         }
     }
 
@@ -266,21 +254,55 @@ impl App {
             KeyCode::Down | KeyCode::Char('j') => {
                 if !self.entries.is_empty() {
                     self.selected = (self.selected + 1).min(self.entries.len() - 1);
+                    self.on_cursor_move();
                 }
             }
             KeyCode::Up | KeyCode::Char('k') => {
                 if self.selected > 0 {
                     self.selected -= 1;
+                    self.on_cursor_move();
                 }
             }
             KeyCode::Enter => {
                 if let Some(entry) = self.current_entry().cloned() {
                     if entry.kind == EntryKind::Folder {
+                        // Check if preview already has this folder's children cached
+                        let cached_children = if self.preview_target_id.as_deref() == Some(&entry.id) {
+                            if let PreviewState::FolderListing(children) = std::mem::replace(
+                                &mut self.preview_state,
+                                PreviewState::Empty,
+                            ) {
+                                Some(children)
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        };
+
+                        // Cache current entries as parent (avoid re-fetching)
+                        self.parent_entries = std::mem::take(&mut self.entries);
+                        self.parent_selected = self.selected;
                         let old_id =
                             std::mem::replace(&mut self.current_folder_id, entry.id);
                         self.breadcrumb.push((old_id, entry.name));
                         self.selected = 0;
-                        self.refresh();
+                        self.clear_preview();
+
+                        if let Some(children) = cached_children {
+                            // Reuse cached preview data — no API call needed
+                            self.entries = children;
+                            self.push_log(format!("Refreshed {}", self.current_path_display()));
+                        } else {
+                            // Request current directory listing
+                            self.loading = true;
+                            let client = Arc::clone(&self.client);
+                            let tx = self.result_tx.clone();
+                            let fid = self.current_folder_id.clone();
+                            std::thread::spawn(move || {
+                                let _ = tx.send(OpResult::Ls(client.ls(&fid)));
+                            });
+                        }
                     }
                 }
             }
@@ -288,8 +310,12 @@ impl App {
                 if let Some((parent_id, _)) = self.breadcrumb.pop() {
                     self.current_folder_id = parent_id;
                     self.selected = 0;
+                    self.clear_preview();
                     self.refresh();
                 }
+            }
+            KeyCode::Char('l') => {
+                self.show_logs_overlay = !self.show_logs_overlay;
             }
             KeyCode::Char('r') => self.refresh(),
             KeyCode::Char('m') => {
@@ -361,9 +387,9 @@ impl App {
                 self.open_offline_tasks_view();
             }
             KeyCode::Char('i') => {
-                // File info popup
-                if let Some(entry) = self.current_entry().cloned() {
-                    self.open_info_view(entry);
+                // Load preview into right pane
+                if self.current_entry().is_some() {
+                    self.fetch_preview_for_selected();
                 }
             }
             _ => {}
@@ -1103,19 +1129,6 @@ impl App {
                 };
             }
         }
-    }
-
-    // --- Info view ---
-
-    fn open_info_view(&mut self, entry: Entry) {
-        self.input = InputMode::InfoLoading;
-        self.loading = true;
-        let client = Arc::clone(&self.client);
-        let tx = self.result_tx.clone();
-        let eid = entry.id.clone();
-        std::thread::spawn(move || {
-            let _ = tx.send(OpResult::Info(client.file_info(&eid)));
-        });
     }
 
     pub(super) fn spawn_delete(&mut self, entry: Entry) {

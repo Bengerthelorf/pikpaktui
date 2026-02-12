@@ -103,6 +103,10 @@ pub struct TuiConfig {
     pub border_style: BorderStyle,
     #[serde(default)]
     pub color_scheme: ColorScheme,
+    #[serde(default = "default_true")]
+    pub show_preview: bool,
+    #[serde(default)]
+    pub lazy_preview: bool,
 }
 
 fn default_true() -> bool {
@@ -122,6 +126,8 @@ impl Default for TuiConfig {
             cli_nerd_font: false,
             border_style: BorderStyle::default(),
             color_scheme: ColorScheme::default(),
+            show_preview: true,
+            lazy_preview: false,
         }
     }
 }

@@ -5,7 +5,7 @@ mod handler;
 mod local_completion;
 
 use crate::config::{AppConfig, TuiConfig};
-use crate::pikpak::{Entry, PikPak};
+use crate::pikpak::{Entry, EntryKind, FileInfoResponse, PikPak};
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::execute;
@@ -57,11 +57,21 @@ enum LoginField {
     Password,
 }
 
+enum PreviewState {
+    Empty,
+    Loading,
+    FolderListing(Vec<Entry>),
+    FileBasicInfo,
+    FileDetailedInfo(FileInfoResponse),
+}
+
 enum OpResult {
     Ls(Result<Vec<Entry>>),
     Ok(String),
     Err(String),
-    Info(Result<crate::pikpak::FileInfoResponse>),
+    ParentLs(Result<Vec<Entry>>),
+    PreviewLs(String, Result<Vec<Entry>>),
+    PreviewInfo(String, Result<FileInfoResponse>),
 }
 
 struct PickerState {
@@ -124,11 +134,6 @@ enum InputMode {
         tasks: Vec<crate::pikpak::OfflineTask>,
         selected: usize,
     },
-    // File info loading / popup
-    InfoLoading,
-    InfoView {
-        info: crate::pikpak::FileInfoResponse,
-    },
 }
 
 struct App {
@@ -148,6 +153,14 @@ struct App {
     show_help_sheet: bool,
     result_rx: Receiver<OpResult>,
     result_tx: Sender<OpResult>,
+    // Miller columns
+    parent_entries: Vec<Entry>,
+    parent_selected: usize,
+    preview_state: PreviewState,
+    preview_target_id: Option<String>,
+    show_logs_overlay: bool,
+    last_cursor_move: Instant,
+    pending_preview_fetch: bool,
     // Cart
     cart: Vec<Entry>,
     cart_ids: HashSet<String>,
@@ -178,6 +191,13 @@ impl App {
             show_help_sheet: false,
             result_rx: rx,
             result_tx: tx,
+            parent_entries: Vec::new(),
+            parent_selected: 0,
+            preview_state: PreviewState::Empty,
+            preview_target_id: None,
+            show_logs_overlay: false,
+            last_cursor_move: Instant::now(),
+            pending_preview_fetch: false,
             cart: Vec::new(),
             cart_ids: HashSet::new(),
             cart_selected: 0,
@@ -223,6 +243,13 @@ impl App {
             show_help_sheet: false,
             result_rx: rx,
             result_tx: tx,
+            parent_entries: Vec::new(),
+            parent_selected: 0,
+            preview_state: PreviewState::Empty,
+            preview_target_id: None,
+            show_logs_overlay: false,
+            last_cursor_move: Instant::now(),
+            pending_preview_fetch: false,
             cart: Vec::new(),
             cart_ids: HashSet::new(),
             cart_selected: 0,
@@ -253,6 +280,15 @@ impl App {
                 self.last_spinner = Instant::now();
             }
             self.poll_results();
+
+            // Debounce: auto-fetch preview after 300ms if lazy_preview enabled
+            if self.config.lazy_preview
+                && self.pending_preview_fetch
+                && self.last_cursor_move.elapsed() >= Duration::from_millis(300)
+            {
+                self.pending_preview_fetch = false;
+                self.fetch_preview_for_selected();
+            }
 
             terminal.draw(|f| self.draw(f))?;
 
@@ -297,18 +333,41 @@ impl App {
                     self.push_log(msg);
                     self.loading = false;
                 }
-                OpResult::Info(Ok(info)) => {
-                    self.loading = false;
-                    if matches!(self.input, InputMode::InfoLoading) {
-                        self.input = InputMode::InfoView { info };
+                OpResult::ParentLs(Ok(entries)) => {
+                    self.parent_entries = entries;
+                    // Find current folder in parent entries
+                    if let Some(pos) = self
+                        .parent_entries
+                        .iter()
+                        .position(|e| e.id == self.current_folder_id)
+                    {
+                        self.parent_selected = pos;
                     }
                 }
-                OpResult::Info(Err(e)) => {
-                    self.loading = false;
-                    if matches!(self.input, InputMode::InfoLoading) {
-                        self.input = InputMode::Normal;
+                OpResult::ParentLs(Err(e)) => {
+                    self.push_log(format!("Parent listing failed: {e:#}"));
+                }
+                OpResult::PreviewLs(id, Ok(children)) => {
+                    if self.preview_target_id.as_deref() == Some(&id) {
+                        self.preview_state = PreviewState::FolderListing(children);
                     }
-                    self.push_log(format!("File info failed: {e:#}"));
+                }
+                OpResult::PreviewLs(id, Err(e)) => {
+                    if self.preview_target_id.as_deref() == Some(&id) {
+                        self.preview_state = PreviewState::Empty;
+                    }
+                    self.push_log(format!("Preview listing failed: {e:#}"));
+                }
+                OpResult::PreviewInfo(id, Ok(info)) => {
+                    if self.preview_target_id.as_deref() == Some(&id) {
+                        self.preview_state = PreviewState::FileDetailedInfo(info);
+                    }
+                }
+                OpResult::PreviewInfo(id, Err(e)) => {
+                    if self.preview_target_id.as_deref() == Some(&id) {
+                        self.preview_state = PreviewState::Empty;
+                    }
+                    self.push_log(format!("Preview info failed: {e:#}"));
                 }
             }
         }
@@ -381,6 +440,79 @@ impl App {
         std::thread::spawn(move || {
             let _ = tx.send(OpResult::Ls(client.ls(&fid)));
         });
+        self.refresh_parent();
+    }
+
+    fn refresh_parent(&mut self) {
+        if let Some((parent_id, _)) = self.breadcrumb.last() {
+            let client = Arc::clone(&self.client);
+            let tx = self.result_tx.clone();
+            let pid = parent_id.clone();
+            std::thread::spawn(move || {
+                let _ = tx.send(OpResult::ParentLs(client.ls(&pid)));
+            });
+        } else {
+            // At root — no parent
+            self.parent_entries.clear();
+            self.parent_selected = 0;
+        }
+    }
+
+    fn clear_preview(&mut self) {
+        self.preview_state = PreviewState::Empty;
+        self.preview_target_id = None;
+        self.pending_preview_fetch = false;
+    }
+
+    fn on_cursor_move(&mut self) {
+        self.last_cursor_move = Instant::now();
+        if let Some(entry) = self.entries.get(self.selected) {
+            match entry.kind {
+                EntryKind::File => {
+                    self.preview_state = PreviewState::FileBasicInfo;
+                    self.preview_target_id = Some(entry.id.clone());
+                }
+                EntryKind::Folder => {
+                    if self.config.show_preview {
+                        self.preview_state = PreviewState::Empty;
+                        self.preview_target_id = Some(entry.id.clone());
+                    } else {
+                        // show_preview=false: right pane shows folder children
+                        self.preview_state = PreviewState::Empty;
+                        self.preview_target_id = Some(entry.id.clone());
+                    }
+                }
+            }
+            if self.config.lazy_preview {
+                self.pending_preview_fetch = true;
+            }
+        } else {
+            self.clear_preview();
+        }
+    }
+
+    fn fetch_preview_for_selected(&mut self) {
+        let entry = match self.entries.get(self.selected) {
+            Some(e) => e.clone(),
+            None => return,
+        };
+        self.preview_target_id = Some(entry.id.clone());
+        self.preview_state = PreviewState::Loading;
+        let client = Arc::clone(&self.client);
+        let tx = self.result_tx.clone();
+        let eid = entry.id.clone();
+        match entry.kind {
+            EntryKind::Folder => {
+                std::thread::spawn(move || {
+                    let _ = tx.send(OpResult::PreviewLs(eid.clone(), client.ls(&eid)));
+                });
+            }
+            EntryKind::File => {
+                std::thread::spawn(move || {
+                    let _ = tx.send(OpResult::PreviewInfo(eid.clone(), client.file_info(&eid)));
+                });
+            }
+        }
     }
 }
 
