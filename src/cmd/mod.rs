@@ -1,14 +1,21 @@
 pub mod cp;
 pub mod download;
+pub mod events;
 pub mod help;
 pub mod ls;
 pub mod mkdir;
 pub mod mv;
+pub mod offline;
 pub mod quota;
 pub mod rename;
 pub mod rm;
 pub mod share;
+pub mod star;
+pub mod starred;
+pub mod tasks;
+pub mod unstar;
 pub mod upload;
+pub mod vip;
 
 use crate::config::AppConfig;
 use crate::pikpak::{self, PikPak};

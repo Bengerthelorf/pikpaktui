@@ -45,7 +45,7 @@ impl SessionToken {
 }
 
 pub struct PikPak {
-    http: reqwest::blocking::Client,
+    pub(crate) http: reqwest::blocking::Client,
     drive_base_url: String,
     auth_base_url: String,
     client_id: String,
@@ -338,6 +338,37 @@ impl PikPak {
         ensure_success(response, "remove")
     }
 
+    pub fn delete_permanent(&self, ids: &[&str]) -> Result<()> {
+        let token = self.access_token()?;
+        let url = format!(
+            "{}/drive/v1/files:batchDelete",
+            self.drive_base_url.trim_end_matches('/')
+        );
+
+        let payload = serde_json::json!({ "ids": ids });
+        let mut rb = self.http.post(&url).bearer_auth(&token).json(&payload);
+        rb = self.authed_headers(rb);
+
+        let response = rb.send().context("permanent delete request failed")?;
+        ensure_success(response, "permanent delete")
+    }
+
+    #[allow(dead_code)]
+    pub fn untrash(&self, ids: &[&str]) -> Result<()> {
+        let token = self.access_token()?;
+        let url = format!(
+            "{}/drive/v1/files:batchUntrash",
+            self.drive_base_url.trim_end_matches('/')
+        );
+
+        let payload = serde_json::json!({ "ids": ids });
+        let mut rb = self.http.post(&url).bearer_auth(&token).json(&payload);
+        rb = self.authed_headers(rb);
+
+        let response = rb.send().context("untrash request failed")?;
+        ensure_success(response, "untrash")
+    }
+
     pub fn mkdir(&self, parent_id: &str, name: &str) -> Result<Entry> {
         let token = self.access_token()?;
         let url = format!("{}/drive/v1/files", self.drive_base_url.trim_end_matches('/'));
@@ -388,6 +419,33 @@ impl PikPak {
         }
 
         response.json().context("invalid file_info json")
+    }
+
+    /// Returns (download_url, total_size) for a file.
+    pub fn download_url(&self, file_id: &str) -> Result<(String, u64)> {
+        let info = self.file_info(file_id)?;
+        let url = info
+            .web_content_link
+            .as_deref()
+            .or(info.links.as_ref().and_then(|l| {
+                l.get("application/octet-stream")
+                    .and_then(|v| v.url.as_deref())
+            }))
+            .ok_or_else(|| anyhow!("no download link for file {}", file_id))?
+            .to_string();
+
+        let total_size = info
+            .size
+            .as_deref()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(0);
+
+        Ok((url, total_size))
+    }
+
+    /// Get a reference to the HTTP client.
+    pub fn http(&self) -> &reqwest::blocking::Client {
+        &self.http
     }
 
     pub fn download_to(&self, file_id: &str, dest: &std::path::Path) -> Result<u64> {
@@ -441,6 +499,296 @@ impl PikPak {
         }
 
         response.json().context("invalid quota json")
+    }
+
+    // --- Offline download (cloud download) ---
+
+    /// Submit a URL or magnet link for cloud/offline download.
+    /// Returns the task info including task id and file id.
+    pub fn offline_download(
+        &self,
+        file_url: &str,
+        parent_id: Option<&str>,
+        name: Option<&str>,
+    ) -> Result<OfflineTaskResponse> {
+        let token = self.access_token()?;
+        let url = format!("{}/drive/v1/files", self.drive_base_url.trim_end_matches('/'));
+
+        let mut payload = serde_json::json!({
+            "kind": "drive#file",
+            "upload_type": "UPLOAD_TYPE_URL",
+            "url": { "url": file_url },
+        });
+        if let Some(pid) = parent_id {
+            payload["parent_id"] = serde_json::json!(pid);
+            payload["folder_type"] = serde_json::json!("");
+        } else {
+            payload["folder_type"] = serde_json::json!("DOWNLOAD");
+        }
+        if let Some(n) = name {
+            payload["name"] = serde_json::json!(n);
+        }
+
+        let mut rb = self.http.post(&url).bearer_auth(&token).json(&payload);
+        rb = self.authed_headers(rb);
+
+        let response = rb.send().context("offline download request failed")?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().unwrap_or_default();
+            return Err(anyhow!("offline download failed ({}): {}", status, sanitize(&body)));
+        }
+
+        response.json().context("invalid offline download json")
+    }
+
+    /// List offline/cloud download tasks.
+    pub fn offline_list(&self, limit: u32, phases: &[&str]) -> Result<OfflineListResponse> {
+        let token = self.access_token()?;
+        let url = format!("{}/drive/v1/tasks", self.drive_base_url.trim_end_matches('/'));
+
+        let filters = serde_json::json!({
+            "phase": { "in": phases.join(",") }
+        });
+
+        let mut rb = self
+            .http
+            .get(&url)
+            .bearer_auth(&token)
+            .query(&[
+                ("type", "offline"),
+                ("thumbnail_size", "SIZE_SMALL"),
+                ("limit", &limit.to_string()),
+                ("filters", &filters.to_string()),
+                ("with", "reference_resource"),
+            ]);
+        rb = self.authed_headers(rb);
+
+        let response = rb.send().context("offline list request failed")?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().unwrap_or_default();
+            return Err(anyhow!("offline list failed ({}): {}", status, sanitize(&body)));
+        }
+
+        response.json().context("invalid offline list json")
+    }
+
+    /// Retry a failed offline download task.
+    pub fn offline_task_retry(&self, task_id: &str) -> Result<()> {
+        let token = self.access_token()?;
+        let url = format!("{}/drive/v1/task", self.drive_base_url.trim_end_matches('/'));
+
+        let payload = serde_json::json!({
+            "type": "offline",
+            "create_type": "RETRY",
+            "id": task_id,
+        });
+
+        let mut rb = self.http.post(&url).bearer_auth(&token).json(&payload);
+        rb = self.authed_headers(rb);
+
+        let response = rb.send().context("offline task retry request failed")?;
+        ensure_success(response, "offline task retry")
+    }
+
+    /// Delete offline tasks by task IDs.
+    pub fn delete_tasks(&self, task_ids: &[&str], delete_files: bool) -> Result<()> {
+        let token = self.access_token()?;
+        let url = format!("{}/drive/v1/tasks", self.drive_base_url.trim_end_matches('/'));
+
+        // Build query params: task_ids=a&task_ids=b&delete_files=true
+        let mut pairs: Vec<(&str, String)> = task_ids
+            .iter()
+            .map(|id| ("task_ids", id.to_string()))
+            .collect();
+        pairs.push(("delete_files", delete_files.to_string()));
+
+        let mut rb = self.http.delete(&url).bearer_auth(&token);
+        for (k, v) in &pairs {
+            rb = rb.query(&[(k, v)]);
+        }
+        rb = self.authed_headers(rb);
+
+        let response = rb.send().context("delete tasks request failed")?;
+        ensure_success(response, "delete tasks")
+    }
+
+    // --- Star ---
+
+    /// Star files by IDs.
+    pub fn star(&self, ids: &[&str]) -> Result<()> {
+        let token = self.access_token()?;
+        let url = format!(
+            "{}/drive/v1/files:star",
+            self.drive_base_url.trim_end_matches('/')
+        );
+
+        let payload = serde_json::json!({ "ids": ids });
+        let mut rb = self.http.post(&url).bearer_auth(&token).json(&payload);
+        rb = self.authed_headers(rb);
+
+        let response = rb.send().context("star request failed")?;
+        ensure_success(response, "star")
+    }
+
+    /// Unstar files by IDs.
+    pub fn unstar(&self, ids: &[&str]) -> Result<()> {
+        let token = self.access_token()?;
+        let url = format!(
+            "{}/drive/v1/files:unstar",
+            self.drive_base_url.trim_end_matches('/')
+        );
+
+        let payload = serde_json::json!({ "ids": ids });
+        let mut rb = self.http.post(&url).bearer_auth(&token).json(&payload);
+        rb = self.authed_headers(rb);
+
+        let response = rb.send().context("unstar request failed")?;
+        ensure_success(response, "unstar")
+    }
+
+    /// List starred files.
+    pub fn starred_list(&self, limit: u32) -> Result<Vec<Entry>> {
+        let token = self.access_token()?;
+        let url = format!("{}/drive/v1/files", self.drive_base_url.trim_end_matches('/'));
+
+        let filters = r#"{"trashed":{"eq":false},"system_tag":{"in":"STAR"}}"#;
+        let mut rb = self
+            .http
+            .get(&url)
+            .bearer_auth(&token)
+            .query(&[
+                ("parent_id", "*"),
+                ("limit", &limit.to_string()),
+                ("filters", filters),
+            ]);
+        rb = self.authed_headers(rb);
+
+        let response = rb.send().context("starred list request failed")?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().unwrap_or_default();
+            return Err(anyhow!("starred list failed ({}): {}", status, sanitize(&body)));
+        }
+
+        let payload: DriveListResponse = response.json().context("invalid starred list json")?;
+        let entries = payload
+            .files
+            .into_iter()
+            .map(|f| Entry {
+                id: f.id,
+                name: f.name,
+                kind: if f.kind.contains("folder") {
+                    EntryKind::Folder
+                } else {
+                    EntryKind::File
+                },
+                size: f.size.unwrap_or(0),
+                created_time: f.created_time.unwrap_or_default(),
+            })
+            .collect();
+        Ok(entries)
+    }
+
+    // --- Events ---
+
+    /// Get recent file events (recently added files).
+    pub fn events(&self, limit: u32) -> Result<EventsResponse> {
+        let token = self.access_token()?;
+        let url = format!("{}/drive/v1/events", self.drive_base_url.trim_end_matches('/'));
+
+        let mut rb = self
+            .http
+            .get(&url)
+            .bearer_auth(&token)
+            .query(&[
+                ("thumbnail_size", "SIZE_MEDIUM"),
+                ("limit", &limit.to_string()),
+            ]);
+        rb = self.authed_headers(rb);
+
+        let response = rb.send().context("events request failed")?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().unwrap_or_default();
+            return Err(anyhow!("events failed ({}): {}", status, sanitize(&body)));
+        }
+
+        response.json().context("invalid events json")
+    }
+
+    // --- VIP / Account info ---
+
+    /// Get VIP membership info.
+    pub fn vip_info(&self) -> Result<VipInfoResponse> {
+        let token = self.access_token()?;
+        let url = format!(
+            "{}/drive/v1/privilege/vip",
+            self.drive_base_url.trim_end_matches('/')
+        );
+
+        let mut rb = self.http.get(&url).bearer_auth(&token);
+        rb = self.authed_headers(rb);
+
+        let response = rb.send().context("vip info request failed")?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().unwrap_or_default();
+            return Err(anyhow!("vip info failed ({}): {}", status, sanitize(&body)));
+        }
+
+        response.json().context("invalid vip info json")
+    }
+
+    /// Get invite code.
+    pub fn invite_code(&self) -> Result<String> {
+        let token = self.access_token()?;
+        let url = format!(
+            "{}/vip/v1/activity/inviteCode",
+            self.drive_base_url.trim_end_matches('/')
+        );
+
+        let mut rb = self.http.get(&url).bearer_auth(&token);
+        rb = self.authed_headers(rb);
+
+        let response = rb.send().context("invite code request failed")?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().unwrap_or_default();
+            return Err(anyhow!("invite code failed ({}): {}", status, sanitize(&body)));
+        }
+
+        let data: serde_json::Value = response.json().context("invalid invite code json")?;
+        data["code"]
+            .as_str()
+            .map(|s| s.to_string())
+            .ok_or_else(|| anyhow!("no invite code in response"))
+    }
+
+    /// Get transfer quota info.
+    pub fn transfer_quota(&self) -> Result<serde_json::Value> {
+        let token = self.access_token()?;
+        let url = format!(
+            "{}/vip/v1/quantity/list",
+            self.drive_base_url.trim_end_matches('/')
+        );
+
+        let mut rb = self
+            .http
+            .get(&url)
+            .bearer_auth(&token)
+            .query(&[("type", "transfer")]);
+        rb = self.authed_headers(rb);
+
+        let response = rb.send().context("transfer quota request failed")?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().unwrap_or_default();
+            return Err(anyhow!("transfer quota failed ({}): {}", status, sanitize(&body)));
+        }
+
+        response.json().context("invalid transfer quota json")
     }
 
     /// Resolve a path like "/My Pack/docs" to the folder ID by walking each segment.
@@ -1025,6 +1373,78 @@ pub struct QuotaDetail {
     pub usage: Option<String>,
     #[serde(default)]
     pub usage_in_trash: Option<String>,
+}
+
+// --- Offline / Tasks response types ---
+
+#[derive(Debug, Deserialize)]
+pub struct OfflineTaskResponse {
+    #[serde(default)]
+    pub task: Option<OfflineTask>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct OfflineTask {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub phase: String,
+    #[serde(default)]
+    pub progress: i64,
+    #[serde(default)]
+    pub file_id: Option<String>,
+    #[serde(default)]
+    pub file_size: Option<String>,
+    #[serde(default)]
+    pub message: Option<String>,
+    #[serde(default)]
+    pub created_time: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct OfflineListResponse {
+    #[serde(default)]
+    pub tasks: Vec<OfflineTask>,
+}
+
+// --- Events response types ---
+
+#[derive(Debug, Deserialize)]
+pub struct EventsResponse {
+    #[serde(default)]
+    pub events: Vec<EventEntry>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct EventEntry {
+    #[serde(default)]
+    pub event: Option<String>,
+    #[serde(default)]
+    pub file_name: Option<String>,
+    #[serde(default)]
+    pub file_kind: Option<String>,
+    #[serde(default)]
+    pub created_time: Option<String>,
+}
+
+// --- VIP response types ---
+
+#[derive(Debug, Deserialize)]
+pub struct VipInfoResponse {
+    #[serde(default)]
+    pub data: Option<VipData>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct VipData {
+    #[serde(default, rename = "type")]
+    pub vip_type: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub expire: Option<String>,
 }
 
 // --- Helpers ---

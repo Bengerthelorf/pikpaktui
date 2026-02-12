@@ -40,6 +40,13 @@ fn entry() -> Result<()> {
         "upload" => cmd::upload::run(&args[1..]),
         "share" => cmd::share::run(&args[1..]),
         "quota" => cmd::quota::run(),
+        "offline" => cmd::offline::run(&args[1..]),
+        "tasks" => cmd::tasks::run(&args[1..]),
+        "star" => cmd::star::run(&args[1..]),
+        "unstar" => cmd::unstar::run(&args[1..]),
+        "starred" => cmd::starred::run(&args[1..]),
+        "events" => cmd::events::run(&args[1..]),
+        "vip" => cmd::vip::run(),
         other => Err(anyhow!("unknown command: {other}\nRun `pikpaktui --help` for usage.")),
     }
 }

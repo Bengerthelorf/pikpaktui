@@ -26,12 +26,19 @@ pub fn run() -> Result<()> {
         ("mv <src> <dst>",           "Move a file or folder"),
         ("cp <src> <dst>",           "Copy a file or folder"),
         ("rename <path> <new_name>", "Rename a file or folder"),
-        ("rm <path>",                "Remove a file or folder (to trash)"),
+        ("rm [-f] <path>",           "Remove to trash (-f permanent)"),
         ("mkdir <parent> <name>",    "Create a new folder"),
         ("download <path> [local]",  "Download a file"),
         ("upload <local> [remote]",  "Upload a local file"),
         ("share <path> [-o file]",   "Share file(s) as PikPak links"),
         ("quota",                    "Show storage quota"),
+        ("offline <url> [--to path]","Cloud download a URL/magnet"),
+        ("tasks [list|retry|rm]",   "Manage offline download tasks"),
+        ("star <path...>",          "Star files"),
+        ("unstar <path...>",        "Unstar files"),
+        ("starred [limit]",         "List starred files"),
+        ("events [limit]",          "Recent file events"),
+        ("vip",                     "Show VIP & account info"),
     ];
 
     for (cmd, desc) in commands {

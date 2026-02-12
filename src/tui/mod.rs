@@ -1,6 +1,8 @@
 mod completion;
+pub(crate) mod download;
 mod draw;
 mod handler;
+mod local_completion;
 
 use crate::config::{AppConfig, TuiConfig};
 use crate::pikpak::{Entry, PikPak};
@@ -12,13 +14,15 @@ use crossterm::terminal::{
 };
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::DefaultTerminal;
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::io;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use completion::PathInput;
+use download::DownloadState;
+use local_completion::LocalPathInput;
 
 pub type Credentials = (String, String);
 
@@ -83,6 +87,9 @@ enum InputMode {
         value: String,
     },
     ConfirmDelete,
+    ConfirmPermanentDelete {
+        value: String,
+    },
     // Text input with tab completion
     MoveInput {
         source: Entry,
@@ -100,6 +107,25 @@ enum InputMode {
     CopyPicker {
         source: Entry,
         picker: PickerState,
+    },
+    // Cart & Downloads
+    CartView,
+    DownloadInput {
+        input: LocalPathInput,
+    },
+    DownloadView,
+    // Offline download URL input
+    OfflineInput {
+        value: String,
+    },
+    // Offline tasks list
+    OfflineTasksView {
+        tasks: Vec<crate::pikpak::OfflineTask>,
+        selected: usize,
+    },
+    // File info popup
+    InfoView {
+        info: crate::pikpak::FileInfoResponse,
     },
 }
 
@@ -120,11 +146,19 @@ struct App {
     show_help_sheet: bool,
     result_rx: Receiver<OpResult>,
     result_tx: Sender<OpResult>,
+    // Cart
+    cart: Vec<Entry>,
+    cart_ids: HashSet<String>,
+    cart_selected: usize,
+    // Downloads
+    download_state: DownloadState,
 }
 
 impl App {
     fn new_authed(client: PikPak, config: TuiConfig) -> Self {
         let (tx, rx) = mpsc::channel();
+        let mut dl_state = DownloadState::new();
+        dl_state.tasks = download::load_download_state();
         let mut app = Self {
             client: Arc::new(client),
             config,
@@ -142,6 +176,10 @@ impl App {
             show_help_sheet: false,
             result_rx: rx,
             result_tx: tx,
+            cart: Vec::new(),
+            cart_ids: HashSet::new(),
+            cart_selected: 0,
+            download_state: dl_state,
         };
         app.refresh();
         app
@@ -183,6 +221,10 @@ impl App {
             show_help_sheet: false,
             result_rx: rx,
             result_tx: tx,
+            cart: Vec::new(),
+            cart_ids: HashSet::new(),
+            cart_selected: 0,
+            download_state: DownloadState::new(),
         }
     }
 
@@ -225,6 +267,8 @@ impl App {
                 }
             }
         }
+        // Save download state on exit
+        download::save_download_state(&self.download_state.tasks);
         Ok(())
     }
 
@@ -252,6 +296,12 @@ impl App {
                     self.loading = false;
                 }
             }
+        }
+
+        // Poll download progress
+        let logs = self.download_state.poll(&self.client);
+        for msg in logs {
+            self.push_log(msg);
         }
     }
 
