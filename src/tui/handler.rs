@@ -252,7 +252,7 @@ impl App {
                 }
                 Ok(false)
             }
-            InputMode::InfoView { .. } => {
+            InputMode::InfoView { .. } | InputMode::InfoFolderView { .. } => {
                 // Any key closes info view
                 Ok(false)
             }
@@ -398,15 +398,16 @@ impl App {
                 self.open_offline_tasks_view();
             }
             KeyCode::Char('i') => {
-                if self.config.show_preview {
-                    // Fill right preview pane
-                    if self.current_entry().is_some() {
+                if let Some(entry) = self.current_entry().cloned() {
+                    if self.config.show_preview {
+                        // Fill right preview pane
                         self.fetch_preview_for_selected();
-                    }
-                } else {
-                    // Popup info overlay (no preview pane)
-                    if let Some(entry) = self.current_entry().cloned() {
-                        self.open_info_popup(entry);
+                    } else {
+                        // Popup overlay (no preview pane)
+                        match entry.kind {
+                            EntryKind::File => self.open_info_popup(entry),
+                            EntryKind::Folder => self.open_folder_info_popup(entry),
+                        }
                     }
                 }
             }
@@ -1157,6 +1158,18 @@ impl App {
         let eid = entry.id.clone();
         std::thread::spawn(move || {
             let _ = tx.send(OpResult::Info(client.file_info(&eid)));
+        });
+    }
+
+    fn open_folder_info_popup(&mut self, entry: Entry) {
+        self.input = InputMode::InfoLoading;
+        self.loading = true;
+        let client = Arc::clone(&self.client);
+        let tx = self.result_tx.clone();
+        let eid = entry.id.clone();
+        let name = entry.name.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(OpResult::FolderInfo(name, client.ls(&eid)));
         });
     }
 

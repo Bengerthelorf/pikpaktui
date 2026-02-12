@@ -5,7 +5,7 @@ use ratatui::widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListSt
 use ratatui::Frame;
 
 use crate::config::{BorderStyle, ColorScheme};
-use crate::pikpak::EntryKind;
+use crate::pikpak::{Entry, EntryKind};
 use crate::theme;
 
 use super::completion::PathInput;
@@ -611,7 +611,7 @@ impl App {
             InputMode::InfoLoading => vec![
                 ("Esc", "cancel"),
             ],
-            InputMode::InfoView { .. } => vec![
+            InputMode::InfoView { .. } | InputMode::InfoFolderView { .. } => vec![
                 ("any key", "close"),
             ],
             _ => vec![],
@@ -829,6 +829,9 @@ impl App {
             }
             InputMode::InfoView { info } => {
                 self.draw_info_overlay(f, info);
+            }
+            InputMode::InfoFolderView { name, entries } => {
+                self.draw_info_folder_overlay(f, name, entries);
             }
         }
     }
@@ -1737,6 +1740,73 @@ impl App {
             self.styled_block()
                 .title(format!(" \u{2139} Info: {} ", truncate_name(&info.name, 30)))
                 .title_style(Style::default().fg(in_tc).bg(Color::DarkGray).add_modifier(Modifier::BOLD))
+                .border_style(Style::default().fg(in_bc)),
+        );
+        f.render_widget(p, area);
+    }
+
+    // --- Folder listing popup (show_preview=false) ---
+
+    fn draw_info_folder_overlay(&self, f: &mut Frame, name: &str, entries: &[Entry]) {
+        let visible = entries.len().min(20);
+        let total_lines = 2 + visible + 2; // padding + items + hint + padding
+        let pct = ((total_lines as u16 * 100) / f.area().height.max(1))
+            .max(25)
+            .min(70);
+        let area = centered_rect(60, pct, f.area());
+        f.render_widget(Clear, area);
+
+        let mut lines = vec![Line::from("")];
+
+        if entries.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "  (empty folder)",
+                Style::default().fg(Color::DarkGray),
+            )));
+        } else {
+            for e in entries.iter().take(20) {
+                let cat = theme::categorize(e);
+                let ico = theme::icon(cat, self.config.nerd_font);
+                let c = self.file_color(cat);
+                lines.push(Line::from(vec![
+                    Span::styled("  ", Style::default()),
+                    Span::styled(ico, Style::default().fg(c)),
+                    Span::styled(" ", Style::default()),
+                    Span::styled(&e.name, Style::default().fg(c)),
+                ]));
+            }
+            if entries.len() > 20 {
+                lines.push(Line::from(Span::styled(
+                    format!("  ... and {} more", entries.len() - 20),
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
+        }
+
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  Press any key to close",
+            Style::default().fg(Color::DarkGray),
+        )));
+
+        let (in_bc, in_tc) = if self.is_vibrant() {
+            (Color::LightCyan, Color::LightCyan)
+        } else {
+            (Color::Cyan, Color::Cyan)
+        };
+        let title = format!(
+            " {} ({}) ",
+            truncate_name(name, 25),
+            entries.len()
+        );
+        let p = Paragraph::new(Text::from(lines)).block(
+            self.styled_block()
+                .title(title)
+                .title_style(
+                    Style::default()
+                        .fg(in_tc)
+                        .add_modifier(Modifier::BOLD),
+                )
                 .border_style(Style::default().fg(in_bc)),
         );
         f.render_widget(p, area);

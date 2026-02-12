@@ -70,6 +70,7 @@ enum OpResult {
     Ok(String),
     Err(String),
     Info(Result<FileInfoResponse>),
+    FolderInfo(String, Result<Vec<Entry>>),
     ParentLs(Result<Vec<Entry>>),
     PreviewLs(String, Result<Vec<Entry>>),
     PreviewInfo(String, Result<FileInfoResponse>),
@@ -135,10 +136,14 @@ enum InputMode {
         tasks: Vec<crate::pikpak::OfflineTask>,
         selected: usize,
     },
-    // File info popup (show_preview=false mode)
+    // Info popup (show_preview=false mode)
     InfoLoading,
     InfoView {
         info: FileInfoResponse,
+    },
+    InfoFolderView {
+        name: String,
+        entries: Vec<Entry>,
     },
 }
 
@@ -351,6 +356,19 @@ impl App {
                         self.input = InputMode::Normal;
                     }
                     self.push_log(format!("File info failed: {e:#}"));
+                }
+                OpResult::FolderInfo(name, Ok(entries)) => {
+                    self.loading = false;
+                    if matches!(self.input, InputMode::InfoLoading) {
+                        self.input = InputMode::InfoFolderView { name, entries };
+                    }
+                }
+                OpResult::FolderInfo(_, Err(e)) => {
+                    self.loading = false;
+                    if matches!(self.input, InputMode::InfoLoading) {
+                        self.input = InputMode::Normal;
+                    }
+                    self.push_log(format!("Folder listing failed: {e:#}"));
                 }
                 OpResult::ParentLs(Ok(entries)) => {
                     self.parent_entries = entries;
