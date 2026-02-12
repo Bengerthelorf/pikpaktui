@@ -252,8 +252,13 @@ impl App {
                 }
                 Ok(false)
             }
-            InputMode::InfoView { .. } | InputMode::InfoFolderView { .. } => {
+            InputMode::InfoView { .. } => {
                 // Any key closes info view
+                Ok(false)
+            }
+            InputMode::InfoFolderView { entries, .. } => {
+                // Cache listing so Enter can reuse it
+                self.preview_state = PreviewState::FolderListing(entries);
                 Ok(false)
             }
         }
@@ -319,10 +324,24 @@ impl App {
             }
             KeyCode::Backspace => {
                 if let Some((parent_id, _)) = self.breadcrumb.pop() {
-                    self.current_folder_id = parent_id;
-                    self.selected = 0;
-                    self.clear_preview();
-                    self.refresh();
+                    let leaving_id = std::mem::replace(&mut self.current_folder_id, parent_id);
+                    let old_entries = std::mem::replace(
+                        &mut self.entries,
+                        std::mem::take(&mut self.parent_entries),
+                    );
+                    self.selected = self.parent_selected;
+
+                    // Preview: show children of the folder we just left
+                    if self.config.show_preview {
+                        self.preview_state = PreviewState::FolderListing(old_entries);
+                        self.preview_target_id = Some(leaving_id);
+                    } else {
+                        self.clear_preview();
+                    }
+                    self.pending_preview_fetch = false;
+
+                    // Only need to fetch grandparent entries
+                    self.refresh_parent();
                 }
             }
             KeyCode::Char('l') => {
@@ -1164,12 +1183,13 @@ impl App {
     fn open_folder_info_popup(&mut self, entry: Entry) {
         self.input = InputMode::InfoLoading;
         self.loading = true;
+        self.preview_target_id = Some(entry.id.clone());
+        self.preview_target_name = Some(entry.name.clone());
         let client = Arc::clone(&self.client);
         let tx = self.result_tx.clone();
         let eid = entry.id.clone();
-        let name = entry.name.clone();
         std::thread::spawn(move || {
-            let _ = tx.send(OpResult::FolderInfo(name, client.ls(&eid)));
+            let _ = tx.send(OpResult::PreviewLs(eid.clone(), client.ls(&eid)));
         });
     }
 

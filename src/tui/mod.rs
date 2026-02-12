@@ -70,7 +70,6 @@ enum OpResult {
     Ok(String),
     Err(String),
     Info(Result<FileInfoResponse>),
-    FolderInfo(String, Result<Vec<Entry>>),
     ParentLs(Result<Vec<Entry>>),
     PreviewLs(String, Result<Vec<Entry>>),
     PreviewInfo(String, Result<FileInfoResponse>),
@@ -169,6 +168,7 @@ struct App {
     parent_selected: usize,
     preview_state: PreviewState,
     preview_target_id: Option<String>,
+    preview_target_name: Option<String>,
     show_logs_overlay: bool,
     last_cursor_move: Instant,
     pending_preview_fetch: bool,
@@ -206,6 +206,7 @@ impl App {
             parent_selected: 0,
             preview_state: PreviewState::Empty,
             preview_target_id: None,
+            preview_target_name: None,
             show_logs_overlay: false,
             last_cursor_move: Instant::now(),
             pending_preview_fetch: false,
@@ -258,6 +259,7 @@ impl App {
             parent_selected: 0,
             preview_state: PreviewState::Empty,
             preview_target_id: None,
+            preview_target_name: None,
             show_logs_overlay: false,
             last_cursor_move: Instant::now(),
             pending_preview_fetch: false,
@@ -357,19 +359,6 @@ impl App {
                     }
                     self.push_log(format!("File info failed: {e:#}"));
                 }
-                OpResult::FolderInfo(name, Ok(entries)) => {
-                    self.loading = false;
-                    if matches!(self.input, InputMode::InfoLoading) {
-                        self.input = InputMode::InfoFolderView { name, entries };
-                    }
-                }
-                OpResult::FolderInfo(_, Err(e)) => {
-                    self.loading = false;
-                    if matches!(self.input, InputMode::InfoLoading) {
-                        self.input = InputMode::Normal;
-                    }
-                    self.push_log(format!("Folder listing failed: {e:#}"));
-                }
                 OpResult::ParentLs(Ok(entries)) => {
                     self.parent_entries = entries;
                     // Find current folder in parent entries
@@ -385,15 +374,25 @@ impl App {
                     self.push_log(format!("Parent listing failed: {e:#}"));
                 }
                 OpResult::PreviewLs(id, Ok(children)) => {
-                    if self.preview_target_id.as_deref() == Some(&id) {
+                    if matches!(self.input, InputMode::InfoLoading) {
+                        // Popup mode (show_preview=false)
+                        self.loading = false;
+                        let name = self.preview_target_name.take().unwrap_or_default();
+                        self.preview_state = PreviewState::FolderListing(children.clone());
+                        self.preview_target_id = Some(id);
+                        self.input = InputMode::InfoFolderView { name, entries: children };
+                    } else if self.preview_target_id.as_deref() == Some(&id) {
                         self.preview_state = PreviewState::FolderListing(children);
                     }
                 }
                 OpResult::PreviewLs(id, Err(e)) => {
-                    if self.preview_target_id.as_deref() == Some(&id) {
+                    if matches!(self.input, InputMode::InfoLoading) {
+                        self.loading = false;
+                        self.input = InputMode::Normal;
+                    } else if self.preview_target_id.as_deref() == Some(&id) {
                         self.preview_state = PreviewState::Empty;
                     }
-                    self.push_log(format!("Preview listing failed: {e:#}"));
+                    self.push_log(format!("Folder listing failed: {e:#}"));
                 }
                 OpResult::PreviewInfo(id, Ok(info)) => {
                     if self.preview_target_id.as_deref() == Some(&id) {
@@ -498,6 +497,7 @@ impl App {
     fn clear_preview(&mut self) {
         self.preview_state = PreviewState::Empty;
         self.preview_target_id = None;
+        self.preview_target_name = None;
         self.pending_preview_fetch = false;
     }
 
