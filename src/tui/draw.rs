@@ -4,6 +4,7 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::Frame;
 
+use crate::config::{BorderStyle, ColorScheme};
 use crate::pikpak::EntryKind;
 use crate::theme;
 
@@ -20,6 +21,40 @@ impl App {
             InputMode::DownloadView => self.draw_download_view(f),
             InputMode::OfflineTasksView { .. } => self.draw_offline_tasks_view(f),
             _ => self.draw_main(f),
+        }
+    }
+
+    /// Build a `Block` with the configured border style applied.
+    fn styled_block(&self) -> Block<'static> {
+        let block = Block::default().borders(Borders::ALL);
+        match self.config.border_style {
+            BorderStyle::Rounded => block.border_type(BorderType::Rounded),
+            BorderStyle::Thick | BorderStyle::ThickRounded => {
+                block.border_type(BorderType::Thick)
+            }
+            BorderStyle::Double => block.border_type(BorderType::Double),
+        }
+    }
+
+    fn is_vibrant(&self) -> bool {
+        self.config.color_scheme == ColorScheme::Vibrant
+    }
+
+    /// File-type color respecting the selected color scheme.
+    fn file_color(&self, cat: theme::FileCategory) -> Color {
+        theme::color_for_scheme(cat, self.config.color_scheme)
+    }
+
+    /// Highlight style for selected items.
+    fn highlight_style(&self) -> Style {
+        if self.is_vibrant() {
+            Style::default()
+                .fg(Color::LightCyan)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
         }
     }
 
@@ -89,13 +124,17 @@ impl App {
             hint_spans.extend(Self::styled_help_spans(&login_hints));
             lines.push(Line::from(hint_spans));
 
+            let (bc, tc) = if self.is_vibrant() {
+                (Color::LightCyan, Color::LightCyan)
+            } else {
+                (Color::Cyan, Color::Cyan)
+            };
             let p = Paragraph::new(Text::from(lines))
                 .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .border_type(BorderType::Rounded)
+                    self.styled_block()
                         .title(" PikPak Login ")
-                        .border_style(Style::default().fg(Color::Cyan)),
+                        .title_style(Style::default().fg(tc))
+                        .border_style(Style::default().fg(bc)),
                 )
                 .wrap(Wrap { trim: false });
             f.render_widget(p, area);
@@ -136,7 +175,7 @@ impl App {
             .map(|e| {
                 let cat = theme::categorize(e);
                 let ico = theme::icon(cat, self.config.nerd_font);
-                let c = theme::color(cat);
+                let c = self.file_color(cat);
                 let size_str = match e.kind {
                     EntryKind::Folder => String::new(),
                     EntryKind::File => format!("  {}", format_size(e.size)),
@@ -166,20 +205,19 @@ impl App {
             state.select(Some(self.selected.min(self.entries.len() - 1)));
         }
 
+        let (file_bc, file_tc) = if self.is_vibrant() {
+            (Color::LightBlue, Color::LightGreen)
+        } else {
+            (Color::Cyan, Color::Green)
+        };
         let list = List::new(items)
             .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded)
+                self.styled_block()
                     .title(left_title)
-                    .title_style(Style::default().fg(Color::Green))
-                    .border_style(Style::default().fg(Color::Cyan)),
+                    .title_style(Style::default().fg(file_tc))
+                    .border_style(Style::default().fg(file_bc)),
             )
-            .highlight_style(
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            )
+            .highlight_style(self.highlight_style())
             .highlight_symbol("› ");
         f.render_stateful_widget(list, chunks[0], &mut state);
 
@@ -192,14 +230,17 @@ impl App {
             .rev()
             .map(|s| Line::from(s.as_str()))
             .collect();
+        let (log_bc, log_tc) = if self.is_vibrant() {
+            (Color::Magenta, Color::LightMagenta)
+        } else {
+            (Color::Cyan, Color::Green)
+        };
         let logs = Paragraph::new(Text::from(log_lines))
             .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded)
+                self.styled_block()
                     .title(" Logs ")
-                    .title_style(Style::default().fg(Color::Green))
-                    .border_style(Style::default().fg(Color::Cyan)),
+                    .title_style(Style::default().fg(log_tc))
+                    .border_style(Style::default().fg(log_bc)),
             )
             .wrap(Wrap { trim: false });
         f.render_widget(logs, chunks[1]);
@@ -299,6 +340,9 @@ impl App {
                 ("x", "delete"),
                 ("Esc", "back"),
             ],
+            InputMode::InfoLoading => vec![
+                ("Esc", "cancel"),
+            ],
             InputMode::InfoView { .. } => vec![
                 ("any key", "close"),
             ],
@@ -346,6 +390,11 @@ impl App {
                 let rename_hints = vec![("Enter", "confirm"), ("Esc", "cancel")];
                 let mut hint_spans = vec![Span::raw("  ")];
                 hint_spans.extend(Self::styled_help_spans(&rename_hints));
+                let (rn_bc, rn_tc) = if self.is_vibrant() {
+                    (Color::LightYellow, Color::LightYellow)
+                } else {
+                    (Color::Cyan, Color::Yellow)
+                };
                 let p = Paragraph::new(Text::from(vec![
                     Line::from(""),
                     Line::from(vec![
@@ -359,12 +408,10 @@ impl App {
                     Line::from(hint_spans),
                 ]))
                 .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .border_type(BorderType::Rounded)
+                    self.styled_block()
                         .title(" Rename ")
-                        .title_style(Style::default().fg(Color::Yellow))
-                        .border_style(Style::default().fg(Color::Cyan)),
+                        .title_style(Style::default().fg(rn_tc))
+                        .border_style(Style::default().fg(rn_bc)),
                 );
                 f.render_widget(p, area);
             }
@@ -374,6 +421,11 @@ impl App {
                 let mkdir_hints = vec![("Enter", "confirm"), ("Esc", "cancel")];
                 let mut hint_spans = vec![Span::raw("  ")];
                 hint_spans.extend(Self::styled_help_spans(&mkdir_hints));
+                let (mk_bc, mk_tc) = if self.is_vibrant() {
+                    (Color::LightYellow, Color::LightYellow)
+                } else {
+                    (Color::Cyan, Color::Yellow)
+                };
                 let p = Paragraph::new(Text::from(vec![
                     Line::from(""),
                     Line::from(vec![
@@ -387,12 +439,10 @@ impl App {
                     Line::from(hint_spans),
                 ]))
                 .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .border_type(BorderType::Rounded)
+                    self.styled_block()
                         .title(" New Folder ")
-                        .title_style(Style::default().fg(Color::Yellow))
-                        .border_style(Style::default().fg(Color::Cyan)),
+                        .title_style(Style::default().fg(mk_tc))
+                        .border_style(Style::default().fg(mk_bc)),
                 );
                 f.render_widget(p, area);
             }
@@ -425,14 +475,17 @@ impl App {
                     Line::from(""),
                     Line::from(hint_spans),
                 ]))
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .border_type(BorderType::Rounded)
+                .block({
+                    let (del_bc, del_tc) = if self.is_vibrant() {
+                        (Color::LightRed, Color::LightRed)
+                    } else {
+                        (Color::Red, Color::Red)
+                    };
+                    self.styled_block()
                         .title(" Confirm Remove ")
-                        .title_style(Style::default().fg(Color::Red))
-                        .border_style(Style::default().fg(Color::Red)),
-                );
+                        .title_style(Style::default().fg(del_tc))
+                        .border_style(Style::default().fg(del_bc))
+                });
                 f.render_widget(p, area);
             }
             InputMode::ConfirmPermanentDelete { value } => {
@@ -484,9 +537,7 @@ impl App {
 
                 let p = Paragraph::new(Text::from(lines))
                 .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .border_type(BorderType::Rounded)
+                    self.styled_block()
                         .title(" \u{26a0} Permanent Delete ")
                         .title_style(Style::default().fg(Color::Red))
                         .border_style(Style::default().fg(Color::Red)),
@@ -501,6 +552,9 @@ impl App {
             }
             InputMode::OfflineInput { value } => {
                 self.draw_offline_input_overlay(f, value, cur);
+            }
+            InputMode::InfoLoading => {
+                self.draw_info_loading_overlay(f);
             }
             InputMode::InfoView { info } => {
                 self.draw_info_overlay(f, info);
@@ -577,13 +631,16 @@ impl App {
         hint_spans.extend(Self::styled_help_spans(&input_hints));
         lines.push(Line::from(hint_spans));
 
+        let (mc_bc, mc_tc) = if self.is_vibrant() {
+            (Color::LightCyan, Color::LightYellow)
+        } else {
+            (Color::Cyan, Color::Yellow)
+        };
         let p = Paragraph::new(Text::from(lines)).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
+            self.styled_block()
                 .title(format!(" {} ", title))
-                .title_style(Style::default().fg(Color::Yellow))
-                .border_style(Style::default().fg(Color::Cyan)),
+                .title_style(Style::default().fg(mc_tc))
+                .border_style(Style::default().fg(mc_bc)),
         );
         f.render_widget(p, area);
     }
@@ -615,7 +672,7 @@ impl App {
             .map(|e| {
                 let cat = theme::categorize(e);
                 let ico = theme::icon(cat, self.config.nerd_font);
-                let c = theme::color(cat);
+                let c = self.file_color(cat);
                 ListItem::new(Line::from(vec![
                     Span::styled(ico, Style::default().fg(c)),
                     Span::styled(" ", Style::default()),
@@ -630,9 +687,7 @@ impl App {
         }
         let source_list = List::new(source_items)
             .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded)
+                self.styled_block()
                     .title(format!(" Source: {} ", self.current_path_display()))
                     .title_style(Style::default().fg(Color::DarkGray))
                     .border_style(Style::default().fg(Color::DarkGray)),
@@ -682,20 +737,19 @@ impl App {
             picker_state.select(Some(picker.selected.min(folders.len() - 1)));
         }
 
+        let (pk_bc, pk_tc) = if self.is_vibrant() {
+            (Color::LightYellow, Color::LightYellow)
+        } else {
+            (Color::Yellow, Color::Yellow)
+        };
         let plist = List::new(picker_items)
             .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded)
+                self.styled_block()
                     .title(title)
-                    .title_style(Style::default().fg(Color::Yellow))
-                    .border_style(Style::default().fg(Color::Yellow)),
+                    .title_style(Style::default().fg(pk_tc))
+                    .border_style(Style::default().fg(pk_bc)),
             )
-            .highlight_style(
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            )
+            .highlight_style(self.highlight_style())
             .highlight_symbol("› ");
         f.render_stateful_widget(plist, chunks[1], &mut picker_state);
 
@@ -831,13 +885,16 @@ impl App {
             Style::default().fg(Color::DarkGray),
         )));
 
+        let (hp_bc, hp_tc) = if self.is_vibrant() {
+            (Color::LightMagenta, Color::LightMagenta)
+        } else {
+            (Color::Cyan, Color::Cyan)
+        };
         let p = Paragraph::new(Text::from(lines)).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
+            self.styled_block()
                 .title(" Help ")
-                .title_style(Style::default().fg(Color::Cyan))
-                .border_style(Style::default().fg(Color::Cyan)),
+                .title_style(Style::default().fg(hp_tc))
+                .border_style(Style::default().fg(hp_bc)),
         );
         f.render_widget(p, sheet_area);
     }
@@ -909,13 +966,16 @@ impl App {
         hint_spans.extend(Self::styled_help_spans(&cart_hints));
         lines.push(Line::from(hint_spans));
 
+        let (ct_bc, ct_tc) = if self.is_vibrant() {
+            (Color::LightMagenta, Color::LightMagenta)
+        } else {
+            (Color::Yellow, Color::Yellow)
+        };
         let p = Paragraph::new(Text::from(lines)).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
+            self.styled_block()
                 .title(title)
-                .title_style(Style::default().fg(Color::Yellow))
-                .border_style(Style::default().fg(Color::Yellow)),
+                .title_style(Style::default().fg(ct_tc))
+                .border_style(Style::default().fg(ct_bc)),
         );
         f.render_widget(p, area);
     }
@@ -974,14 +1034,17 @@ impl App {
         hint_spans.extend(Self::styled_help_spans(&dl_hints));
         lines.push(Line::from(hint_spans));
 
+        let (dl_bc, dl_tc) = if self.is_vibrant() {
+            (Color::LightGreen, Color::LightGreen)
+        } else {
+            (Color::Cyan, Color::Yellow)
+        };
         let cart_count = self.cart.len();
         let p = Paragraph::new(Text::from(lines)).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
+            self.styled_block()
                 .title(format!(" Download {} files ", cart_count))
-                .title_style(Style::default().fg(Color::Yellow))
-                .border_style(Style::default().fg(Color::Cyan)),
+                .title_style(Style::default().fg(dl_tc))
+                .border_style(Style::default().fg(dl_bc)),
         );
         f.render_widget(p, area);
     }
@@ -1074,6 +1137,11 @@ impl App {
             })
             .collect();
 
+        let (dv_bc, dv_tc) = if self.is_vibrant() {
+            (Color::LightGreen, Color::LightGreen)
+        } else {
+            (Color::Cyan, Color::Green)
+        };
         if items.is_empty() {
             let empty_msg = Paragraph::new(Text::from(vec![
                 Line::from(""),
@@ -1083,12 +1151,10 @@ impl App {
                 )),
             ]))
             .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded)
+                self.styled_block()
                     .title(title)
-                    .title_style(Style::default().fg(Color::Green))
-                    .border_style(Style::default().fg(Color::Cyan)),
+                    .title_style(Style::default().fg(dv_tc))
+                    .border_style(Style::default().fg(dv_bc)),
             );
             f.render_widget(empty_msg, main_area);
         } else {
@@ -1099,12 +1165,10 @@ impl App {
 
             let list = List::new(items)
                 .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .border_type(BorderType::Rounded)
+                    self.styled_block()
                         .title(title)
-                        .title_style(Style::default().fg(Color::Green))
-                        .border_style(Style::default().fg(Color::Cyan)),
+                        .title_style(Style::default().fg(dv_tc))
+                        .border_style(Style::default().fg(dv_bc)),
                 )
                 .highlight_style(Style::default())
                 .highlight_symbol("");
@@ -1151,14 +1215,17 @@ impl App {
             Line::from(""),
             Line::from(hint_spans),
         ]))
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
+        .block({
+            let (ol_bc, ol_tc) = if self.is_vibrant() {
+                (Color::LightCyan, Color::LightCyan)
+            } else {
+                (Color::Cyan, Color::Yellow)
+            };
+            self.styled_block()
                 .title(" Offline Download ")
-                .title_style(Style::default().fg(Color::Yellow))
-                .border_style(Style::default().fg(Color::Cyan)),
-        );
+                .title_style(Style::default().fg(ol_tc))
+                .border_style(Style::default().fg(ol_bc))
+        });
         f.render_widget(p, area);
     }
 
@@ -1249,6 +1316,11 @@ impl App {
             })
             .collect();
 
+        let (ot_bc, ot_tc) = if self.is_vibrant() {
+            (Color::LightBlue, Color::LightBlue)
+        } else {
+            (Color::Cyan, Color::Green)
+        };
         if items.is_empty() {
             let empty_msg = Paragraph::new(Text::from(vec![
                 Line::from(""),
@@ -1258,12 +1330,10 @@ impl App {
                 )),
             ]))
             .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded)
+                self.styled_block()
                     .title(title)
-                    .title_style(Style::default().fg(Color::Green))
-                    .border_style(Style::default().fg(Color::Cyan)),
+                    .title_style(Style::default().fg(ot_tc))
+                    .border_style(Style::default().fg(ot_bc)),
             );
             f.render_widget(empty_msg, main_area);
         } else {
@@ -1274,12 +1344,10 @@ impl App {
 
             let list = List::new(items)
                 .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .border_type(BorderType::Rounded)
+                    self.styled_block()
                         .title(title)
-                        .title_style(Style::default().fg(Color::Green))
-                        .border_style(Style::default().fg(Color::Cyan)),
+                        .title_style(Style::default().fg(ot_tc))
+                        .border_style(Style::default().fg(ot_bc)),
                 )
                 .highlight_style(Style::default())
                 .highlight_symbol("");
@@ -1297,6 +1365,40 @@ impl App {
         if self.show_help_sheet {
             self.draw_help_sheet(f);
         }
+    }
+
+    // --- Info loading overlay ---
+
+    fn draw_info_loading_overlay(&self, f: &mut Frame) {
+        let area = centered_rect(45, 20, f.area());
+        f.render_widget(Clear, area);
+
+        let spinner = SPINNER_FRAMES[self.spinner_idx];
+        let (in_bc, in_tc) = if self.is_vibrant() {
+            (Color::LightCyan, Color::LightCyan)
+        } else {
+            (Color::Cyan, Color::Cyan)
+        };
+
+        let p = Paragraph::new(Text::from(vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                format!("  {} Loading file info...", spinner),
+                Style::default().fg(Color::Cyan),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                "  Esc to cancel",
+                Style::default().fg(Color::DarkGray),
+            )),
+        ]))
+        .block(
+            self.styled_block()
+                .title(" \u{2139} Info ")
+                .title_style(Style::default().fg(in_tc).add_modifier(Modifier::BOLD))
+                .border_style(Style::default().fg(in_bc)),
+        );
+        f.render_widget(p, area);
     }
 
     // --- Info overlay ---
@@ -1348,13 +1450,16 @@ impl App {
             Style::default().fg(Color::DarkGray),
         )));
 
+        let (in_bc, in_tc) = if self.is_vibrant() {
+            (Color::LightCyan, Color::LightCyan)
+        } else {
+            (Color::Cyan, Color::Cyan)
+        };
         let p = Paragraph::new(Text::from(lines)).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .title(format!(" Info: {} ", truncate_name(&info.name, 30)))
-                .title_style(Style::default().fg(Color::Cyan))
-                .border_style(Style::default().fg(Color::Cyan)),
+            self.styled_block()
+                .title(format!(" \u{2139} Info: {} ", truncate_name(&info.name, 30)))
+                .title_style(Style::default().fg(in_tc).bg(Color::DarkGray).add_modifier(Modifier::BOLD))
+                .border_style(Style::default().fg(in_bc)),
         );
         f.render_widget(p, area);
     }

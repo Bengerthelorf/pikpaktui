@@ -61,6 +61,34 @@ fn home_config_dir() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".config"))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum BorderStyle {
+    Rounded,
+    Thick,
+    ThickRounded,
+    Double,
+}
+
+impl Default for BorderStyle {
+    fn default() -> Self {
+        Self::Thick
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ColorScheme {
+    Vibrant,
+    Classic,
+}
+
+impl Default for ColorScheme {
+    fn default() -> Self {
+        Self::Vibrant
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct TuiConfig {
     #[serde(default)]
@@ -71,6 +99,10 @@ pub struct TuiConfig {
     pub show_help_bar: bool,
     #[serde(default)]
     pub cli_nerd_font: bool,
+    #[serde(default)]
+    pub border_style: BorderStyle,
+    #[serde(default)]
+    pub color_scheme: ColorScheme,
 }
 
 fn default_true() -> bool {
@@ -88,6 +120,8 @@ impl Default for TuiConfig {
             move_mode: "picker".to_string(),
             show_help_bar: true,
             cli_nerd_font: false,
+            border_style: BorderStyle::default(),
+            color_scheme: ColorScheme::default(),
         }
     }
 }

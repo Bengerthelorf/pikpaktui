@@ -61,6 +61,7 @@ enum OpResult {
     Ls(Result<Vec<Entry>>),
     Ok(String),
     Err(String),
+    Info(Result<crate::pikpak::FileInfoResponse>),
 }
 
 struct PickerState {
@@ -123,7 +124,8 @@ enum InputMode {
         tasks: Vec<crate::pikpak::OfflineTask>,
         selected: usize,
     },
-    // File info popup
+    // File info loading / popup
+    InfoLoading,
     InfoView {
         info: crate::pikpak::FileInfoResponse,
     },
@@ -294,6 +296,19 @@ impl App {
                 OpResult::Err(msg) => {
                     self.push_log(msg);
                     self.loading = false;
+                }
+                OpResult::Info(Ok(info)) => {
+                    self.loading = false;
+                    if matches!(self.input, InputMode::InfoLoading) {
+                        self.input = InputMode::InfoView { info };
+                    }
+                }
+                OpResult::Info(Err(e)) => {
+                    self.loading = false;
+                    if matches!(self.input, InputMode::InfoLoading) {
+                        self.input = InputMode::Normal;
+                    }
+                    self.push_log(format!("File info failed: {e:#}"));
                 }
             }
         }

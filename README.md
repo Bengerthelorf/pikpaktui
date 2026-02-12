@@ -6,11 +6,14 @@ A TUI and CLI client for [PikPak](https://mypikpak.com) cloud storage, written i
 
 ## Features
 
-- **TUI file browser** - Navigate folders, breadcrumb path display, Nerd Font icons
-- **CLI subcommands** - `ls` / `mv` / `cp` / `rename` / `rm` / `mkdir` / `download` / `upload` / `share` / `quota`
-- **File operations** - Move, copy, rename, delete (trash), create folder
+- **TUI file browser** - Navigate folders, breadcrumb path display, Nerd Font icons, configurable color scheme and border style
+- **CLI subcommands** - `ls` / `mv` / `cp` / `rename` / `rm` / `mkdir` / `download` / `upload` / `share` / `quota` / `offline` / `tasks` / `star` / `unstar` / `starred` / `vip` / `events`
+- **File operations** - Move, copy, rename, delete (trash / permanent), create folder
 - **Folder picker** - Visual two-pane picker for move/copy destinations, with tab-completion text input as alternative
-- **File download** - Download files with resume support
+- **Cart & batch download** - Add files to cart, batch download with progress bars, pause/resume
+- **Offline download** - Submit URLs/magnets for cloud download, view and manage offline tasks
+- **Star / VIP** - Star/unstar files, check VIP status
+- **File info** - View file details (size, hash, download link) with loading indicator
 - **Quota query** - Check storage usage
 - **Login** - TUI login form with auto-saved credentials and persistent sessions
 - **Pure Rust** - Built with `ratatui` + `crossterm` + `reqwest` (rustls), no OpenSSL or C dependencies
@@ -69,6 +72,13 @@ pikpaktui download "/My Pack/file.txt" /tmp/file.txt  # Download to path
 pikpaktui upload ./local-file.txt "/My Pack"          # Upload a file
 pikpaktui share "/My Pack/file.txt"                   # Print PikPak share links
 pikpaktui share "/My Pack" -o links.txt               # Save share links to file
+pikpaktui offline "magnet:?xt=..."                    # Submit offline download
+pikpaktui tasks                                       # List offline tasks
+pikpaktui star "/My Pack/file.txt"                    # Star a file
+pikpaktui unstar "/My Pack/file.txt"                  # Unstar a file
+pikpaktui starred                                     # List starred files
+pikpaktui vip                                         # Show VIP status
+pikpaktui events                                      # List recent events
 pikpaktui quota                                       # Show storage quota
 ```
 
@@ -86,8 +96,15 @@ CLI mode requires login: it checks for a valid session first, then falls back to
 | `c` | Copy |
 | `m` | Move |
 | `n` | Rename |
-| `d` | Remove (trash) |
+| `d` | Remove (trash / permanent) |
 | `f` | New folder |
+| `s` | Star / unstar |
+| `a` | Add to cart |
+| `A` | View cart |
+| `D` | Downloads view |
+| `o` | Offline download |
+| `O` | Offline tasks |
+| `i` | File info |
 | `h` | Help panel |
 | `q` | Quit |
 
@@ -137,6 +154,8 @@ nerd_font = false       # Enable Nerd Font icons (TUI)
 cli_nerd_font = false   # Enable Nerd Font icons (CLI)
 move_mode = "picker"    # "picker" (two-pane) or "input" (text input)
 show_help_bar = true    # Show help bar at the bottom
+border_style = "thick"  # "rounded" | "thick" | "double"
+color_scheme = "vibrant" # "vibrant" | "classic"
 ```
 
 ## Project Structure
@@ -146,7 +165,7 @@ src/
   main.rs           Entry point, TUI launcher
   config.rs         config.yaml / config.toml loading
   pikpak.rs         PikPak API client (auth, file ops, download, upload)
-  theme.rs          File icons and colors
+  theme.rs          File icons, colors, and color schemes
   cmd/
     mod.rs          Shared CLI helpers (client init, path utils)
     ls.rs           ls command
@@ -159,12 +178,21 @@ src/
     upload.rs       upload command
     share.rs        share command
     quota.rs        quota command
+    offline.rs      offline download command
+    tasks.rs        offline tasks command
+    star.rs         star command
+    unstar.rs       unstar command
+    starred.rs      starred files command
+    vip.rs          VIP status command
+    events.rs       events command
     help.rs         help command
   tui/
     mod.rs          App state and event loop
-    draw.rs         UI rendering (file list, picker, help sheet)
+    draw.rs         UI rendering (file list, picker, overlays, configurable themes)
     handler.rs      Keyboard input handling
-    completion.rs   Path tab-completion
+    completion.rs   Remote path tab-completion
+    local_completion.rs  Local path tab-completion
+    download.rs     Download manager with progress tracking
 ```
 
 ## License

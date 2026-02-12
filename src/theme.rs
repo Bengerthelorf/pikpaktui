@@ -1,3 +1,4 @@
+use crate::config::ColorScheme;
 use crate::pikpak::{Entry, EntryKind};
 use ratatui::style::Color;
 
@@ -68,16 +69,28 @@ pub fn icon(category: FileCategory, nerd_font: bool) -> &'static str {
     }
 }
 
-pub fn color(category: FileCategory) -> Color {
-    match category {
-        FileCategory::Folder => Color::Blue,
-        FileCategory::Archive => Color::Red,
-        FileCategory::Image => Color::Magenta,
-        FileCategory::Video => Color::Cyan,
-        FileCategory::Audio => Color::LightCyan,
-        FileCategory::Document => Color::Green,
-        FileCategory::Code => Color::Yellow,
-        FileCategory::Default => Color::White,
+pub fn color_for_scheme(category: FileCategory, scheme: ColorScheme) -> Color {
+    match scheme {
+        ColorScheme::Classic => match category {
+            FileCategory::Folder => Color::Blue,
+            FileCategory::Archive => Color::Red,
+            FileCategory::Image => Color::Magenta,
+            FileCategory::Video => Color::Cyan,
+            FileCategory::Audio => Color::LightCyan,
+            FileCategory::Document => Color::Green,
+            FileCategory::Code => Color::Yellow,
+            FileCategory::Default => Color::White,
+        },
+        ColorScheme::Vibrant => match category {
+            FileCategory::Folder => Color::LightBlue,
+            FileCategory::Archive => Color::LightRed,
+            FileCategory::Image => Color::LightMagenta,
+            FileCategory::Video => Color::LightCyan,
+            FileCategory::Audio => Color::Cyan,
+            FileCategory::Document => Color::LightGreen,
+            FileCategory::Code => Color::LightYellow,
+            FileCategory::Default => Color::White,
+        },
     }
 }
 

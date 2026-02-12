@@ -245,6 +245,14 @@ impl App {
                 self.handle_offline_tasks_key(code, &mut tasks, &mut selected);
                 Ok(false)
             }
+            InputMode::InfoLoading => {
+                // Esc cancels info loading
+                if code == KeyCode::Esc {
+                    self.input = InputMode::Normal;
+                    self.loading = false;
+                }
+                Ok(false)
+            }
             InputMode::InfoView { .. } => {
                 // Any key closes info view
                 Ok(false)
@@ -1100,14 +1108,14 @@ impl App {
     // --- Info view ---
 
     fn open_info_view(&mut self, entry: Entry) {
-        match self.client.file_info(&entry.id) {
-            Ok(info) => {
-                self.input = InputMode::InfoView { info };
-            }
-            Err(e) => {
-                self.push_log(format!("File info failed: {e:#}"));
-            }
-        }
+        self.input = InputMode::InfoLoading;
+        self.loading = true;
+        let client = Arc::clone(&self.client);
+        let tx = self.result_tx.clone();
+        let eid = entry.id.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(OpResult::Info(client.file_info(&eid)));
+        });
     }
 
     pub(super) fn spawn_delete(&mut self, entry: Entry) {
