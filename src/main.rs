@@ -59,7 +59,7 @@ fn run_tui() -> Result<()> {
         return tui::run(client, tui_config);
     }
 
-    // Check config.yaml for credentials
+    // Check login.yaml for credentials
     let cfg = AppConfig::load()?;
     let credentials = match (cfg.username, cfg.password) {
         (Some(u), Some(p)) if !u.is_empty() && !p.is_empty() => Some((u, p)),

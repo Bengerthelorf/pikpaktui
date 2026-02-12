@@ -32,14 +32,14 @@ pub fn cli_client() -> Result<PikPak> {
         return Ok(client);
     }
 
-    // Try config.yaml
+    // Try login.yaml
     let cfg = AppConfig::load()?;
     match (cfg.username, cfg.password) {
         (Some(u), Some(p)) if !u.is_empty() && !p.is_empty() => {
             client.login(&u, &p)?;
             Ok(client)
         }
-        _ => Err(anyhow!("not logged in. Run `pikpaktui` (TUI) to login first, or set credentials in config.yaml")),
+        _ => Err(anyhow!("not logged in. Run `pikpaktui` (TUI) to login first, or set credentials in login.yaml")),
     }
 }
 

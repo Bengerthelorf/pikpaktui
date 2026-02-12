@@ -55,7 +55,7 @@ Run without arguments to launch the interactive file browser:
 pikpaktui
 ```
 
-If no valid session exists, a login form will appear. After login, credentials are saved to `config.yaml` and the session is persisted to `session.json`.
+If no valid session exists, a login form will appear. After login, credentials are saved to `login.yaml` and the session is persisted to `session.json`.
 
 ### CLI mode
 
@@ -82,7 +82,7 @@ pikpaktui events                                      # List recent events
 pikpaktui quota                                       # Show storage quota
 ```
 
-CLI mode requires login: it checks for a valid session first, then falls back to `config.yaml` credentials. If neither exists, run `pikpaktui` (TUI) to login.
+CLI mode requires login: it checks for a valid session first, then falls back to `login.yaml` credentials. If neither exists, run `pikpaktui` (TUI) to login.
 
 ## TUI Keybindings
 
@@ -132,10 +132,10 @@ CLI mode requires login: it checks for a valid session first, then falls back to
 
 ## Configuration
 
-### Credentials (`config.yaml`)
+### Credentials (`login.yaml`)
 
 ```
-~/.config/pikpaktui/config.yaml
+~/.config/pikpaktui/login.yaml
 ```
 
 ```yaml
@@ -163,7 +163,7 @@ color_scheme = "vibrant" # "vibrant" | "classic"
 ```
 src/
   main.rs           Entry point, TUI launcher
-  config.rs         config.yaml / config.toml loading
+  config.rs         login.yaml / config.toml loading
   pikpak.rs         PikPak API client (auth, file ops, download, upload)
   theme.rs          File icons, colors, and color schemes
   cmd/

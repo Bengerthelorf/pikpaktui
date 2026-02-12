@@ -22,7 +22,7 @@ impl AppConfig {
         let raw = fs::read_to_string(&path)
             .with_context(|| format!("failed to read config {}", path.display()))?;
         let cfg: AppConfig =
-            serde_yaml::from_str(&raw).with_context(|| "failed to parse config.yaml")?;
+            serde_yaml::from_str(&raw).with_context(|| "failed to parse login.yaml")?;
         Ok(cfg)
     }
 
@@ -53,7 +53,7 @@ impl AppConfig {
 pub fn config_path() -> Result<PathBuf> {
     let base = home_config_dir()
         .ok_or_else(|| anyhow::anyhow!("unable to locate config dir"))?;
-    Ok(base.join("pikpaktui").join("config.yaml"))
+    Ok(base.join("pikpaktui").join("login.yaml"))
 }
 
 /// Returns ~/.config on all platforms instead of platform-specific config dirs.
