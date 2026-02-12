@@ -245,6 +245,17 @@ impl App {
                 self.handle_offline_tasks_key(code, &mut tasks, &mut selected);
                 Ok(false)
             }
+            InputMode::InfoLoading => {
+                if code == KeyCode::Esc {
+                    self.input = InputMode::Normal;
+                    self.loading = false;
+                }
+                Ok(false)
+            }
+            InputMode::InfoView { .. } => {
+                // Any key closes info view
+                Ok(false)
+            }
         }
     }
 
@@ -387,9 +398,16 @@ impl App {
                 self.open_offline_tasks_view();
             }
             KeyCode::Char('i') => {
-                // Load preview into right pane
-                if self.current_entry().is_some() {
-                    self.fetch_preview_for_selected();
+                if self.config.show_preview {
+                    // Fill right preview pane
+                    if self.current_entry().is_some() {
+                        self.fetch_preview_for_selected();
+                    }
+                } else {
+                    // Popup info overlay (no preview pane)
+                    if let Some(entry) = self.current_entry().cloned() {
+                        self.open_info_popup(entry);
+                    }
                 }
             }
             _ => {}
@@ -1129,6 +1147,17 @@ impl App {
                 };
             }
         }
+    }
+
+    fn open_info_popup(&mut self, entry: Entry) {
+        self.input = InputMode::InfoLoading;
+        self.loading = true;
+        let client = Arc::clone(&self.client);
+        let tx = self.result_tx.clone();
+        let eid = entry.id.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(OpResult::Info(client.file_info(&eid)));
+        });
     }
 
     pub(super) fn spawn_delete(&mut self, entry: Entry) {

@@ -69,6 +69,7 @@ enum OpResult {
     Ls(Result<Vec<Entry>>),
     Ok(String),
     Err(String),
+    Info(Result<FileInfoResponse>),
     ParentLs(Result<Vec<Entry>>),
     PreviewLs(String, Result<Vec<Entry>>),
     PreviewInfo(String, Result<FileInfoResponse>),
@@ -133,6 +134,11 @@ enum InputMode {
     OfflineTasksView {
         tasks: Vec<crate::pikpak::OfflineTask>,
         selected: usize,
+    },
+    // File info popup (show_preview=false mode)
+    InfoLoading,
+    InfoView {
+        info: FileInfoResponse,
     },
 }
 
@@ -333,6 +339,19 @@ impl App {
                     self.push_log(msg);
                     self.loading = false;
                 }
+                OpResult::Info(Ok(info)) => {
+                    self.loading = false;
+                    if matches!(self.input, InputMode::InfoLoading) {
+                        self.input = InputMode::InfoView { info };
+                    }
+                }
+                OpResult::Info(Err(e)) => {
+                    self.loading = false;
+                    if matches!(self.input, InputMode::InfoLoading) {
+                        self.input = InputMode::Normal;
+                    }
+                    self.push_log(format!("File info failed: {e:#}"));
+                }
                 OpResult::ParentLs(Ok(entries)) => {
                     self.parent_entries = entries;
                     // Find current folder in parent entries
@@ -465,6 +484,10 @@ impl App {
     }
 
     fn on_cursor_move(&mut self) {
+        // No preview pane when show_preview=false
+        if !self.config.show_preview {
+            return;
+        }
         self.last_cursor_move = Instant::now();
         if let Some(entry) = self.entries.get(self.selected) {
             match entry.kind {
@@ -473,14 +496,8 @@ impl App {
                     self.preview_target_id = Some(entry.id.clone());
                 }
                 EntryKind::Folder => {
-                    if self.config.show_preview {
-                        self.preview_state = PreviewState::Empty;
-                        self.preview_target_id = Some(entry.id.clone());
-                    } else {
-                        // show_preview=false: right pane shows folder children
-                        self.preview_state = PreviewState::Empty;
-                        self.preview_target_id = Some(entry.id.clone());
-                    }
+                    self.preview_state = PreviewState::Empty;
+                    self.preview_target_id = Some(entry.id.clone());
                 }
             }
             if self.config.lazy_preview {

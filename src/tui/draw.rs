@@ -520,8 +520,7 @@ impl App {
     fn help_pairs(&self) -> Vec<(&str, &str)> {
         match &self.input {
             InputMode::Normal => {
-                let i_label = if self.config.show_preview { "preview" } else { "info" };
-                vec![
+                let mut pairs = vec![
                     ("j/k", "move"),
                     ("Enter", "open"),
                     ("Bksp", "back"),
@@ -534,13 +533,22 @@ impl App {
                     ("s", "star"),
                     ("a", "cart"),
                     ("o", "offline"),
-                    ("i", i_label),
+                ];
+                // show_preview=false: i=info popup; show_preview=true + !lazy: i=preview
+                // show_preview=true + lazy: i hidden (auto-loads)
+                if !self.config.show_preview {
+                    pairs.push(("i", "info"));
+                } else if !self.config.lazy_preview {
+                    pairs.push(("i", "preview"));
+                }
+                pairs.extend_from_slice(&[
                     ("l", "logs"),
                     ("D", "dl"),
                     ("O", "tasks"),
                     ("h", "help"),
                     ("q", "quit"),
-                ]
+                ]);
+                pairs
             }
             InputMode::MovePicker { .. } | InputMode::CopyPicker { .. } => vec![
                 ("j/k", "nav"),
@@ -599,6 +607,12 @@ impl App {
                 ("R", "retry"),
                 ("x", "delete"),
                 ("Esc", "back"),
+            ],
+            InputMode::InfoLoading => vec![
+                ("Esc", "cancel"),
+            ],
+            InputMode::InfoView { .. } => vec![
+                ("any key", "close"),
             ],
             _ => vec![],
         }
@@ -809,6 +823,12 @@ impl App {
             }
             InputMode::OfflineTasksView { .. } => {
                 // Full screen, handled in draw() dispatch
+            }
+            InputMode::InfoLoading => {
+                self.draw_info_loading_overlay(f);
+            }
+            InputMode::InfoView { info } => {
+                self.draw_info_overlay(f, info);
             }
         }
     }
@@ -1054,24 +1074,33 @@ impl App {
                     ("Bksp", "Go back"),
                 ],
                 "Actions",
-                vec![
-                    ("c", "Copy"),
-                    ("m", "Move"),
-                    ("n", "Rename"),
-                    ("d", "Remove/Delete"),
-                    ("f", "New folder"),
-                    ("s", "Star"),
-                    ("a", "Add to cart"),
-                    ("A", "View cart"),
-                    ("D", "Downloads"),
-                    ("o", "Offline DL"),
-                    ("O", "Offline tasks"),
-                    ("i", if self.config.show_preview { "Preview" } else { "File info" }),
-                    ("l", "Logs"),
-                    ("r", "Refresh"),
-                    ("h", "Help"),
-                    ("q", "Quit"),
-                ],
+                {
+                    let mut actions = vec![
+                        ("c", "Copy"),
+                        ("m", "Move"),
+                        ("n", "Rename"),
+                        ("d", "Remove/Delete"),
+                        ("f", "New folder"),
+                        ("s", "Star"),
+                        ("a", "Add to cart"),
+                        ("A", "View cart"),
+                        ("D", "Downloads"),
+                        ("o", "Offline DL"),
+                        ("O", "Offline tasks"),
+                    ];
+                    if !self.config.show_preview {
+                        actions.push(("i", "File info"));
+                    } else if !self.config.lazy_preview {
+                        actions.push(("i", "Preview"));
+                    }
+                    actions.extend_from_slice(&[
+                        ("l", "Logs"),
+                        ("r", "Refresh"),
+                        ("h", "Help"),
+                        ("q", "Quit"),
+                    ]);
+                    actions
+                },
             ),
         };
 
@@ -1616,6 +1645,102 @@ impl App {
         }
     }
 
+    // --- Info loading overlay (show_preview=false) ---
+
+    fn draw_info_loading_overlay(&self, f: &mut Frame) {
+        let area = centered_rect(45, 20, f.area());
+        f.render_widget(Clear, area);
+
+        let spinner = SPINNER_FRAMES[self.spinner_idx];
+        let (in_bc, in_tc) = if self.is_vibrant() {
+            (Color::LightCyan, Color::LightCyan)
+        } else {
+            (Color::Cyan, Color::Cyan)
+        };
+
+        let p = Paragraph::new(Text::from(vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                format!("  {} Loading file info...", spinner),
+                Style::default().fg(Color::Cyan),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                "  Esc to cancel",
+                Style::default().fg(Color::DarkGray),
+            )),
+        ]))
+        .block(
+            self.styled_block()
+                .title(" \u{2139} Info ")
+                .title_style(Style::default().fg(in_tc).add_modifier(Modifier::BOLD))
+                .border_style(Style::default().fg(in_bc)),
+        );
+        f.render_widget(p, area);
+    }
+
+    // --- Info overlay (show_preview=false) ---
+
+    fn draw_info_overlay(&self, f: &mut Frame, info: &crate::pikpak::FileInfoResponse) {
+        let area = centered_rect(65, 40, f.area());
+        f.render_widget(Clear, area);
+
+        let mut lines = vec![Line::from("")];
+
+        lines.push(Line::from(vec![
+            Span::styled("  Name:  ", Style::default().fg(Color::Cyan)),
+            Span::styled(&info.name, Style::default().fg(Color::White)),
+        ]));
+
+        if let Some(size) = &info.size {
+            let size_n: u64 = size.parse().unwrap_or(0);
+            lines.push(Line::from(vec![
+                Span::styled("  Size:  ", Style::default().fg(Color::Cyan)),
+                Span::styled(
+                    format!("{} ({})", format_size(size_n), size),
+                    Style::default().fg(Color::White),
+                ),
+            ]));
+        }
+
+        if let Some(hash) = &info.hash {
+            lines.push(Line::from(vec![
+                Span::styled("  Hash:  ", Style::default().fg(Color::Cyan)),
+                Span::styled(hash.as_str(), Style::default().fg(Color::DarkGray)),
+            ]));
+        }
+
+        if let Some(link) = &info.web_content_link {
+            let display = if link.len() > 60 {
+                format!("{}...", &link[..60])
+            } else {
+                link.clone()
+            };
+            lines.push(Line::from(vec![
+                Span::styled("  Link:  ", Style::default().fg(Color::Cyan)),
+                Span::styled(display, Style::default().fg(Color::Blue)),
+            ]));
+        }
+
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  Press any key to close",
+            Style::default().fg(Color::DarkGray),
+        )));
+
+        let (in_bc, in_tc) = if self.is_vibrant() {
+            (Color::LightCyan, Color::LightCyan)
+        } else {
+            (Color::Cyan, Color::Cyan)
+        };
+        let p = Paragraph::new(Text::from(lines)).block(
+            self.styled_block()
+                .title(format!(" \u{2139} Info: {} ", truncate_name(&info.name, 30)))
+                .title_style(Style::default().fg(in_tc).bg(Color::DarkGray).add_modifier(Modifier::BOLD))
+                .border_style(Style::default().fg(in_bc)),
+        );
+        f.render_widget(p, area);
+    }
 }
 
 fn truncate_name(name: &str, max_len: usize) -> String {
