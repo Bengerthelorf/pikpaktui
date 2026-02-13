@@ -2,7 +2,9 @@ use anyhow::{Result, anyhow};
 
 pub fn run(args: &[String]) -> Result<()> {
     if args.is_empty() {
-        return Err(anyhow!("Usage: pikpaktui download <file_path> [local_path]"));
+        return Err(anyhow!(
+            "Usage: pikpaktui download <file_path> [local_path]"
+        ));
     }
     let client = super::cli_client()?;
     let (parent, name) = super::split_parent_name(&args[0])?;
@@ -16,6 +18,11 @@ pub fn run(args: &[String]) -> Result<()> {
     };
 
     let total = client.download_to(&entry.id, &dest)?;
-    println!("Downloaded '{}' -> '{}' ({})", name, dest.display(), super::format_size(total));
+    println!(
+        "Downloaded '{}' -> '{}' ({})",
+        name,
+        dest.display(),
+        super::format_size(total)
+    );
     Ok(())
 }

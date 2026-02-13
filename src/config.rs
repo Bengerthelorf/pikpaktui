@@ -51,8 +51,7 @@ impl AppConfig {
 }
 
 pub fn config_path() -> Result<PathBuf> {
-    let base = home_config_dir()
-        .ok_or_else(|| anyhow::anyhow!("unable to locate config dir"))?;
+    let base = home_config_dir().ok_or_else(|| anyhow::anyhow!("unable to locate config dir"))?;
     Ok(base.join("pikpaktui").join("login.yaml"))
 }
 

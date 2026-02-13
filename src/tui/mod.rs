@@ -8,13 +8,16 @@ use crate::config::{AppConfig, TuiConfig};
 use crate::pikpak::{Entry, EntryKind, FileInfoResponse, PikPak};
 use crate::theme;
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::DefaultTerminal;
+use ratatui::layout::{Constraint, Direction, Layout};
+use std::cell::Cell;
 use std::collections::{HashSet, VecDeque};
 use std::io;
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -43,11 +46,11 @@ pub fn run_with_credentials(
 
 fn run_terminal(mut app: App) -> Result<()> {
     enable_raw_mode()?;
-    execute!(io::stdout(), EnterAlternateScreen)?;
+    execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture)?;
     let mut terminal = ratatui::init();
     let res = app.run(&mut terminal);
     ratatui::restore();
-    execute!(io::stdout(), LeaveAlternateScreen)?;
+    execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture)?;
     disable_raw_mode()?;
     res
 }
@@ -192,6 +195,17 @@ struct App {
     cart_selected: usize,
     // Downloads
     download_state: DownloadState,
+    // Mouse support: pane areas recorded during draw
+    current_pane_area: Cell<ratatui::layout::Rect>,
+    parent_pane_area: Cell<ratatui::layout::Rect>,
+    preview_pane_area: Cell<ratatui::layout::Rect>,
+    scroll_offset: Cell<usize>,
+    parent_scroll_offset: Cell<usize>,
+    // Double-click detection
+    last_click_time: Instant,
+    last_click_pos: (u16, u16),
+    // Preview pane scroll offset
+    preview_scroll: usize,
 }
 
 impl App {
@@ -228,6 +242,14 @@ impl App {
             cart_ids: HashSet::new(),
             cart_selected: 0,
             download_state: dl_state,
+            current_pane_area: Cell::new(ratatui::layout::Rect::default()),
+            parent_pane_area: Cell::new(ratatui::layout::Rect::default()),
+            preview_pane_area: Cell::new(ratatui::layout::Rect::default()),
+            scroll_offset: Cell::new(0),
+            parent_scroll_offset: Cell::new(0),
+            last_click_time: Instant::now(),
+            last_click_pos: (0, 0),
+            preview_scroll: 0,
         };
         app.refresh();
         app
@@ -281,6 +303,14 @@ impl App {
             cart_ids: HashSet::new(),
             cart_selected: 0,
             download_state: DownloadState::new(),
+            current_pane_area: Cell::new(ratatui::layout::Rect::default()),
+            parent_pane_area: Cell::new(ratatui::layout::Rect::default()),
+            preview_pane_area: Cell::new(ratatui::layout::Rect::default()),
+            scroll_offset: Cell::new(0),
+            parent_scroll_offset: Cell::new(0),
+            last_click_time: Instant::now(),
+            last_click_pos: (0, 0),
+            preview_scroll: 0,
         }
     }
 
@@ -328,15 +358,21 @@ impl App {
             terminal.draw(|f| self.draw(f))?;
 
             if event::poll(Duration::from_millis(50))? {
-                if let Event::Key(key) = event::read()? {
-                    if key.kind != KeyEventKind::Press {
-                        continue;
+                match event::read()? {
+                    Event::Key(key) => {
+                        if key.kind != KeyEventKind::Press {
+                            continue;
+                        }
+                        self.cursor_visible = true;
+                        self.last_blink = Instant::now();
+                        if self.handle_key(key.code, key.modifiers)? {
+                            break;
+                        }
                     }
-                    self.cursor_visible = true;
-                    self.last_blink = Instant::now();
-                    if self.handle_key(key.code, key.modifiers)? {
-                        break;
+                    Event::Mouse(mouse) => {
+                        self.handle_mouse(mouse);
                     }
+                    _ => {}
                 }
             }
         }
@@ -409,7 +445,10 @@ impl App {
                         let name = self.preview_target_name.take().unwrap_or_default();
                         self.preview_state = PreviewState::FolderListing(children.clone());
                         self.preview_target_id = Some(id);
-                        self.input = InputMode::InfoFolderView { name, entries: children };
+                        self.input = InputMode::InfoFolderView {
+                            name,
+                            entries: children,
+                        };
                     } else if self.preview_target_id.as_deref() == Some(&id) {
                         self.preview_state = PreviewState::FolderListing(children);
                     }
@@ -471,10 +510,7 @@ impl App {
                 OpResult::OfflineTasks(Ok(tasks)) => {
                     self.loading = false;
                     if matches!(self.input, InputMode::InfoLoading) {
-                        self.input = InputMode::OfflineTasksView {
-                            tasks,
-                            selected: 0,
-                        };
+                        self.input = InputMode::OfflineTasksView { tasks, selected: 0 };
                     }
                 }
                 OpResult::OfflineTasks(Err(e)) => {
@@ -495,8 +531,8 @@ impl App {
     }
 
     fn attempt_login(&mut self, email: &str, password: &str) {
-        let client = Arc::get_mut(&mut self.client)
-            .expect("no other references to client during login");
+        let client =
+            Arc::get_mut(&mut self.client).expect("no other references to client during login");
         match client.login(email, password) {
             Ok(()) => {
                 if let Err(e) = AppConfig::save_credentials(email, password) {
@@ -578,9 +614,11 @@ impl App {
         self.preview_target_id = None;
         self.preview_target_name = None;
         self.pending_preview_fetch = false;
+        self.preview_scroll = 0;
     }
 
     fn on_cursor_move(&mut self) {
+        self.preview_scroll = 0;
         // No preview pane when show_preview=false
         if !self.config.show_preview {
             return;
@@ -632,10 +670,7 @@ impl App {
                     });
                 } else {
                     std::thread::spawn(move || {
-                        let _ = tx.send(OpResult::PreviewInfo(
-                            eid.clone(),
-                            client.file_info(&eid),
-                        ));
+                        let _ = tx.send(OpResult::PreviewInfo(eid.clone(), client.file_info(&eid)));
                     });
                 }
             }

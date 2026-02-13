@@ -1,8 +1,9 @@
 use anyhow::Result;
-use crossterm::event::{KeyCode, KeyModifiers};
+use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 use crate::pikpak::{Entry, EntryKind};
 use crate::theme;
@@ -10,7 +11,7 @@ use crate::theme;
 use super::completion::PathInput;
 use super::download::{DownloadTask, TaskStatus};
 use super::local_completion::LocalPathInput;
-use super::{handle_text_input, App, InputMode, LoginField, OpResult, PickerState, PreviewState};
+use super::{App, InputMode, LoginField, OpResult, PickerState, PreviewState, handle_text_input};
 
 impl App {
     pub(super) fn handle_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> Result<bool> {
@@ -178,7 +179,9 @@ impl App {
                                 self.spawn_permanent_delete(entry);
                             }
                         } else {
-                            self.push_log("Permanent delete cancelled (type 'yes' to confirm)".into());
+                            self.push_log(
+                                "Permanent delete cancelled (type 'yes' to confirm)".into(),
+                            );
                         }
                     }
                     KeyCode::Backspace => {
@@ -195,31 +198,19 @@ impl App {
                 }
                 Ok(false)
             }
-            InputMode::MoveInput {
-                source,
-                mut input,
-            } => {
+            InputMode::MoveInput { source, mut input } => {
                 self.handle_path_input_key(code, modifiers, source, &mut input, true);
                 Ok(false)
             }
-            InputMode::CopyInput {
-                source,
-                mut input,
-            } => {
+            InputMode::CopyInput { source, mut input } => {
                 self.handle_path_input_key(code, modifiers, source, &mut input, false);
                 Ok(false)
             }
-            InputMode::MovePicker {
-                source,
-                mut picker,
-            } => {
+            InputMode::MovePicker { source, mut picker } => {
                 self.handle_picker_key(code, source, &mut picker, true);
                 Ok(false)
             }
-            InputMode::CopyPicker {
-                source,
-                mut picker,
-            } => {
+            InputMode::CopyPicker { source, mut picker } => {
                 self.handle_picker_key(code, source, &mut picker, false);
                 Ok(false)
             }
@@ -288,24 +279,23 @@ impl App {
                 if let Some(entry) = self.current_entry().cloned() {
                     if entry.kind == EntryKind::Folder {
                         // Check if preview already has this folder's children cached
-                        let cached_children = if self.preview_target_id.as_deref() == Some(&entry.id) {
-                            if let PreviewState::FolderListing(children) = std::mem::replace(
-                                &mut self.preview_state,
-                                PreviewState::Empty,
-                            ) {
-                                Some(children)
+                        let cached_children =
+                            if self.preview_target_id.as_deref() == Some(&entry.id) {
+                                if let PreviewState::FolderListing(children) =
+                                    std::mem::replace(&mut self.preview_state, PreviewState::Empty)
+                                {
+                                    Some(children)
+                                } else {
+                                    None
+                                }
                             } else {
                                 None
-                            }
-                        } else {
-                            None
-                        };
+                            };
 
                         // Cache current entries as parent (avoid re-fetching)
                         self.parent_entries = std::mem::take(&mut self.entries);
                         self.parent_selected = self.selected;
-                        let old_id =
-                            std::mem::replace(&mut self.current_folder_id, entry.id);
+                        let old_id = std::mem::replace(&mut self.current_folder_id, entry.id);
                         self.breadcrumb.push((old_id, entry.name));
                         self.selected = 0;
                         self.clear_preview();
@@ -1179,10 +1169,13 @@ impl App {
                         let task_name = task.name.clone();
                         self.input = InputMode::InfoLoading;
                         self.loading = true;
-                        std::thread::spawn(move || {
-                            match client.offline_task_retry(&task_id) {
-                                Ok(()) => { let _ = tx.send(OpResult::Ok(format!("Retrying task: {}", task_name))); }
-                                Err(e) => { let _ = tx.send(OpResult::Err(format!("Retry failed: {e:#}"))); }
+                        std::thread::spawn(move || match client.offline_task_retry(&task_id) {
+                            Ok(()) => {
+                                let _ =
+                                    tx.send(OpResult::Ok(format!("Retrying task: {}", task_name)));
+                            }
+                            Err(e) => {
+                                let _ = tx.send(OpResult::Err(format!("Retry failed: {e:#}")));
                             }
                         });
                         return;
@@ -1204,8 +1197,14 @@ impl App {
                     self.loading = true;
                     std::thread::spawn(move || {
                         match client.delete_tasks(&[task_id.as_str()], false) {
-                            Ok(()) => { let _ = tx.send(OpResult::Ok(format!("Deleted task: {}", task_name))); }
-                            Err(e) => { let _ = tx.send(OpResult::Err(format!("Delete task failed: {e:#}"))); }
+                            Ok(()) => {
+                                let _ =
+                                    tx.send(OpResult::Ok(format!("Deleted task: {}", task_name)));
+                            }
+                            Err(e) => {
+                                let _ =
+                                    tx.send(OpResult::Err(format!("Delete task failed: {e:#}")));
+                            }
                         }
                     });
                     return;
@@ -1260,6 +1259,163 @@ impl App {
                 Err(e) => OpResult::Err(format!("Remove failed: {e:#}")),
             });
         });
+    }
+
+    pub(super) fn handle_mouse(&mut self, mouse: MouseEvent) {
+        match mouse.kind {
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+                let up = matches!(mouse.kind, MouseEventKind::ScrollUp);
+                self.handle_mouse_scroll(mouse.column, mouse.row, up);
+            }
+            MouseEventKind::Down(MouseButton::Left) => {
+                let double = self.check_double_click(mouse.column, mouse.row);
+                self.handle_mouse_click(mouse.column, mouse.row, double);
+            }
+            _ => {}
+        }
+    }
+
+    fn check_double_click(&mut self, col: u16, row: u16) -> bool {
+        let now = Instant::now();
+        let is_double = now.duration_since(self.last_click_time) < Duration::from_millis(400)
+            && self.last_click_pos == (col, row);
+        self.last_click_time = now;
+        self.last_click_pos = (col, row);
+        is_double
+    }
+
+    fn handle_mouse_scroll(&mut self, col: u16, row: u16, up: bool) {
+        // Normal mode: scroll in any of the three panes
+        if matches!(self.input, InputMode::Normal) {
+            if self.is_in_rect(col, row, self.current_pane_area.get()) {
+                if up {
+                    if self.selected > 0 {
+                        self.selected -= 1;
+                        self.on_cursor_move();
+                    }
+                } else if !self.entries.is_empty() {
+                    self.selected = (self.selected + 1).min(self.entries.len() - 1);
+                    self.on_cursor_move();
+                }
+            } else if self.is_in_rect(col, row, self.parent_pane_area.get()) {
+                if up {
+                    if self.parent_selected > 0 {
+                        self.parent_selected -= 1;
+                    }
+                } else if !self.parent_entries.is_empty() {
+                    self.parent_selected =
+                        (self.parent_selected + 1).min(self.parent_entries.len() - 1);
+                }
+            } else if self.is_in_rect(col, row, self.preview_pane_area.get()) {
+                let area = self.preview_pane_area.get();
+                let visible = area.height.saturating_sub(2) as usize;
+                let max_scroll = match &self.preview_state {
+                    PreviewState::FileTextPreview { lines, .. } => {
+                        lines.len().saturating_sub(visible)
+                    }
+                    PreviewState::FolderListing(children) => {
+                        children.len().saturating_sub(visible)
+                    }
+                    _ => 0,
+                };
+                if up {
+                    self.preview_scroll = self.preview_scroll.saturating_sub(1);
+                } else if self.preview_scroll < max_scroll {
+                    self.preview_scroll += 1;
+                }
+            }
+            return;
+        }
+
+        // Non-normal modes: scroll support for overlay views
+        if let InputMode::OfflineTasksView { tasks, selected } = &mut self.input {
+            if up {
+                if *selected > 0 {
+                    *selected -= 1;
+                }
+            } else if !tasks.is_empty() {
+                *selected = (*selected + 1).min(tasks.len() - 1);
+            }
+        } else if matches!(self.input, InputMode::CartView) {
+            if up {
+                if self.cart_selected > 0 {
+                    self.cart_selected -= 1;
+                }
+            } else if !self.cart.is_empty() {
+                self.cart_selected = (self.cart_selected + 1).min(self.cart.len() - 1);
+            }
+        } else if matches!(self.input, InputMode::DownloadView) {
+            let count = self.download_state.tasks.len();
+            if up {
+                if self.download_state.selected > 0 {
+                    self.download_state.selected -= 1;
+                }
+            } else if count > 0 {
+                self.download_state.selected =
+                    (self.download_state.selected + 1).min(count - 1);
+            }
+        }
+    }
+
+    fn handle_mouse_click(&mut self, col: u16, row: u16, double: bool) {
+        if !matches!(self.input, InputMode::Normal) {
+            return;
+        }
+
+        let current_area = self.current_pane_area.get();
+        let parent_area = self.parent_pane_area.get();
+        let preview_area = self.preview_pane_area.get();
+
+        if self.is_in_rect(col, row, current_area) {
+            // Click / double-click on current pane
+            let content_y = row.saturating_sub(current_area.y + 1) as usize;
+            let offset = self.scroll_offset.get();
+            let clicked_idx = offset + content_y;
+            if clicked_idx < self.entries.len() {
+                self.selected = clicked_idx;
+                self.on_cursor_move();
+                if double {
+                    let _ = self.handle_normal_key(KeyCode::Enter);
+                }
+            }
+        } else if self.is_in_rect(col, row, parent_area) {
+            // Click / double-click on parent pane
+            let content_y = row.saturating_sub(parent_area.y + 1) as usize;
+            let offset = self.parent_scroll_offset.get();
+            let clicked_idx = offset + content_y;
+            if clicked_idx < self.parent_entries.len() {
+                self.parent_selected = clicked_idx;
+                if double {
+                    // Navigate back to parent, then enter the clicked folder
+                    let _ = self.handle_normal_key(KeyCode::Backspace);
+                    let is_folder = self
+                        .entries
+                        .get(self.selected)
+                        .is_some_and(|e| e.kind == EntryKind::Folder);
+                    if is_folder {
+                        let _ = self.handle_normal_key(KeyCode::Enter);
+                    }
+                }
+            }
+        } else if self.is_in_rect(col, row, preview_area) && double {
+            // Double-click on preview pane: Enter for folders, Space for files
+            let is_folder = self
+                .entries
+                .get(self.selected)
+                .is_some_and(|e| e.kind == EntryKind::Folder);
+            let has_entry = self.selected < self.entries.len();
+            if has_entry {
+                if is_folder {
+                    let _ = self.handle_normal_key(KeyCode::Enter);
+                } else {
+                    let _ = self.handle_normal_key(KeyCode::Char(' '));
+                }
+            }
+        }
+    }
+
+    fn is_in_rect(&self, col: u16, row: u16, rect: ratatui::layout::Rect) -> bool {
+        col >= rect.x && col < rect.x + rect.width && row >= rect.y && row < rect.y + rect.height
     }
 
     pub(super) fn spawn_permanent_delete(&mut self, entry: Entry) {

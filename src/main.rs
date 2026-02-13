@@ -47,7 +47,9 @@ fn entry() -> Result<()> {
         "starred" => cmd::starred::run(&args[1..]),
         "events" => cmd::events::run(&args[1..]),
         "vip" => cmd::vip::run(),
-        other => Err(anyhow!("unknown command: {other}\nRun `pikpaktui --help` for usage.")),
+        other => Err(anyhow!(
+            "unknown command: {other}\nRun `pikpaktui --help` for usage."
+        )),
     }
 }
 

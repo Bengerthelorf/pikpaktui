@@ -16,7 +16,10 @@ pub fn run() -> Result<()> {
         println!("Used:   {}", super::format_size(usage_n));
         println!("Trash:  {}", super::format_size(trash.parse().unwrap_or(0)));
         if limit_n > 0 {
-            println!("Free:   {}", super::format_size(limit_n.saturating_sub(usage_n)));
+            println!(
+                "Free:   {}",
+                super::format_size(limit_n.saturating_sub(usage_n))
+            );
         }
     } else {
         println!("No quota info available");

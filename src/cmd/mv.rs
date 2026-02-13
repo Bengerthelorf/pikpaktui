@@ -2,7 +2,9 @@ use anyhow::{Result, anyhow};
 
 pub fn run(args: &[String]) -> Result<()> {
     if args.len() < 2 {
-        return Err(anyhow!("Usage: pikpaktui mv <source_path> <dest_folder_path>"));
+        return Err(anyhow!(
+            "Usage: pikpaktui mv <source_path> <dest_folder_path>"
+        ));
     }
     let client = super::cli_client()?;
     let (src_parent, src_name) = super::split_parent_name(&args[0])?;

@@ -2,9 +2,9 @@ use std::collections::HashSet;
 use std::fs;
 use std::io::{Read as _, Seek, SeekFrom, Write as _};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
-use std::sync::Arc;
 use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
@@ -170,7 +170,15 @@ fn spawn_download_worker(
     cancel_flag: Arc<AtomicBool>,
 ) {
     std::thread::spawn(move || {
-        if let Err(e) = download_worker(&client, index, &file_id, &dest, &msg_tx, &pause_flag, &cancel_flag) {
+        if let Err(e) = download_worker(
+            &client,
+            index,
+            &file_id,
+            &dest,
+            &msg_tx,
+            &pause_flag,
+            &cancel_flag,
+        ) {
             let _ = msg_tx.send(DownloadMsg::Failed {
                 index,
                 error: format!("{e:#}"),
@@ -191,10 +199,7 @@ fn download_worker(
     // Get fresh download URL
     let (url, total_size) = client.download_url(file_id)?;
 
-    let _ = msg_tx.send(DownloadMsg::Started {
-        index,
-        total_size,
-    });
+    let _ = msg_tx.send(DownloadMsg::Started { index, total_size });
 
     // Create parent directories
     if let Some(parent) = dest.parent() {

@@ -125,10 +125,7 @@ impl PikPak {
             .captcha_token
             .or_else(|| env::var("PIKPAK_CAPTCHA_TOKEN").ok())
             .ok_or_else(|| {
-                let hint = captcha
-                    .url
-                    .as_deref()
-                    .unwrap_or("<no challenge url>");
+                let hint = captcha.url.as_deref().unwrap_or("<no challenge url>");
                 anyhow!(
                     "captcha token unavailable; set PIKPAK_CAPTCHA_TOKEN. url={}",
                     sanitize(hint)
@@ -136,7 +133,10 @@ impl PikPak {
             })?;
 
         // signin
-        let url = format!("{}/v1/auth/signin", self.auth_base_url.trim_end_matches('/'));
+        let url = format!(
+            "{}/v1/auth/signin",
+            self.auth_base_url.trim_end_matches('/')
+        );
         let payload = serde_json::json!({
             "username": email,
             "password": password,
@@ -202,10 +202,16 @@ impl PikPak {
         let status = response.status();
         if !status.is_success() {
             let body = response.text().unwrap_or_default();
-            return Err(anyhow!("captcha init failed ({}): {}", status, sanitize(&body)));
+            return Err(anyhow!(
+                "captcha init failed ({}): {}",
+                status,
+                sanitize(&body)
+            ));
         }
 
-        response.json::<CaptchaInitResponse>().context("invalid captcha json")
+        response
+            .json::<CaptchaInitResponse>()
+            .context("invalid captcha json")
     }
 
     fn access_token(&self) -> Result<String> {
@@ -215,7 +221,10 @@ impl PikPak {
         Ok(session.access_token)
     }
 
-    fn authed_headers(&self, rb: reqwest::blocking::RequestBuilder) -> reqwest::blocking::RequestBuilder {
+    fn authed_headers(
+        &self,
+        rb: reqwest::blocking::RequestBuilder,
+    ) -> reqwest::blocking::RequestBuilder {
         let mut rb = rb;
         if !self.device_id.is_empty() {
             rb = rb.header("x-device-id", &self.device_id);
@@ -230,18 +239,17 @@ impl PikPak {
 
     pub fn ls(&self, parent_id: &str) -> Result<Vec<Entry>> {
         let token = self.access_token()?;
-        let url = format!("{}/drive/v1/files", self.drive_base_url.trim_end_matches('/'));
+        let url = format!(
+            "{}/drive/v1/files",
+            self.drive_base_url.trim_end_matches('/')
+        );
 
         let filters = r#"{"trashed":{"eq":false}}"#;
-        let mut rb = self
-            .http
-            .get(&url)
-            .bearer_auth(&token)
-            .query(&[
-                ("parent_id", parent_id),
-                ("limit", "500"),
-                ("filters", filters),
-            ]);
+        let mut rb = self.http.get(&url).bearer_auth(&token).query(&[
+            ("parent_id", parent_id),
+            ("limit", "500"),
+            ("filters", filters),
+        ]);
         rb = self.authed_headers(rb);
 
         let response = rb.send().context("ls request failed")?;
@@ -376,7 +384,10 @@ impl PikPak {
 
     pub fn mkdir(&self, parent_id: &str, name: &str) -> Result<Entry> {
         let token = self.access_token()?;
-        let url = format!("{}/drive/v1/files", self.drive_base_url.trim_end_matches('/'));
+        let url = format!(
+            "{}/drive/v1/files",
+            self.drive_base_url.trim_end_matches('/')
+        );
 
         let payload = serde_json::json!({
             "kind": "drive#folder",
@@ -422,7 +433,11 @@ impl PikPak {
         let status = response.status();
         if !status.is_success() {
             let body = response.text().unwrap_or_default();
-            return Err(anyhow!("file_info failed ({}): {}", status, sanitize(&body)));
+            return Err(anyhow!(
+                "file_info failed ({}): {}",
+                status,
+                sanitize(&body)
+            ));
         }
 
         response.json().context("invalid file_info json")
@@ -493,7 +508,10 @@ impl PikPak {
 
     pub fn quota(&self) -> Result<QuotaInfo> {
         let token = self.access_token()?;
-        let url = format!("{}/drive/v1/about", self.drive_base_url.trim_end_matches('/'));
+        let url = format!(
+            "{}/drive/v1/about",
+            self.drive_base_url.trim_end_matches('/')
+        );
 
         let mut rb = self.http.get(&url).bearer_auth(&token);
         rb = self.authed_headers(rb);
@@ -519,7 +537,10 @@ impl PikPak {
         name: Option<&str>,
     ) -> Result<OfflineTaskResponse> {
         let token = self.access_token()?;
-        let url = format!("{}/drive/v1/files", self.drive_base_url.trim_end_matches('/'));
+        let url = format!(
+            "{}/drive/v1/files",
+            self.drive_base_url.trim_end_matches('/')
+        );
 
         let mut payload = serde_json::json!({
             "kind": "drive#file",
@@ -543,7 +564,11 @@ impl PikPak {
         let status = response.status();
         if !status.is_success() {
             let body = response.text().unwrap_or_default();
-            return Err(anyhow!("offline download failed ({}): {}", status, sanitize(&body)));
+            return Err(anyhow!(
+                "offline download failed ({}): {}",
+                status,
+                sanitize(&body)
+            ));
         }
 
         response.json().context("invalid offline download json")
@@ -552,30 +577,33 @@ impl PikPak {
     /// List offline/cloud download tasks.
     pub fn offline_list(&self, limit: u32, phases: &[&str]) -> Result<OfflineListResponse> {
         let token = self.access_token()?;
-        let url = format!("{}/drive/v1/tasks", self.drive_base_url.trim_end_matches('/'));
+        let url = format!(
+            "{}/drive/v1/tasks",
+            self.drive_base_url.trim_end_matches('/')
+        );
 
         let filters = serde_json::json!({
             "phase": { "in": phases.join(",") }
         });
 
-        let mut rb = self
-            .http
-            .get(&url)
-            .bearer_auth(&token)
-            .query(&[
-                ("type", "offline"),
-                ("thumbnail_size", "SIZE_SMALL"),
-                ("limit", &limit.to_string()),
-                ("filters", &filters.to_string()),
-                ("with", "reference_resource"),
-            ]);
+        let mut rb = self.http.get(&url).bearer_auth(&token).query(&[
+            ("type", "offline"),
+            ("thumbnail_size", "SIZE_SMALL"),
+            ("limit", &limit.to_string()),
+            ("filters", &filters.to_string()),
+            ("with", "reference_resource"),
+        ]);
         rb = self.authed_headers(rb);
 
         let response = rb.send().context("offline list request failed")?;
         let status = response.status();
         if !status.is_success() {
             let body = response.text().unwrap_or_default();
-            return Err(anyhow!("offline list failed ({}): {}", status, sanitize(&body)));
+            return Err(anyhow!(
+                "offline list failed ({}): {}",
+                status,
+                sanitize(&body)
+            ));
         }
 
         response.json().context("invalid offline list json")
@@ -584,7 +612,10 @@ impl PikPak {
     /// Retry a failed offline download task.
     pub fn offline_task_retry(&self, task_id: &str) -> Result<()> {
         let token = self.access_token()?;
-        let url = format!("{}/drive/v1/task", self.drive_base_url.trim_end_matches('/'));
+        let url = format!(
+            "{}/drive/v1/task",
+            self.drive_base_url.trim_end_matches('/')
+        );
 
         let payload = serde_json::json!({
             "type": "offline",
@@ -602,7 +633,10 @@ impl PikPak {
     /// Delete offline tasks by task IDs.
     pub fn delete_tasks(&self, task_ids: &[&str], delete_files: bool) -> Result<()> {
         let token = self.access_token()?;
-        let url = format!("{}/drive/v1/tasks", self.drive_base_url.trim_end_matches('/'));
+        let url = format!(
+            "{}/drive/v1/tasks",
+            self.drive_base_url.trim_end_matches('/')
+        );
 
         // Build query params: task_ids=a&task_ids=b&delete_files=true
         let mut pairs: Vec<(&str, String)> = task_ids
@@ -658,25 +692,28 @@ impl PikPak {
     /// List starred files.
     pub fn starred_list(&self, limit: u32) -> Result<Vec<Entry>> {
         let token = self.access_token()?;
-        let url = format!("{}/drive/v1/files", self.drive_base_url.trim_end_matches('/'));
+        let url = format!(
+            "{}/drive/v1/files",
+            self.drive_base_url.trim_end_matches('/')
+        );
 
         let filters = r#"{"trashed":{"eq":false},"system_tag":{"in":"STAR"}}"#;
-        let mut rb = self
-            .http
-            .get(&url)
-            .bearer_auth(&token)
-            .query(&[
-                ("parent_id", "*"),
-                ("limit", &limit.to_string()),
-                ("filters", filters),
-            ]);
+        let mut rb = self.http.get(&url).bearer_auth(&token).query(&[
+            ("parent_id", "*"),
+            ("limit", &limit.to_string()),
+            ("filters", filters),
+        ]);
         rb = self.authed_headers(rb);
 
         let response = rb.send().context("starred list request failed")?;
         let status = response.status();
         if !status.is_success() {
             let body = response.text().unwrap_or_default();
-            return Err(anyhow!("starred list failed ({}): {}", status, sanitize(&body)));
+            return Err(anyhow!(
+                "starred list failed ({}): {}",
+                status,
+                sanitize(&body)
+            ));
         }
 
         let payload: DriveListResponse = response.json().context("invalid starred list json")?;
@@ -704,16 +741,15 @@ impl PikPak {
     /// Get recent file events (recently added files).
     pub fn events(&self, limit: u32) -> Result<EventsResponse> {
         let token = self.access_token()?;
-        let url = format!("{}/drive/v1/events", self.drive_base_url.trim_end_matches('/'));
+        let url = format!(
+            "{}/drive/v1/events",
+            self.drive_base_url.trim_end_matches('/')
+        );
 
-        let mut rb = self
-            .http
-            .get(&url)
-            .bearer_auth(&token)
-            .query(&[
-                ("thumbnail_size", "SIZE_MEDIUM"),
-                ("limit", &limit.to_string()),
-            ]);
+        let mut rb = self.http.get(&url).bearer_auth(&token).query(&[
+            ("thumbnail_size", "SIZE_MEDIUM"),
+            ("limit", &limit.to_string()),
+        ]);
         rb = self.authed_headers(rb);
 
         let response = rb.send().context("events request failed")?;
@@ -764,7 +800,11 @@ impl PikPak {
         let status = response.status();
         if !status.is_success() {
             let body = response.text().unwrap_or_default();
-            return Err(anyhow!("invite code failed ({}): {}", status, sanitize(&body)));
+            return Err(anyhow!(
+                "invite code failed ({}): {}",
+                status,
+                sanitize(&body)
+            ));
         }
 
         let data: serde_json::Value = response.json().context("invalid invite code json")?;
@@ -793,7 +833,11 @@ impl PikPak {
         let status = response.status();
         if !status.is_success() {
             let body = response.text().unwrap_or_default();
-            return Err(anyhow!("transfer quota failed ({}): {}", status, sanitize(&body)));
+            return Err(anyhow!(
+                "transfer quota failed ({}): {}",
+                status,
+                sanitize(&body)
+            ));
         }
 
         response.json().context("invalid transfer quota json")
@@ -870,7 +914,11 @@ impl PikPak {
 
     /// Upload a local file to PikPak.
     /// Returns the file name and whether it was a dedup (instant upload).
-    pub fn upload_file(&self, parent_id: Option<&str>, local_path: &Path) -> Result<(String, bool)> {
+    pub fn upload_file(
+        &self,
+        parent_id: Option<&str>,
+        local_path: &Path,
+    ) -> Result<(String, bool)> {
         let file_name = local_path
             .file_name()
             .ok_or_else(|| anyhow!("invalid file path"))?
@@ -885,7 +933,10 @@ impl PikPak {
 
         // Step 1: init upload
         let token = self.access_token()?;
-        let url = format!("{}/drive/v1/files", self.drive_base_url.trim_end_matches('/'));
+        let url = format!(
+            "{}/drive/v1/files",
+            self.drive_base_url.trim_end_matches('/')
+        );
         let mut payload = serde_json::json!({
             "kind": "drive#file",
             "name": file_name,
@@ -904,7 +955,11 @@ impl PikPak {
         let status = response.status();
         if !status.is_success() {
             let body = response.text().unwrap_or_default();
-            return Err(anyhow!("upload init failed ({}): {}", status, sanitize(&body)));
+            return Err(anyhow!(
+                "upload init failed ({}): {}",
+                status,
+                sanitize(&body)
+            ));
         }
 
         let init: UploadInitResponse = response.json().context("invalid upload init json")?;
@@ -930,16 +985,29 @@ impl PikPak {
             .ok_or_else(|| anyhow!("no resumable context in upload init response"))?;
 
         let oss_args = OssArgs {
-            endpoint: resumable.params.endpoint.clone()
+            endpoint: resumable
+                .params
+                .endpoint
+                .clone()
                 .filter(|s| !s.is_empty())
                 .ok_or_else(|| anyhow!("upload init response missing OSS endpoint"))?,
             access_key_id: resumable.params.access_key_id.clone().unwrap_or_default(),
-            access_key_secret: resumable.params.access_key_secret.clone().unwrap_or_default(),
+            access_key_secret: resumable
+                .params
+                .access_key_secret
+                .clone()
+                .unwrap_or_default(),
             security_token: resumable.params.security_token.clone().unwrap_or_default(),
-            bucket: resumable.params.bucket.clone()
+            bucket: resumable
+                .params
+                .bucket
+                .clone()
                 .filter(|s| !s.is_empty())
                 .ok_or_else(|| anyhow!("upload init response missing OSS bucket"))?,
-            key: resumable.params.key.clone()
+            key: resumable
+                .params
+                .key
+                .clone()
                 .filter(|s| !s.is_empty())
                 .ok_or_else(|| anyhow!("upload init response missing OSS key"))?,
         };
@@ -969,7 +1037,11 @@ impl PikPak {
             "?uploads",
         );
 
-        let url = format!("https://{}/{}?uploads", oss.endpoint.trim_end_matches('/'), oss.key);
+        let url = format!(
+            "https://{}/{}?uploads",
+            oss.endpoint.trim_end_matches('/'),
+            oss.key
+        );
         let response = self
             .http
             .post(&url)
@@ -983,7 +1055,11 @@ impl PikPak {
         let status = response.status();
         let body = response.text().unwrap_or_default();
         if !status.is_success() {
-            return Err(anyhow!("OSS initiate multipart failed ({}): {}", status, sanitize(&body)));
+            return Err(anyhow!(
+                "OSS initiate multipart failed ({}): {}",
+                status,
+                sanitize(&body)
+            ));
         }
 
         // Parse UploadId from XML
@@ -1187,8 +1263,7 @@ struct ResumableParams {
 pub fn pikpak_hash(path: &Path) -> Result<String> {
     use sha1::Digest;
 
-    let meta = fs::metadata(path)
-        .with_context(|| format!("cannot stat '{}'", path.display()))?;
+    let meta = fs::metadata(path).with_context(|| format!("cannot stat '{}'", path.display()))?;
     let file_size = meta.len();
 
     let chunk_size: u64 = if file_size < 128 * 1024 * 1024 {
@@ -1201,8 +1276,8 @@ pub fn pikpak_hash(path: &Path) -> Result<String> {
         2 * 1024 * 1024
     };
 
-    let mut file = fs::File::open(path)
-        .with_context(|| format!("cannot open '{}'", path.display()))?;
+    let mut file =
+        fs::File::open(path).with_context(|| format!("cannot open '{}'", path.display()))?;
 
     let mut all_hashes = String::new();
     let mut remaining = file_size;
@@ -1264,8 +1339,7 @@ fn oss_hmac_auth(
         method, content_type, date, canonicalized_headers, resource
     );
 
-    let mut mac =
-        HmacSha1::new_from_slice(access_key_secret.as_bytes()).expect("HMAC key length");
+    let mut mac = HmacSha1::new_from_slice(access_key_secret.as_bytes()).expect("HMAC key length");
     mac.update(string_to_sign.as_bytes());
     let result = mac.finalize();
     let signature = base64::engine::general_purpose::STANDARD.encode(result.into_bytes());
@@ -1553,29 +1627,22 @@ fn md5_hex(input: &str) -> String {
 
 fn md5_compute(input: &[u8]) -> [u8; 16] {
     const S: [u32; 64] = [
-        7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22,
-        5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20,
-        4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23,
-        6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
+        7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 5, 9, 14, 20, 5, 9, 14, 20, 5,
+        9, 14, 20, 5, 9, 14, 20, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 6, 10,
+        15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
     ];
 
     const K: [u32; 64] = [
-        0xd76aa478, 0xe8c7b756, 0x242070db, 0xc1bdceee,
-        0xf57c0faf, 0x4787c62a, 0xa8304613, 0xfd469501,
-        0x698098d8, 0x8b44f7af, 0xffff5bb1, 0x895cd7be,
-        0x6b901122, 0xfd987193, 0xa679438e, 0x49b40821,
-        0xf61e2562, 0xc040b340, 0x265e5a51, 0xe9b6c7aa,
-        0xd62f105d, 0x02441453, 0xd8a1e681, 0xe7d3fbc8,
-        0x21e1cde6, 0xc33707d6, 0xf4d50d87, 0x455a14ed,
-        0xa9e3e905, 0xfcefa3f8, 0x676f02d9, 0x8d2a4c8a,
-        0xfffa3942, 0x8771f681, 0x6d9d6122, 0xfde5380c,
-        0xa4beea44, 0x4bdecfa9, 0xf6bb4b60, 0xbebfbc70,
-        0x289b7ec6, 0xeaa127fa, 0xd4ef3085, 0x04881d05,
-        0xd9d4d039, 0xe6db99e5, 0x1fa27cf8, 0xc4ac5665,
-        0xf4292244, 0x432aff97, 0xab9423a7, 0xfc93a039,
-        0x655b59c3, 0x8f0ccc92, 0xffeff47d, 0x85845dd1,
-        0x6fa87e4f, 0xfe2ce6e0, 0xa3014314, 0x4e0811a1,
-        0xf7537e82, 0xbd3af235, 0x2ad7d2bb, 0xeb86d391,
+        0xd76aa478, 0xe8c7b756, 0x242070db, 0xc1bdceee, 0xf57c0faf, 0x4787c62a, 0xa8304613,
+        0xfd469501, 0x698098d8, 0x8b44f7af, 0xffff5bb1, 0x895cd7be, 0x6b901122, 0xfd987193,
+        0xa679438e, 0x49b40821, 0xf61e2562, 0xc040b340, 0x265e5a51, 0xe9b6c7aa, 0xd62f105d,
+        0x02441453, 0xd8a1e681, 0xe7d3fbc8, 0x21e1cde6, 0xc33707d6, 0xf4d50d87, 0x455a14ed,
+        0xa9e3e905, 0xfcefa3f8, 0x676f02d9, 0x8d2a4c8a, 0xfffa3942, 0x8771f681, 0x6d9d6122,
+        0xfde5380c, 0xa4beea44, 0x4bdecfa9, 0xf6bb4b60, 0xbebfbc70, 0x289b7ec6, 0xeaa127fa,
+        0xd4ef3085, 0x04881d05, 0xd9d4d039, 0xe6db99e5, 0x1fa27cf8, 0xc4ac5665, 0xf4292244,
+        0x432aff97, 0xab9423a7, 0xfc93a039, 0x655b59c3, 0x8f0ccc92, 0xffeff47d, 0x85845dd1,
+        0x6fa87e4f, 0xfe2ce6e0, 0xa3014314, 0x4e0811a1, 0xf7537e82, 0xbd3af235, 0x2ad7d2bb,
+        0xeb86d391,
     ];
 
     let orig_len_bits = (input.len() as u64).wrapping_mul(8);
@@ -1611,8 +1678,7 @@ fn md5_compute(input: &[u8]) -> [u8; 16] {
             d = c;
             c = b;
             b = b.wrapping_add(
-                (a.wrapping_add(f).wrapping_add(K[i]).wrapping_add(m[g]))
-                    .rotate_left(S[i]),
+                (a.wrapping_add(f).wrapping_add(K[i]).wrapping_add(m[g])).rotate_left(S[i]),
             );
             a = temp;
         }

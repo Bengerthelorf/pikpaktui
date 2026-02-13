@@ -5,59 +5,119 @@ const DIM: &str = "\x1b[2m";
 const CYAN: &str = "\x1b[36m";
 const GREEN: &str = "\x1b[32m";
 const YELLOW: &str = "\x1b[33m";
+const BLUE: &str = "\x1b[34m";
+const MAGENTA: &str = "\x1b[35m";
+const LIGHT_CYAN: &str = "\x1b[96m";
+const LIGHT_BLUE: &str = "\x1b[94m";
+const LIGHT_MAGENTA: &str = "\x1b[95m";
 const RESET: &str = "\x1b[0m";
 
 pub fn run() -> Result<()> {
     let version = env!("CARGO_PKG_VERSION");
 
-    println!(
-        "{BOLD}{CYAN}pikpaktui{RESET} {DIM}v{version}{RESET}  {DIM}─{RESET}  A TUI and CLI client for PikPak cloud storage"
-    );
-    println!();
-    println!("{BOLD}Usage:{RESET}  {GREEN}pikpaktui{RESET} {DIM}[command] [args...]{RESET}");
-    println!();
-    println!("{BOLD}Commands:{RESET}");
-    println!(
-        "  {YELLOW}{BOLD}(no command){RESET}                    Launch interactive TUI"
-    );
+    // ASCII art banner with gradient
+    let art: &[(&str, &str)] = &[
+        (LIGHT_CYAN,    r#"    dMMMMb  dMP dMP dMP dMMMMb  .aMMMb  dMP dMP dMMMMMMP dMP dMP dMP"#),
+        (CYAN,          r#"   dMP.dMP amr dMP.dMP dMP.dMP dMP"dMP dMP.dMP    dMP   dMP dMP amr "#),
+        (LIGHT_BLUE,    r#"  dMMMMP" dMP dMMMMK" dMMMMP" dMMMMMP dMMMMK"    dMP   dMP dMP dMP  "#),
+        (BLUE,          r#" dMP     dMP dMP"AMF dMP     dMP dMP dMP"AMF    dMP   dMP.aMP dMP   "#),
+        (LIGHT_MAGENTA, r#"dMP     dMP dMP dMP dMP     dMP dMP dMP dMP    dMP    VMMMP" dMP    "#),
+    ];
 
-    let commands: &[(&str, &str)] = &[
+    println!();
+    for (color, line) in art {
+        println!("  {BOLD}{color}{line}{RESET}");
+    }
+    println!();
+    println!(
+        "  {BOLD}{CYAN}pikpaktui{RESET} {DIM}v{version}{RESET}  {DIM}─{RESET}  A TUI and CLI client for PikPak cloud storage"
+    );
+    println!();
+
+    // Usage
+    println!("{BOLD}USAGE:{RESET}  {GREEN}pikpaktui{RESET} {DIM}[command] [args...]{RESET}");
+    println!();
+
+    // Commands — grouped by category
+    println!("{BOLD}COMMANDS:{RESET}");
+    println!(
+        "  {YELLOW}{BOLD}(no command){RESET}                    {DIM}Launch interactive TUI{RESET}"
+    );
+    println!();
+
+    // File Management
+    println!("  {MAGENTA}{BOLD}File Management{RESET}");
+    let file_cmds: &[(&str, &str)] = &[
         ("ls [-l] [path]",           "List files (colored grid; long with -l)"),
         ("mv <src> <dst>",           "Move a file or folder"),
         ("cp <src> <dst>",           "Copy a file or folder"),
         ("rename <path> <new_name>", "Rename a file or folder"),
-        ("rm [-f] <path>",           "Remove to trash (-f permanent)"),
+        ("rm [-f] <path>",           "Remove to trash (-f permanent delete)"),
         ("mkdir <parent> <name>",    "Create a new folder"),
-        ("download <path> [local]",  "Download a file"),
-        ("upload <local> [remote]",  "Upload a local file"),
-        ("share <path> [-o file]",   "Share file(s) as PikPak links"),
-        ("quota",                    "Show storage quota"),
-        ("offline <url> [--to path]","Cloud download a URL/magnet"),
-        ("tasks [list|retry|rm]",   "Manage offline download tasks"),
-        ("star <path...>",          "Star files"),
-        ("unstar <path...>",        "Unstar files"),
-        ("starred [limit]",         "List starred files"),
-        ("events [limit]",          "Recent file events"),
-        ("vip",                     "Show VIP & account info"),
     ];
+    print_commands(file_cmds);
+    println!();
 
-    for (cmd, desc) in commands {
-        // Split command into name and args parts
+    // Transfer
+    println!("  {MAGENTA}{BOLD}Transfer{RESET}");
+    let transfer_cmds: &[(&str, &str)] = &[
+        ("download <path> [local]",  "Download a file to local disk"),
+        ("upload <local> [remote]",  "Upload a local file to cloud"),
+        ("share <path> [-o file]",   "Share file(s) as PikPak links"),
+    ];
+    print_commands(transfer_cmds);
+    println!();
+
+    // Cloud Download
+    println!("  {MAGENTA}{BOLD}Cloud Download{RESET}");
+    let cloud_cmds: &[(&str, &str)] = &[
+        ("offline <url> [--to path]","Cloud download a URL or magnet link"),
+        ("tasks [list|retry|rm]",    "Manage offline download tasks"),
+    ];
+    print_commands(cloud_cmds);
+    println!();
+
+    // Starred & Activity
+    println!("  {MAGENTA}{BOLD}Starred & Activity{RESET}");
+    let star_cmds: &[(&str, &str)] = &[
+        ("star <path...>",           "Star files"),
+        ("unstar <path...>",         "Unstar files"),
+        ("starred [limit]",          "List starred files"),
+        ("events [limit]",           "Recent file events"),
+    ];
+    print_commands(star_cmds);
+    println!();
+
+    // Account
+    println!("  {MAGENTA}{BOLD}Account{RESET}");
+    let acct_cmds: &[(&str, &str)] = &[
+        ("quota",                    "Show storage quota"),
+        ("vip",                      "Show VIP & account info"),
+    ];
+    print_commands(acct_cmds);
+
+    println!();
+    println!("{BOLD}OPTIONS:{RESET}");
+    println!("  {GREEN}-h{RESET}, {GREEN}--help{RESET}                   Show this help message");
+    println!("  {GREEN}-V{RESET}, {GREEN}--version{RESET}                Show version");
+    println!();
+    println!(
+        "{DIM}TIP: Launch the TUI (no command) and press {RESET}{YELLOW}h{RESET}{DIM} for interactive help.{RESET}"
+    );
+
+    Ok(())
+}
+
+fn print_commands(cmds: &[(&str, &str)]) {
+    for (cmd, desc) in cmds {
         let (name, args) = match cmd.find(' ') {
             Some(i) => (&cmd[..i], &cmd[i..]),
             None => (*cmd, ""),
         };
         println!(
-            "  {GREEN}{name}{RESET}{DIM}{args}{RESET}  {:>width$}{DIM}{desc}{RESET}",
+            "    {GREEN}{name}{RESET}{DIM}{args}{RESET}  {:>width$}{DIM}{desc}{RESET}",
             "",
-            width = 28usize.saturating_sub(cmd.len()),
+            width = 26usize.saturating_sub(cmd.len()),
         );
     }
-
-    println!();
-    println!("{BOLD}Options:{RESET}");
-    println!("  {GREEN}-h{RESET}, {GREEN}--help{RESET}                   Show this help message");
-    println!("  {GREEN}-V{RESET}, {GREEN}--version{RESET}                Show version");
-
-    Ok(())
 }

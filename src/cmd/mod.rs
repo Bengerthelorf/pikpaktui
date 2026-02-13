@@ -39,7 +39,9 @@ pub fn cli_client() -> Result<PikPak> {
             client.login(&u, &p)?;
             Ok(client)
         }
-        _ => Err(anyhow!("not logged in. Run `pikpaktui` (TUI) to login first, or set credentials in login.yaml")),
+        _ => Err(anyhow!(
+            "not logged in. Run `pikpaktui` (TUI) to login first, or set credentials in login.yaml"
+        )),
     }
 }
 
