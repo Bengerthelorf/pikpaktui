@@ -29,6 +29,7 @@ pub struct Entry {
     pub kind: EntryKind,
     pub size: u64,
     pub created_time: String,
+    pub starred: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -254,16 +255,20 @@ impl PikPak {
         let entries = payload
             .files
             .into_iter()
-            .map(|f| Entry {
-                id: f.id,
-                name: f.name,
-                kind: if f.kind.contains("folder") {
-                    EntryKind::Folder
-                } else {
-                    EntryKind::File
-                },
-                size: f.size.unwrap_or(0),
-                created_time: f.created_time.unwrap_or_default(),
+            .map(|f| {
+                let starred = f.is_starred();
+                Entry {
+                    id: f.id,
+                    name: f.name,
+                    kind: if f.kind.contains("folder") {
+                        EntryKind::Folder
+                    } else {
+                        EntryKind::File
+                    },
+                    size: f.size.unwrap_or(0),
+                    created_time: f.created_time.unwrap_or_default(),
+                    starred,
+                }
             })
             .collect();
         Ok(entries)
@@ -391,12 +396,14 @@ impl PikPak {
 
         let resp: DriveFileResponse = response.json().context("invalid mkdir json")?;
         let f = resp.file;
+        let starred = f.is_starred();
         Ok(Entry {
             id: f.id,
             name: f.name,
             kind: EntryKind::Folder,
             size: 0,
             created_time: f.created_time.unwrap_or_default(),
+            starred,
         })
     }
 
@@ -686,6 +693,7 @@ impl PikPak {
                 },
                 size: f.size.unwrap_or(0),
                 created_time: f.created_time.unwrap_or_default(),
+                starred: true, // starred_list only returns starred items
             })
             .collect();
         Ok(entries)
@@ -1339,6 +1347,20 @@ struct DriveFile {
     size: Option<u64>,
     #[serde(default)]
     created_time: Option<String>,
+    #[serde(default)]
+    tags: Vec<DriveFileTag>,
+}
+
+#[derive(Deserialize)]
+struct DriveFileTag {
+    #[serde(default)]
+    name: String,
+}
+
+impl DriveFile {
+    fn is_starred(&self) -> bool {
+        self.tags.iter().any(|t| t.name == "STAR")
+    }
 }
 
 #[derive(Debug, Deserialize)]

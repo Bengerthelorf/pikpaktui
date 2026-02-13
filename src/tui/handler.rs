@@ -994,17 +994,22 @@ impl App {
     // --- Star/Unstar ---
 
     fn spawn_star_toggle(&mut self, entry: Entry) {
+        let is_starred = entry.starred;
         let client = Arc::clone(&self.client);
         let tx = self.result_tx.clone();
         let eid = entry.id.clone();
         let name = entry.name.clone();
         self.loading = true;
-        // We always star — there's no local state tracking starred status.
-        // If already starred, the API is idempotent.
         std::thread::spawn(move || {
-            let _ = tx.send(match client.star(&[eid.as_str()]) {
-                Ok(()) => OpResult::Ok(format!("Starred '{}'", name)),
-                Err(e) => OpResult::Err(format!("Star failed: {e:#}")),
+            let result = if is_starred {
+                client.unstar(&[eid.as_str()])
+            } else {
+                client.star(&[eid.as_str()])
+            };
+            let op = if is_starred { "Unstarred" } else { "Starred" };
+            let _ = tx.send(match result {
+                Ok(()) => OpResult::Ok(format!("{} '{}'", op, name)),
+                Err(e) => OpResult::Err(format!("{} failed: {e:#}", op)),
             });
         });
     }

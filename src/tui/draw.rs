@@ -19,7 +19,6 @@ impl App {
             InputMode::Login { .. } => self.draw_login_screen(f),
             InputMode::MovePicker { .. } | InputMode::CopyPicker { .. } => self.draw_picker(f),
             InputMode::DownloadView => self.draw_download_view(f),
-            InputMode::OfflineTasksView { .. } => self.draw_offline_tasks_view(f),
             _ => self.draw_main(f),
         }
     }
@@ -188,9 +187,16 @@ impl App {
             self.draw_parent_pane(f, chunks[0]);
             self.draw_current_pane(f, chunks[1]);
 
-            // Log overlay (covers current pane area)
+            // Log overlay on rightmost 40%
             if self.show_logs_overlay {
-                self.draw_log_overlay(f, chunks[1]);
+                let log_area = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([
+                        Constraint::Percentage(60),
+                        Constraint::Percentage(40),
+                    ])
+                    .split(main_area)[1];
+                self.draw_log_overlay(f, log_area);
             }
         }
 
@@ -287,8 +293,9 @@ impl App {
                     EntryKind::Folder => String::new(),
                     EntryKind::File => format!("  {}", format_size(e.size)),
                 };
+                let star_marker = if e.starred { " \u{2605}" } else { "" };
                 let cart_marker = if self.cart_ids.contains(&e.id) {
-                    " \u{2605}"
+                    " \u{2606}"
                 } else {
                     ""
                 };
@@ -297,6 +304,7 @@ impl App {
                     Span::styled(" ", Style::default()),
                     Span::styled(&e.name, Style::default().fg(c)),
                     Span::styled(size_str, Style::default().fg(Color::DarkGray)),
+                    Span::styled(star_marker, Style::default().fg(Color::Yellow)),
                     Span::styled(
                         cart_marker,
                         Style::default()
@@ -821,8 +829,8 @@ impl App {
             InputMode::OfflineInput { value } => {
                 self.draw_offline_input_overlay(f, value, cur);
             }
-            InputMode::OfflineTasksView { .. } => {
-                // Full screen, handled in draw() dispatch
+            InputMode::OfflineTasksView { tasks, selected } => {
+                self.draw_offline_tasks_overlay(f, tasks, *selected);
             }
             InputMode::InfoLoading => {
                 self.draw_info_loading_overlay(f);
@@ -1084,7 +1092,7 @@ impl App {
                         ("n", "Rename"),
                         ("d", "Remove/Delete"),
                         ("f", "New folder"),
-                        ("s", "Star"),
+                        ("s", "Star/Unstar"),
                         ("a", "Add to cart"),
                         ("A", "View cart"),
                         ("D", "Downloads"),
@@ -1512,33 +1520,55 @@ impl App {
 
     // --- Offline tasks view (full screen) ---
 
-    fn draw_offline_tasks_view(&self, f: &mut Frame) {
-        let outer = if self.config.show_help_bar {
-            Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Min(1), Constraint::Length(1)])
-                .split(f.area())
-        } else {
-            Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Min(1)])
-                .split(f.area())
-        };
-        let main_area = outer[0];
-
-        let (tasks, selected) = match &self.input {
-            InputMode::OfflineTasksView { tasks, selected } => (tasks, *selected),
-            _ => return,
-        };
+    fn draw_offline_tasks_overlay(
+        &self,
+        f: &mut Frame,
+        tasks: &[crate::pikpak::OfflineTask],
+        selected: usize,
+    ) {
+        let visible = tasks.len().min(15);
+        let total_lines = 2 + visible.max(1) + 2; // padding + items + hint + padding
+        let pct = ((total_lines as u16 * 100) / f.area().height.max(1))
+            .max(25)
+            .min(75);
+        let area = centered_rect(75, pct, f.area());
+        f.render_widget(Clear, area);
 
         let title = format!(" Offline Tasks ({}) ", tasks.len());
 
-        let items: Vec<ListItem> = tasks
-            .iter()
-            .enumerate()
-            .map(|(i, task)| {
+        let (ot_bc, ot_tc) = if self.is_vibrant() {
+            (Color::LightBlue, Color::LightBlue)
+        } else {
+            (Color::Cyan, Color::Green)
+        };
+
+        if tasks.is_empty() {
+            let mut lines = vec![
+                Line::from(""),
+                Line::from(Span::styled(
+                    "  No offline tasks. Press 'o' to add a URL.",
+                    Style::default().fg(Color::DarkGray),
+                )),
+            ];
+            lines.push(Line::from(""));
+            let hints = self.help_pairs();
+            let mut hint_spans = vec![Span::raw("  ")];
+            hint_spans.extend(Self::styled_help_spans(&hints));
+            lines.push(Line::from(hint_spans));
+
+            let p = Paragraph::new(Text::from(lines)).block(
+                self.styled_block()
+                    .title(title)
+                    .title_style(Style::default().fg(ot_tc))
+                    .border_style(Style::default().fg(ot_bc)),
+            );
+            f.render_widget(p, area);
+        } else {
+            let mut lines = vec![Line::from("")];
+
+            for (i, task) in tasks.iter().enumerate().take(15) {
                 let is_sel = i == selected;
-                let prefix = if is_sel { "\u{203a} " } else { "  " };
+                let prefix = if is_sel { " \u{203a} " } else { "   " };
 
                 let (icon, color) = match task.phase.as_str() {
                     "PHASE_TYPE_COMPLETE" => ("\u{2713}", Color::Green),
@@ -1567,84 +1597,50 @@ impl App {
                     Span::styled(prefix, name_style),
                     Span::styled(format!("{} ", icon), Style::default().fg(color)),
                     Span::styled(
-                        format!("{:<40}", truncate_name(&task.name, 40)),
+                        truncate_name(&task.name, 35),
                         name_style,
                     ),
                     Span::styled(
-                        format!("{:>3}%", task.progress),
+                        format!("  {:>3}%", task.progress),
                         Style::default().fg(Color::White),
                     ),
                     Span::styled(
-                        format!("  {:>10}", size),
+                        format!("  {}", size),
                         Style::default().fg(Color::DarkGray),
                     ),
                 ];
                 if task.phase == "PHASE_TYPE_ERROR" {
                     if let Some(msg) = &task.message {
                         spans.push(Span::styled(
-                            format!("  {}", msg),
+                            format!("  {}", truncate_name(msg, 20)),
                             Style::default().fg(Color::Red),
                         ));
                     }
-                } else if let Some(time) = &task.created_time {
-                    spans.push(Span::styled(
-                        format!("  {}", time),
-                        Style::default().fg(Color::DarkGray),
-                    ));
                 }
 
-                ListItem::new(Line::from(spans))
-            })
-            .collect();
+                lines.push(Line::from(spans));
+            }
 
-        let (ot_bc, ot_tc) = if self.is_vibrant() {
-            (Color::LightBlue, Color::LightBlue)
-        } else {
-            (Color::Cyan, Color::Green)
-        };
-        if items.is_empty() {
-            let empty_msg = Paragraph::new(Text::from(vec![
-                Line::from(""),
-                Line::from(Span::styled(
-                    "  No offline tasks. Press 'o' to add a URL.",
+            if tasks.len() > 15 {
+                lines.push(Line::from(Span::styled(
+                    format!("   ... and {} more", tasks.len() - 15),
                     Style::default().fg(Color::DarkGray),
-                )),
-            ]))
-            .block(
+                )));
+            }
+
+            lines.push(Line::from(""));
+            let hints = self.help_pairs();
+            let mut hint_spans = vec![Span::raw("  ")];
+            hint_spans.extend(Self::styled_help_spans(&hints));
+            lines.push(Line::from(hint_spans));
+
+            let p = Paragraph::new(Text::from(lines)).block(
                 self.styled_block()
                     .title(title)
                     .title_style(Style::default().fg(ot_tc))
                     .border_style(Style::default().fg(ot_bc)),
             );
-            f.render_widget(empty_msg, main_area);
-        } else {
-            let mut state = ListState::default();
-            if !tasks.is_empty() {
-                state.select(Some(selected.min(tasks.len() - 1)));
-            }
-
-            let list = List::new(items)
-                .block(
-                    self.styled_block()
-                        .title(title)
-                        .title_style(Style::default().fg(ot_tc))
-                        .border_style(Style::default().fg(ot_bc)),
-                )
-                .highlight_style(Style::default())
-                .highlight_symbol("");
-            f.render_stateful_widget(list, main_area, &mut state);
-        }
-
-        if self.config.show_help_bar {
-            let pairs = self.help_pairs();
-            let mut spans = vec![Span::raw(" ")];
-            spans.extend(Self::styled_help_spans(&pairs));
-            let bar = Paragraph::new(Line::from(spans));
-            f.render_widget(bar, outer[1]);
-        }
-
-        if self.show_help_sheet {
-            self.draw_help_sheet(f);
+            f.render_widget(p, area);
         }
     }
 
@@ -1814,10 +1810,12 @@ impl App {
 }
 
 fn truncate_name(name: &str, max_len: usize) -> String {
-    if name.len() <= max_len {
+    let char_count: usize = name.chars().count();
+    if char_count <= max_len {
         name.to_string()
     } else {
-        format!("{}...", &name[..max_len.saturating_sub(3)])
+        let truncated: String = name.chars().take(max_len.saturating_sub(3)).collect();
+        format!("{}...", truncated)
     }
 }
 
