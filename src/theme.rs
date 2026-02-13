@@ -103,6 +103,34 @@ pub fn cli_icon(category: FileCategory, nerd_font: bool) -> &'static str {
     }
 }
 
+/// Returns true if the file extension suggests a text file that can be previewed.
+pub fn is_text_previewable(entry: &Entry) -> bool {
+    if entry.kind == EntryKind::Folder {
+        return false;
+    }
+
+    let ext = entry
+        .name
+        .rsplit('.')
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+
+    matches!(
+        ext.as_str(),
+        // Document (text)
+        "txt" | "md" | "csv" | "rtf"
+        // Code
+        | "rs" | "py" | "js" | "go" | "c" | "cpp" | "h" | "hpp" | "java" | "kt"
+        | "swift" | "rb" | "php" | "sh" | "bash" | "zsh" | "lua" | "zig" | "toml" | "yaml"
+        | "yml" | "json" | "xml" | "html" | "css" | "sql" | "r" | "dart" | "ex" | "exs"
+        | "hs" | "ml" | "scala" | "clj" | "nim" | "v" | "vue" | "jsx" | "tsx" | "svelte"
+        // Subtitle / config
+        | "srt" | "ass" | "ssa" | "vtt" | "sub" | "log" | "ini" | "cfg" | "conf" | "env"
+        | "properties" | "nfo"
+    )
+}
+
 /// ANSI colored text for CLI output, using eza-style colors.
 pub fn cli_colored(text: &str, category: FileCategory) -> String {
     let code = match category {

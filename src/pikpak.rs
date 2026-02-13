@@ -799,6 +799,48 @@ impl PikPak {
         response.json().context("invalid transfer quota json")
     }
 
+    /// Fetch first `max_bytes` of a text file for preview.
+    /// Returns (file_info, content_text, file_size, truncated).
+    pub fn fetch_text_preview(
+        &self,
+        file_id: &str,
+        max_bytes: u64,
+    ) -> Result<(String, String, u64, bool)> {
+        let info = self.file_info(file_id)?;
+        let url = info
+            .web_content_link
+            .as_deref()
+            .or(info.links.as_ref().and_then(|l| {
+                l.get("application/octet-stream")
+                    .and_then(|v| v.url.as_deref())
+            }))
+            .ok_or_else(|| anyhow!("no download link for file {}", file_id))?;
+
+        let file_size = info
+            .size
+            .as_deref()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(0);
+
+        let response = self
+            .http
+            .get(url)
+            .header("Range", format!("bytes=0-{}", max_bytes.saturating_sub(1)))
+            .send()
+            .context("text preview request failed")?;
+
+        let status = response.status();
+        if !status.is_success() && status != reqwest::StatusCode::PARTIAL_CONTENT {
+            return Err(anyhow!("text preview failed ({})", status));
+        }
+
+        let bytes = response.bytes().context("text preview read failed")?;
+        let truncated = file_size > bytes.len() as u64;
+        let content = String::from_utf8_lossy(&bytes).into_owned();
+
+        Ok((info.name, content, file_size, truncated))
+    }
+
     /// Resolve a path like "/My Pack/docs" to the folder ID by walking each segment.
     /// Root "/" returns "".
     pub fn resolve_path(&self, path: &str) -> Result<String> {

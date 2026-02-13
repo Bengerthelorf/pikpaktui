@@ -6,6 +6,7 @@ mod local_completion;
 
 use crate::config::{AppConfig, TuiConfig};
 use crate::pikpak::{Entry, EntryKind, FileInfoResponse, PikPak};
+use crate::theme;
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::execute;
@@ -63,6 +64,12 @@ enum PreviewState {
     FolderListing(Vec<Entry>),
     FileBasicInfo,
     FileDetailedInfo(FileInfoResponse),
+    FileTextPreview {
+        name: String,
+        content: String,
+        size: u64,
+        truncated: bool,
+    },
 }
 
 enum OpResult {
@@ -73,6 +80,7 @@ enum OpResult {
     ParentLs(Result<Vec<Entry>>),
     PreviewLs(String, Result<Vec<Entry>>),
     PreviewInfo(String, Result<FileInfoResponse>),
+    PreviewText(String, Result<(String, String, u64, bool)>),
     OfflineTasks(Result<Vec<crate::pikpak::OfflineTask>>),
 }
 
@@ -144,6 +152,11 @@ enum InputMode {
     InfoFolderView {
         name: String,
         entries: Vec<Entry>,
+    },
+    TextPreviewView {
+        name: String,
+        content: String,
+        truncated: bool,
     },
 }
 
@@ -301,7 +314,15 @@ impl App {
                 && self.last_cursor_move.elapsed() >= Duration::from_millis(300)
             {
                 self.pending_preview_fetch = false;
-                self.fetch_preview_for_selected();
+                // Skip auto-loading for large text files
+                let skip = self.entries.get(self.selected).is_some_and(|e| {
+                    e.kind == EntryKind::File
+                        && theme::is_text_previewable(e)
+                        && e.size > self.config.preview_max_size
+                });
+                if !skip {
+                    self.fetch_preview_for_selected();
+                }
             }
 
             terminal.draw(|f| self.draw(f))?;
@@ -405,6 +426,39 @@ impl App {
                         self.preview_state = PreviewState::Empty;
                     }
                     self.push_log(format!("Preview info failed: {e:#}"));
+                }
+                OpResult::PreviewText(id, Ok((name, content, size, truncated))) => {
+                    if matches!(self.input, InputMode::InfoLoading) {
+                        self.loading = false;
+                        self.input = InputMode::TextPreviewView {
+                            name: name.clone(),
+                            content: content.clone(),
+                            truncated,
+                        };
+                        self.preview_state = PreviewState::FileTextPreview {
+                            name,
+                            content,
+                            size,
+                            truncated,
+                        };
+                        self.preview_target_id = Some(id);
+                    } else if self.preview_target_id.as_deref() == Some(&id) {
+                        self.preview_state = PreviewState::FileTextPreview {
+                            name,
+                            content,
+                            size,
+                            truncated,
+                        };
+                    }
+                }
+                OpResult::PreviewText(id, Err(e)) => {
+                    if matches!(self.input, InputMode::InfoLoading) {
+                        self.loading = false;
+                        self.input = InputMode::Normal;
+                    } else if self.preview_target_id.as_deref() == Some(&id) {
+                        self.preview_state = PreviewState::FileBasicInfo;
+                    }
+                    self.push_log(format!("Text preview failed: {e:#}"));
                 }
                 OpResult::OfflineTasks(Ok(tasks)) => {
                     self.loading = false;
@@ -560,11 +614,46 @@ impl App {
                 });
             }
             EntryKind::File => {
-                std::thread::spawn(move || {
-                    let _ = tx.send(OpResult::PreviewInfo(eid.clone(), client.file_info(&eid)));
-                });
+                if theme::is_text_previewable(&entry) {
+                    let max_bytes = self.config.preview_max_size;
+                    std::thread::spawn(move || {
+                        let _ = tx.send(OpResult::PreviewText(
+                            eid.clone(),
+                            client.fetch_text_preview(&eid, max_bytes),
+                        ));
+                    });
+                } else {
+                    std::thread::spawn(move || {
+                        let _ = tx.send(OpResult::PreviewInfo(
+                            eid.clone(),
+                            client.file_info(&eid),
+                        ));
+                    });
+                }
             }
         }
+    }
+
+    fn fetch_text_preview_for_selected(&mut self) {
+        let entry = match self.entries.get(self.selected) {
+            Some(e) => e.clone(),
+            None => return,
+        };
+        if entry.kind != EntryKind::File || !theme::is_text_previewable(&entry) {
+            return;
+        }
+        self.preview_target_id = Some(entry.id.clone());
+        self.preview_state = PreviewState::Loading;
+        let client = Arc::clone(&self.client);
+        let tx = self.result_tx.clone();
+        let eid = entry.id.clone();
+        let max_bytes = self.config.preview_max_size;
+        std::thread::spawn(move || {
+            let _ = tx.send(OpResult::PreviewText(
+                eid.clone(),
+                client.fetch_text_preview(&eid, max_bytes),
+            ));
+        });
     }
 }
 

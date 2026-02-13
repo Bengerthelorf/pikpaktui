@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use crate::pikpak::{Entry, EntryKind};
+use crate::theme;
 
 use super::completion::PathInput;
 use super::download::{DownloadTask, TaskStatus};
@@ -261,6 +262,10 @@ impl App {
                 self.preview_state = PreviewState::FolderListing(entries);
                 Ok(false)
             }
+            InputMode::TextPreviewView { .. } => {
+                // Any key closes text preview view
+                Ok(false)
+            }
         }
     }
 
@@ -415,6 +420,30 @@ impl App {
             KeyCode::Char('O') => {
                 // Offline tasks view
                 self.open_offline_tasks_view();
+            }
+            KeyCode::Char('p') => {
+                if let Some(entry) = self.current_entry().cloned() {
+                    if entry.kind == EntryKind::File && theme::is_text_previewable(&entry) {
+                        if self.config.show_preview {
+                            // Fill right preview pane with text content
+                            self.fetch_text_preview_for_selected();
+                        } else {
+                            // Popup overlay
+                            self.input = InputMode::InfoLoading;
+                            self.loading = true;
+                            let client = Arc::clone(&self.client);
+                            let tx = self.result_tx.clone();
+                            let eid = entry.id.clone();
+                            let max_bytes = self.config.preview_max_size;
+                            std::thread::spawn(move || {
+                                let _ = tx.send(OpResult::PreviewText(
+                                    eid.clone(),
+                                    client.fetch_text_preview(&eid, max_bytes),
+                                ));
+                            });
+                        }
+                    }
+                }
             }
             KeyCode::Char(' ') => {
                 if let Some(entry) = self.current_entry().cloned() {

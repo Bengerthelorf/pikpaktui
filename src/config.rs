@@ -107,6 +107,12 @@ pub struct TuiConfig {
     pub show_preview: bool,
     #[serde(default)]
     pub lazy_preview: bool,
+    #[serde(default = "default_preview_max_size")]
+    pub preview_max_size: u64,
+}
+
+fn default_preview_max_size() -> u64 {
+    65536
 }
 
 fn default_true() -> bool {
@@ -128,6 +134,7 @@ impl Default for TuiConfig {
             color_scheme: ColorScheme::default(),
             show_preview: true,
             lazy_preview: false,
+            preview_max_size: default_preview_max_size(),
         }
     }
 }

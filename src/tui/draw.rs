@@ -407,6 +407,57 @@ impl App {
                     );
                 f.render_widget(list, area);
             }
+            PreviewState::FileTextPreview {
+                name,
+                content,
+                size,
+                truncated,
+            } => {
+                let title = format!(
+                    " {} ({}) ",
+                    truncate_name(name, 25),
+                    format_size(*size)
+                );
+
+                let inner_height = area.height.saturating_sub(2) as usize;
+                let mut lines: Vec<Line> = content
+                    .lines()
+                    .take(inner_height.saturating_sub(if *truncated { 1 } else { 0 }))
+                    .enumerate()
+                    .map(|(i, line)| {
+                        Line::from(vec![
+                            Span::styled(
+                                format!("{:>4} ", i + 1),
+                                Style::default().fg(Color::DarkGray),
+                            ),
+                            Span::styled(line, Style::default().fg(Color::White)),
+                        ])
+                    })
+                    .collect();
+
+                if *truncated {
+                    lines.push(Line::from(Span::styled(
+                        format!(
+                            " ... truncated at {} ",
+                            format_size(self.config.preview_max_size)
+                        ),
+                        Style::default().fg(Color::DarkGray),
+                    )));
+                }
+
+                let p = Paragraph::new(Text::from(lines))
+                    .block(
+                        self.styled_block()
+                            .title(title)
+                            .title_style(
+                                Style::default()
+                                    .fg(Color::Cyan)
+                                    .add_modifier(Modifier::BOLD),
+                            )
+                            .border_style(Style::default().fg(Color::DarkGray)),
+                    );
+                f.render_widget(p, area);
+            }
             PreviewState::FileBasicInfo => {
                 let mut lines = vec![Line::from("")];
                 if let Some(entry) = self.entries.get(self.selected) {
@@ -433,8 +484,19 @@ impl App {
                         ]));
                     }
                     lines.push(Line::from(""));
+                    let hint = if entry.kind == EntryKind::File
+                        && crate::theme::is_text_previewable(entry)
+                    {
+                        if entry.size <= self.config.preview_max_size {
+                            "  Press Space to preview"
+                        } else {
+                            "  Press p to preview (large file)"
+                        }
+                    } else {
+                        "  Press Space for details"
+                    };
                     lines.push(Line::from(Span::styled(
-                        "  Press Space for details",
+                        hint,
                         Style::default().fg(Color::DarkGray),
                     )));
                 }
@@ -549,6 +611,7 @@ impl App {
                 } else if !self.config.lazy_preview {
                     pairs.push(("Space", "preview"));
                 }
+                pairs.push(("p", "text"));
                 pairs.extend_from_slice(&[
                     ("l", "logs"),
                     ("D", "dl"),
@@ -619,7 +682,9 @@ impl App {
             InputMode::InfoLoading => vec![
                 ("Esc", "cancel"),
             ],
-            InputMode::InfoView { .. } | InputMode::InfoFolderView { .. } => vec![
+            InputMode::InfoView { .. }
+            | InputMode::InfoFolderView { .. }
+            | InputMode::TextPreviewView { .. } => vec![
                 ("any key", "close"),
             ],
             _ => vec![],
@@ -840,6 +905,13 @@ impl App {
             }
             InputMode::InfoFolderView { name, entries } => {
                 self.draw_info_folder_overlay(f, name, entries);
+            }
+            InputMode::TextPreviewView {
+                name,
+                content,
+                truncated,
+            } => {
+                self.draw_text_preview_overlay(f, name, content, *truncated);
             }
         }
     }
@@ -1104,6 +1176,7 @@ impl App {
                     } else if !self.config.lazy_preview {
                         actions.push(("Space", "Preview"));
                     }
+                    actions.push(("p", "Text preview"));
                     actions.extend_from_slice(&[
                         ("l", "Logs"),
                         ("r", "Refresh"),
@@ -1736,6 +1809,67 @@ impl App {
             self.styled_block()
                 .title(format!(" \u{2139} Info: {} ", truncate_name(&info.name, 30)))
                 .title_style(Style::default().fg(in_tc).bg(Color::DarkGray).add_modifier(Modifier::BOLD))
+                .border_style(Style::default().fg(in_bc)),
+        );
+        f.render_widget(p, area);
+    }
+
+    // --- Text preview overlay (show_preview=false) ---
+
+    fn draw_text_preview_overlay(
+        &self,
+        f: &mut Frame,
+        name: &str,
+        content: &str,
+        truncated: bool,
+    ) {
+        let area = centered_rect(60, 70, f.area());
+        f.render_widget(Clear, area);
+
+        let inner_height = area.height.saturating_sub(2) as usize;
+        let mut lines: Vec<Line> = content
+            .lines()
+            .take(inner_height.saturating_sub(if truncated { 2 } else { 1 }))
+            .enumerate()
+            .map(|(i, line)| {
+                Line::from(vec![
+                    Span::styled(
+                        format!("{:>4} ", i + 1),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                    Span::styled(line, Style::default().fg(Color::White)),
+                ])
+            })
+            .collect();
+
+        if truncated {
+            lines.push(Line::from(Span::styled(
+                format!(
+                    " ... truncated at {} ",
+                    format_size(self.config.preview_max_size)
+                ),
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
+
+        lines.push(Line::from(Span::styled(
+            "  Press any key to close",
+            Style::default().fg(Color::DarkGray),
+        )));
+
+        let (in_bc, in_tc) = if self.is_vibrant() {
+            (Color::LightCyan, Color::LightCyan)
+        } else {
+            (Color::Cyan, Color::Cyan)
+        };
+        let p = Paragraph::new(Text::from(lines)).block(
+            self.styled_block()
+                .title(format!(" {} ", truncate_name(name, 40)))
+                .title_style(
+                    Style::default()
+                        .fg(in_tc)
+                        .add_modifier(Modifier::BOLD),
+                )
                 .border_style(Style::default().fg(in_bc)),
         );
         f.render_widget(p, area);
