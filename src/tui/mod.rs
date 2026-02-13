@@ -77,7 +77,7 @@ enum OpResult {
     Ok(String),
     Err(String),
     Info(Result<FileInfoResponse>),
-    ParentLs(Result<Vec<Entry>>),
+    ParentLs(String, Result<Vec<Entry>>),
     PreviewLs(String, Result<Vec<Entry>>),
     PreviewInfo(String, Result<FileInfoResponse>),
     PreviewText(String, Result<(String, String, u64, bool)>),
@@ -302,7 +302,7 @@ impl App {
                 self.cursor_visible = !self.cursor_visible;
                 self.last_blink = Instant::now();
             }
-            if self.loading && self.last_spinner.elapsed() >= Duration::from_millis(80) {
+            if self.last_spinner.elapsed() >= Duration::from_millis(80) {
                 self.spinner_idx = (self.spinner_idx + 1) % SPINNER_FRAMES.len();
                 self.last_spinner = Instant::now();
             }
@@ -355,6 +355,7 @@ impl App {
                         self.selected = self.entries.len().saturating_sub(1);
                     }
                     self.push_log(format!("Refreshed {}", self.current_path_display()));
+                    self.on_cursor_move();
                 }
                 OpResult::Ls(Err(e)) => {
                     self.loading = false;
@@ -381,19 +382,25 @@ impl App {
                     }
                     self.push_log(format!("File info failed: {e:#}"));
                 }
-                OpResult::ParentLs(Ok(entries)) => {
-                    self.parent_entries = entries;
-                    // Find current folder in parent entries
-                    if let Some(pos) = self
-                        .parent_entries
-                        .iter()
-                        .position(|e| e.id == self.current_folder_id)
-                    {
-                        self.parent_selected = pos;
+                OpResult::ParentLs(pid, Ok(entries)) => {
+                    // Only accept if this is still the expected parent
+                    let expected = self.breadcrumb.last().map(|(id, _)| id.as_str());
+                    if expected == Some(&pid) {
+                        self.parent_entries = entries;
+                        if let Some(pos) = self
+                            .parent_entries
+                            .iter()
+                            .position(|e| e.id == self.current_folder_id)
+                        {
+                            self.parent_selected = pos;
+                        }
                     }
                 }
-                OpResult::ParentLs(Err(e)) => {
-                    self.push_log(format!("Parent listing failed: {e:#}"));
+                OpResult::ParentLs(pid, Err(e)) => {
+                    let expected = self.breadcrumb.last().map(|(id, _)| id.as_str());
+                    if expected == Some(&pid) {
+                        self.push_log(format!("Parent listing failed: {e:#}"));
+                    }
                 }
                 OpResult::PreviewLs(id, Ok(children)) => {
                     if matches!(self.input, InputMode::InfoLoading) {
@@ -556,7 +563,7 @@ impl App {
             let tx = self.result_tx.clone();
             let pid = parent_id.clone();
             std::thread::spawn(move || {
-                let _ = tx.send(OpResult::ParentLs(client.ls(&pid)));
+                let _ = tx.send(OpResult::ParentLs(pid.clone(), client.ls(&pid)));
             });
         } else {
             // At root — no parent

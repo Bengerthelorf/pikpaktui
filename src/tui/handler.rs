@@ -314,6 +314,7 @@ impl App {
                             // Reuse cached preview data — no API call needed
                             self.entries = children;
                             self.push_log(format!("Refreshed {}", self.current_path_display()));
+                            self.on_cursor_move();
                         } else {
                             // Request current directory listing
                             self.loading = true;
@@ -336,6 +337,11 @@ impl App {
                     );
                     self.selected = self.parent_selected;
 
+                    // Clamp selected to valid range
+                    if !self.entries.is_empty() && self.selected >= self.entries.len() {
+                        self.selected = self.entries.len() - 1;
+                    }
+
                     // Preview: show children of the folder we just left
                     if self.config.show_preview {
                         self.preview_state = PreviewState::FolderListing(old_entries);
@@ -345,8 +351,14 @@ impl App {
                     }
                     self.pending_preview_fetch = false;
 
-                    // Only need to fetch grandparent entries
-                    self.refresh_parent();
+                    if self.entries.is_empty() {
+                        // parent_entries was empty (async fetch hadn't completed),
+                        // do a full refresh to reload current directory
+                        self.refresh();
+                    } else {
+                        // Only need to fetch grandparent entries
+                        self.refresh_parent();
+                    }
                 }
             }
             KeyCode::Char('l') => {

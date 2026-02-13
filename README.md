@@ -7,7 +7,7 @@ A TUI and CLI client for [PikPak](https://mypikpak.com) cloud storage, written i
 ## Features
 
 - **Three-column Miller layout** - Yazi-style parent / current / preview panes, with optional two-column mode (`show_preview = false`)
-- **Preview pane** - Folder children listing, file basic info, or detailed info (size, hash, link); lazy auto-load or manual with `Space`
+- **Preview pane** - Folder children listing, file basic info, detailed info (size, hash, link), or text file content preview with line numbers; lazy auto-load or manual with `Space` / `p`
 - **CLI subcommands** - `ls` / `mv` / `cp` / `rename` / `rm` / `mkdir` / `download` / `upload` / `share` / `quota` / `offline` / `tasks` / `star` / `unstar` / `starred` / `vip` / `events`
 - **File operations** - Move, copy, rename, delete (trash / permanent), create folder
 - **Folder picker** - Visual two-pane picker for move/copy destinations, with tab-completion text input as alternative
@@ -106,6 +106,7 @@ CLI mode requires login: it checks for a valid session first, then falls back to
 | `o` | Offline download |
 | `O` | Offline tasks |
 | `Space` | Preview / file info |
+| `p` | Text file content preview |
 | `l` | Toggle log overlay |
 | `h` | Help panel |
 | `q` | Quit |
@@ -160,6 +161,7 @@ border_style = "thick"   # "rounded" | "thick" | "double"
 color_scheme = "vibrant" # "vibrant" | "classic"
 show_preview = true      # Three-column layout with preview pane (false = two-column)
 lazy_preview = false     # Auto-load preview on cursor move (true = auto, false = Space to load)
+preview_max_size = 65536 # Max bytes to fetch for text preview (64KB); files larger than this require manual 'p' to load
 ```
 
 ## Project Structure
