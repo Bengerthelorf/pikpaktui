@@ -18,7 +18,7 @@ use ratatui::DefaultTerminal;
 use std::collections::{HashSet, VecDeque};
 use std::io;
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
 use completion::PathInput;
@@ -66,7 +66,7 @@ enum PreviewState {
     FileDetailedInfo(FileInfoResponse),
     FileTextPreview {
         name: String,
-        content: String,
+        lines: Vec<ratatui::text::Line<'static>>,
         size: u64,
         truncated: bool,
     },
@@ -155,7 +155,7 @@ enum InputMode {
     },
     TextPreviewView {
         name: String,
-        content: String,
+        lines: Vec<ratatui::text::Line<'static>>,
         truncated: bool,
     },
 }
@@ -435,16 +435,17 @@ impl App {
                     self.push_log(format!("Preview info failed: {e:#}"));
                 }
                 OpResult::PreviewText(id, Ok((name, content, size, truncated))) => {
+                    let lines = highlight_content(&name, &content);
                     if matches!(self.input, InputMode::InfoLoading) {
                         self.loading = false;
                         self.input = InputMode::TextPreviewView {
                             name: name.clone(),
-                            content: content.clone(),
+                            lines: lines.clone(),
                             truncated,
                         };
                         self.preview_state = PreviewState::FileTextPreview {
                             name,
-                            content,
+                            lines,
                             size,
                             truncated,
                         };
@@ -452,7 +453,7 @@ impl App {
                     } else if self.preview_target_id.as_deref() == Some(&id) {
                         self.preview_state = PreviewState::FileTextPreview {
                             name,
-                            content,
+                            lines,
                             size,
                             truncated,
                         };
@@ -662,6 +663,53 @@ impl App {
             ));
         });
     }
+}
+
+static SYNTAX_SET: LazyLock<syntect::parsing::SyntaxSet> =
+    LazyLock::new(|| syntect::parsing::SyntaxSet::load_defaults_newlines());
+static THEME_SET: LazyLock<syntect::highlighting::ThemeSet> =
+    LazyLock::new(|| syntect::highlighting::ThemeSet::load_defaults());
+
+fn highlight_content(name: &str, content: &str) -> Vec<ratatui::text::Line<'static>> {
+    use ratatui::style::{Color, Style};
+    use ratatui::text::{Line, Span};
+    use syntect::easy::HighlightLines;
+
+    let ext = name.rsplit('.').next().unwrap_or("");
+    let syntax = SYNTAX_SET
+        .find_syntax_by_extension(ext)
+        .unwrap_or_else(|| SYNTAX_SET.find_syntax_plain_text());
+    let theme = &THEME_SET.themes["base16-ocean.dark"];
+    let mut h = HighlightLines::new(syntax, theme);
+
+    content
+        .lines()
+        .enumerate()
+        .map(|(i, line)| {
+            let mut spans = vec![Span::styled(
+                format!("{:>4} ", i + 1),
+                Style::default().fg(Color::DarkGray),
+            )];
+            match h.highlight_line(line, &SYNTAX_SET) {
+                Ok(ranges) => {
+                    for (style, text) in ranges {
+                        let fg = style.foreground;
+                        spans.push(Span::styled(
+                            text.to_string(),
+                            Style::default().fg(Color::Rgb(fg.r, fg.g, fg.b)),
+                        ));
+                    }
+                }
+                Err(_) => {
+                    spans.push(Span::styled(
+                        line.to_string(),
+                        Style::default().fg(Color::White),
+                    ));
+                }
+            }
+            Line::from(spans)
+        })
+        .collect()
 }
 
 fn format_size(bytes: u64) -> String {

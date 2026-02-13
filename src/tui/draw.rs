@@ -409,7 +409,7 @@ impl App {
             }
             PreviewState::FileTextPreview {
                 name,
-                content,
+                lines: highlighted,
                 size,
                 truncated,
             } => {
@@ -420,19 +420,11 @@ impl App {
                 );
 
                 let inner_height = area.height.saturating_sub(2) as usize;
-                let mut lines: Vec<Line> = content
-                    .lines()
-                    .take(inner_height.saturating_sub(if *truncated { 1 } else { 0 }))
-                    .enumerate()
-                    .map(|(i, line)| {
-                        Line::from(vec![
-                            Span::styled(
-                                format!("{:>4} ", i + 1),
-                                Style::default().fg(Color::DarkGray),
-                            ),
-                            Span::styled(line, Style::default().fg(Color::White)),
-                        ])
-                    })
+                let max_lines = inner_height.saturating_sub(if *truncated { 1 } else { 0 });
+                let mut lines: Vec<Line> = highlighted
+                    .iter()
+                    .take(max_lines)
+                    .cloned()
                     .collect();
 
                 if *truncated {
@@ -908,10 +900,10 @@ impl App {
             }
             InputMode::TextPreviewView {
                 name,
-                content,
+                lines,
                 truncated,
             } => {
-                self.draw_text_preview_overlay(f, name, content, *truncated);
+                self.draw_text_preview_overlay(f, name, lines, *truncated);
             }
         }
     }
@@ -1820,26 +1812,18 @@ impl App {
         &self,
         f: &mut Frame,
         name: &str,
-        content: &str,
+        highlighted: &[Line],
         truncated: bool,
     ) {
         let area = centered_rect(60, 70, f.area());
         f.render_widget(Clear, area);
 
         let inner_height = area.height.saturating_sub(2) as usize;
-        let mut lines: Vec<Line> = content
-            .lines()
-            .take(inner_height.saturating_sub(if truncated { 2 } else { 1 }))
-            .enumerate()
-            .map(|(i, line)| {
-                Line::from(vec![
-                    Span::styled(
-                        format!("{:>4} ", i + 1),
-                        Style::default().fg(Color::DarkGray),
-                    ),
-                    Span::styled(line, Style::default().fg(Color::White)),
-                ])
-            })
+        let max_lines = inner_height.saturating_sub(if truncated { 2 } else { 1 });
+        let mut lines: Vec<Line> = highlighted
+            .iter()
+            .take(max_lines)
+            .cloned()
             .collect();
 
         if truncated {
