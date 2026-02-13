@@ -930,6 +930,15 @@ impl App {
             KeyCode::Esc => {
                 // Back to normal, downloads continue in background
             }
+            KeyCode::Enter => {
+                // Toggle collapsed/expanded mode
+                use crate::tui::DownloadViewMode;
+                self.download_view_mode = match self.download_view_mode {
+                    DownloadViewMode::Collapsed => DownloadViewMode::Expanded,
+                    DownloadViewMode::Expanded => DownloadViewMode::Collapsed,
+                };
+                self.input = InputMode::DownloadView;
+            }
             KeyCode::Down | KeyCode::Char('j') => {
                 if task_count > 0 {
                     self.download_state.selected =

@@ -11,7 +11,6 @@ use crate::pikpak::{Entry, EntryKind};
 use crate::theme;
 
 use super::completion::PathInput;
-use super::download::TaskStatus;
 use super::local_completion::LocalPathInput;
 use super::{App, InputMode, LoginField, PreviewState, SPINNER_FRAMES, centered_rect, format_size};
 
@@ -26,7 +25,7 @@ impl App {
     }
 
     /// Build a `Block` with the configured border style applied.
-    fn styled_block(&self) -> Block<'static> {
+    pub(super) fn styled_block(&self) -> Block<'static> {
         let block = Block::default().borders(Borders::ALL);
         match self.config.border_style {
             BorderStyle::Rounded => block.border_type(BorderType::Rounded),
@@ -35,7 +34,7 @@ impl App {
         }
     }
 
-    fn is_vibrant(&self) -> bool {
+    pub(super) fn is_vibrant(&self) -> bool {
         self.config.color_scheme == ColorScheme::Vibrant
     }
 
@@ -577,7 +576,7 @@ impl App {
         f.render_widget(logs, area);
     }
 
-    fn help_pairs(&self) -> Vec<(&str, &str)> {
+    pub(super) fn help_pairs(&self) -> Vec<(&str, &str)> {
         match &self.input {
             InputMode::Normal => {
                 vec![
@@ -624,6 +623,7 @@ impl App {
             }
             InputMode::DownloadView => vec![
                 ("j/k", "nav"),
+                ("Enter", "expand"),
                 ("p", "pause/resume"),
                 ("x", "cancel"),
                 ("r", "retry"),
@@ -645,7 +645,7 @@ impl App {
         }
     }
 
-    fn styled_help_spans(pairs: &[(&str, &str)]) -> Vec<Span<'static>> {
+    pub(super) fn styled_help_spans(pairs: &[(&str, &str)]) -> Vec<Span<'static>> {
         let key_style = Style::default()
             .fg(Color::White)
             .add_modifier(Modifier::BOLD);
@@ -1075,7 +1075,7 @@ impl App {
         }
     }
 
-    fn draw_help_sheet(&self, f: &mut Frame) {
+    pub(super) fn draw_help_sheet(&self, f: &mut Frame) {
         let term = f.area();
 
         // Adaptive width — wider and flatter
@@ -1426,138 +1426,6 @@ impl App {
         f.render_widget(p, area);
     }
 
-    // --- Download view (full screen) ---
-
-    fn draw_download_view(&self, f: &mut Frame) {
-        let outer = if self.config.show_help_bar {
-            Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Min(1), Constraint::Length(1)])
-                .split(f.area())
-        } else {
-            Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Min(1)])
-                .split(f.area())
-        };
-        let main_area = outer[0];
-
-        let ds = &self.download_state;
-        let done = ds.done_count();
-        let total = ds.tasks.len();
-        let title = format!(" Downloads ({}/{} done) ", done, total);
-
-        let bar_width = 20usize;
-
-        let items: Vec<ListItem> = ds
-            .tasks
-            .iter()
-            .enumerate()
-            .map(|(i, task)| {
-                let is_sel = i == ds.selected;
-                let prefix = if is_sel { "\u{203a} " } else { "  " };
-
-                let (status_icon, status_color) = match &task.status {
-                    TaskStatus::Pending => ("\u{2026}", Color::DarkGray), // …
-                    TaskStatus::Downloading => ("\u{2193}", Color::Cyan), // ↓
-                    TaskStatus::Paused => ("\u{23f8}", Color::Yellow),    // ⏸
-                    TaskStatus::Done => ("\u{2713}", Color::Green),       // ✓
-                    TaskStatus::Failed(_) => ("\u{2717}", Color::Red),    // ✗
-                };
-
-                let pct = if task.total_size > 0 {
-                    ((task.downloaded as f64 / task.total_size as f64) * 100.0) as u64
-                } else {
-                    0
-                };
-
-                let filled = if task.total_size > 0 {
-                    (bar_width as u64 * task.downloaded / task.total_size.max(1)) as usize
-                } else {
-                    0
-                };
-                let empty = bar_width.saturating_sub(filled);
-                let bar = format!("{}{}", "\u{2588}".repeat(filled), "\u{2591}".repeat(empty));
-
-                let speed_str = if task.status == TaskStatus::Downloading && task.speed > 0.0 {
-                    format!("  {}/s", format_size(task.speed as u64))
-                } else {
-                    String::new()
-                };
-
-                let name_style = if is_sel {
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(Color::White)
-                };
-
-                ListItem::new(Line::from(vec![
-                    Span::styled(prefix, name_style),
-                    Span::styled(
-                        format!("{} ", status_icon),
-                        Style::default().fg(status_color),
-                    ),
-                    Span::styled(format!("{:<30}", truncate_name(&task.name, 30)), name_style),
-                    Span::styled(format!("{:>3}%  ", pct), Style::default().fg(Color::White)),
-                    Span::styled(bar, Style::default().fg(status_color)),
-                    Span::styled(speed_str, Style::default().fg(Color::DarkGray)),
-                ]))
-            })
-            .collect();
-
-        let (dv_bc, dv_tc) = if self.is_vibrant() {
-            (Color::LightGreen, Color::LightGreen)
-        } else {
-            (Color::Cyan, Color::Green)
-        };
-        if items.is_empty() {
-            let empty_msg = Paragraph::new(Text::from(vec![
-                Line::from(""),
-                Line::from(Span::styled(
-                    "  No downloads. Add files to cart with 'a', then 'A' to download.",
-                    Style::default().fg(Color::DarkGray),
-                )),
-            ]))
-            .block(
-                self.styled_block()
-                    .title(title)
-                    .title_style(Style::default().fg(dv_tc))
-                    .border_style(Style::default().fg(dv_bc)),
-            );
-            f.render_widget(empty_msg, main_area);
-        } else {
-            let mut state = ListState::default();
-            if !ds.tasks.is_empty() {
-                state.select(Some(ds.selected.min(ds.tasks.len() - 1)));
-            }
-
-            let list = List::new(items)
-                .block(
-                    self.styled_block()
-                        .title(title)
-                        .title_style(Style::default().fg(dv_tc))
-                        .border_style(Style::default().fg(dv_bc)),
-                )
-                .highlight_style(Style::default())
-                .highlight_symbol("");
-            f.render_stateful_widget(list, main_area, &mut state);
-        }
-
-        // Help bar
-        if self.config.show_help_bar {
-            let pairs = self.help_pairs();
-            let mut spans = vec![Span::raw(" ")];
-            spans.extend(Self::styled_help_spans(&pairs));
-            let bar = Paragraph::new(Line::from(spans));
-            f.render_widget(bar, outer[1]);
-        }
-
-        if self.show_help_sheet {
-            self.draw_help_sheet(f);
-        }
-    }
     // --- Offline input overlay ---
 
     fn draw_offline_input_overlay(&self, f: &mut Frame, value: &str, cur: &str) {

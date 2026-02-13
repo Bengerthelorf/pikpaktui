@@ -1,8 +1,11 @@
 mod completion;
 pub(crate) mod download;
+mod download_view;
 mod draw;
 mod handler;
 mod local_completion;
+
+pub use download_view::{DownloadViewMode, NetworkStats};
 
 use crate::config::{AppConfig, TuiConfig};
 use crate::pikpak::{Entry, EntryKind, FileInfoResponse, PikPak};
@@ -195,6 +198,9 @@ struct App {
     cart_selected: usize,
     // Downloads
     download_state: DownloadState,
+    download_view_mode: DownloadViewMode,
+    network_stats: NetworkStats,
+    last_network_update: Instant,
     // Mouse support: pane areas recorded during draw
     current_pane_area: Cell<ratatui::layout::Rect>,
     parent_pane_area: Cell<ratatui::layout::Rect>,
@@ -242,6 +248,9 @@ impl App {
             cart_ids: HashSet::new(),
             cart_selected: 0,
             download_state: dl_state,
+            download_view_mode: DownloadViewMode::Collapsed,
+            network_stats: NetworkStats::new(),
+            last_network_update: Instant::now(),
             current_pane_area: Cell::new(ratatui::layout::Rect::default()),
             parent_pane_area: Cell::new(ratatui::layout::Rect::default()),
             preview_pane_area: Cell::new(ratatui::layout::Rect::default()),
@@ -303,6 +312,9 @@ impl App {
             cart_ids: HashSet::new(),
             cart_selected: 0,
             download_state: DownloadState::new(),
+            download_view_mode: DownloadViewMode::Collapsed,
+            network_stats: NetworkStats::new(),
+            last_network_update: Instant::now(),
             current_pane_area: Cell::new(ratatui::layout::Rect::default()),
             parent_pane_area: Cell::new(ratatui::layout::Rect::default()),
             preview_pane_area: Cell::new(ratatui::layout::Rect::default()),
@@ -527,6 +539,19 @@ impl App {
         let logs = self.download_state.poll(&self.client);
         for msg in logs {
             self.push_log(msg);
+        }
+
+        // Update network stats (every 500ms)
+        if self.last_network_update.elapsed() >= Duration::from_millis(500) {
+            let current_speed: f64 = self
+                .download_state
+                .tasks
+                .iter()
+                .filter(|t| t.status == download::TaskStatus::Downloading)
+                .map(|t| t.speed / 1_048_576.0) // Convert to MB/s
+                .sum();
+            self.network_stats.update(current_speed);
+            self.last_network_update = Instant::now();
         }
     }
 
