@@ -73,6 +73,7 @@ enum OpResult {
     ParentLs(Result<Vec<Entry>>),
     PreviewLs(String, Result<Vec<Entry>>),
     PreviewInfo(String, Result<FileInfoResponse>),
+    OfflineTasks(Result<Vec<crate::pikpak::OfflineTask>>),
 }
 
 struct PickerState {
@@ -404,6 +405,22 @@ impl App {
                         self.preview_state = PreviewState::Empty;
                     }
                     self.push_log(format!("Preview info failed: {e:#}"));
+                }
+                OpResult::OfflineTasks(Ok(tasks)) => {
+                    self.loading = false;
+                    if matches!(self.input, InputMode::InfoLoading) {
+                        self.input = InputMode::OfflineTasksView {
+                            tasks,
+                            selected: 0,
+                        };
+                    }
+                }
+                OpResult::OfflineTasks(Err(e)) => {
+                    self.loading = false;
+                    if matches!(self.input, InputMode::InfoLoading) {
+                        self.input = InputMode::Normal;
+                    }
+                    self.push_log(format!("Failed to load offline tasks: {e:#}"));
                 }
             }
         }

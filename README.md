@@ -2,18 +2,19 @@
 
 A TUI and CLI client for [PikPak](https://mypikpak.com) cloud storage, written in pure Rust with no external runtime dependencies.
 
-![pikpaktui screenshot](assets/screenshot.png)
+![pikpaktui screenshot](assets/screenshot.jpeg)
 
 ## Features
 
-- **TUI file browser** - Navigate folders, breadcrumb path display, Nerd Font icons, configurable color scheme and border style
+- **Three-column Miller layout** - Yazi-style parent / current / preview panes, with optional two-column mode (`show_preview = false`)
+- **Preview pane** - Folder children listing, file basic info, or detailed info (size, hash, link); lazy auto-load or manual with `Space`
 - **CLI subcommands** - `ls` / `mv` / `cp` / `rename` / `rm` / `mkdir` / `download` / `upload` / `share` / `quota` / `offline` / `tasks` / `star` / `unstar` / `starred` / `vip` / `events`
 - **File operations** - Move, copy, rename, delete (trash / permanent), create folder
 - **Folder picker** - Visual two-pane picker for move/copy destinations, with tab-completion text input as alternative
 - **Cart & batch download** - Add files to cart, batch download with progress bars, pause/resume
 - **Offline download** - Submit URLs/magnets for cloud download, view and manage offline tasks
-- **Star / VIP** - Star/unstar files, check VIP status
-- **File info** - View file details (size, hash, download link) with loading indicator
+- **Star** - Star/unstar files with persistent ★ indicator, check VIP status
+- **Log overlay** - Toggle floating log panel with `l`
 - **Quota query** - Check storage usage
 - **Login** - TUI login form with auto-saved credentials and persistent sessions
 - **Pure Rust** - Built with `ratatui` + `crossterm` + `reqwest` (rustls), no OpenSSL or C dependencies
@@ -104,7 +105,8 @@ CLI mode requires login: it checks for a valid session first, then falls back to
 | `D` | Downloads view |
 | `o` | Offline download |
 | `O` | Offline tasks |
-| `i` | File info |
+| `Space` | Preview / file info |
+| `l` | Toggle log overlay |
 | `h` | Help panel |
 | `q` | Quit |
 
@@ -150,12 +152,14 @@ password: "your-password"
 ```
 
 ```toml
-nerd_font = false       # Enable Nerd Font icons (TUI)
-cli_nerd_font = false   # Enable Nerd Font icons (CLI)
-move_mode = "picker"    # "picker" (two-pane) or "input" (text input)
-show_help_bar = true    # Show help bar at the bottom
-border_style = "thick"  # "rounded" | "thick" | "double"
+nerd_font = false        # Enable Nerd Font icons (TUI)
+cli_nerd_font = false    # Enable Nerd Font icons (CLI)
+move_mode = "picker"     # "picker" (two-pane) or "input" (text input)
+show_help_bar = true     # Show help bar at the bottom
+border_style = "thick"   # "rounded" | "thick" | "double"
 color_scheme = "vibrant" # "vibrant" | "classic"
+show_preview = true      # Three-column layout with preview pane (false = two-column)
+lazy_preview = false     # Auto-load preview on cursor move (true = auto, false = Space to load)
 ```
 
 ## Project Structure
@@ -187,9 +191,9 @@ src/
     events.rs       events command
     help.rs         help command
   tui/
-    mod.rs          App state and event loop
-    draw.rs         UI rendering (file list, picker, overlays, configurable themes)
-    handler.rs      Keyboard input handling
+    mod.rs          App state, event loop, miller columns state
+    draw.rs         Three-column layout, preview pane, overlays, themes
+    handler.rs      Keyboard input handling, cached navigation
     completion.rs   Remote path tab-completion
     local_completion.rs  Local path tab-completion
     download.rs     Download manager with progress tracking

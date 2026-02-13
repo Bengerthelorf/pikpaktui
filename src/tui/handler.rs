@@ -1080,23 +1080,20 @@ impl App {
     // --- Offline tasks view ---
 
     fn open_offline_tasks_view(&mut self) {
-        let phases = &[
-            "PHASE_TYPE_RUNNING",
-            "PHASE_TYPE_PENDING",
-            "PHASE_TYPE_COMPLETE",
-            "PHASE_TYPE_ERROR",
-        ];
-        match self.client.offline_list(50, phases) {
-            Ok(resp) => {
-                self.input = InputMode::OfflineTasksView {
-                    tasks: resp.tasks,
-                    selected: 0,
-                };
-            }
-            Err(e) => {
-                self.push_log(format!("Failed to load offline tasks: {e:#}"));
-            }
-        }
+        self.input = InputMode::InfoLoading;
+        self.loading = true;
+        let client = Arc::clone(&self.client);
+        let tx = self.result_tx.clone();
+        std::thread::spawn(move || {
+            let phases = &[
+                "PHASE_TYPE_RUNNING",
+                "PHASE_TYPE_PENDING",
+                "PHASE_TYPE_COMPLETE",
+                "PHASE_TYPE_ERROR",
+            ];
+            let result = client.offline_list(50, phases).map(|r| r.tasks);
+            let _ = tx.send(OpResult::OfflineTasks(result));
+        });
     }
 
     fn handle_offline_tasks_key(
@@ -1135,12 +1132,18 @@ impl App {
                 // Retry selected task
                 if let Some(task) = tasks.get(*selected) {
                     if task.phase == "PHASE_TYPE_ERROR" {
+                        let client = Arc::clone(&self.client);
+                        let tx = self.result_tx.clone();
                         let task_id = task.id.clone();
-                        match self.client.offline_task_retry(&task_id) {
-                            Ok(()) => self.push_log(format!("Retrying task: {}", task.name)),
-                            Err(e) => self.push_log(format!("Retry failed: {e:#}")),
-                        }
-                        self.open_offline_tasks_view();
+                        let task_name = task.name.clone();
+                        self.input = InputMode::InfoLoading;
+                        self.loading = true;
+                        std::thread::spawn(move || {
+                            match client.offline_task_retry(&task_id) {
+                                Ok(()) => { let _ = tx.send(OpResult::Ok(format!("Retrying task: {}", task_name))); }
+                                Err(e) => { let _ = tx.send(OpResult::Err(format!("Retry failed: {e:#}"))); }
+                            }
+                        });
                         return;
                     }
                 }
@@ -1152,12 +1155,18 @@ impl App {
             KeyCode::Char('x') => {
                 // Delete selected task
                 if let Some(task) = tasks.get(*selected) {
+                    let client = Arc::clone(&self.client);
+                    let tx = self.result_tx.clone();
                     let task_id = task.id.clone();
-                    match self.client.delete_tasks(&[task_id.as_str()], false) {
-                        Ok(()) => self.push_log(format!("Deleted task: {}", task.name)),
-                        Err(e) => self.push_log(format!("Delete task failed: {e:#}")),
-                    }
-                    self.open_offline_tasks_view();
+                    let task_name = task.name.clone();
+                    self.input = InputMode::InfoLoading;
+                    self.loading = true;
+                    std::thread::spawn(move || {
+                        match client.delete_tasks(&[task_id.as_str()], false) {
+                            Ok(()) => { let _ = tx.send(OpResult::Ok(format!("Deleted task: {}", task_name))); }
+                            Err(e) => { let _ = tx.send(OpResult::Err(format!("Delete task failed: {e:#}"))); }
+                        }
+                    });
                     return;
                 }
                 self.input = InputMode::OfflineTasksView {

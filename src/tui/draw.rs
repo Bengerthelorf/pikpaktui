@@ -1660,7 +1660,7 @@ impl App {
         let p = Paragraph::new(Text::from(vec![
             Line::from(""),
             Line::from(Span::styled(
-                format!("  {} Loading file info...", spinner),
+                format!("  {} Loading...", spinner),
                 Style::default().fg(Color::Cyan),
             )),
             Line::from(""),
