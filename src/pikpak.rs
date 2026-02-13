@@ -870,7 +870,7 @@ impl PikPak {
 
     /// Upload a local file to PikPak.
     /// Returns the file name and whether it was a dedup (instant upload).
-    pub fn upload_file(&self, parent_id: &str, local_path: &Path) -> Result<(String, bool)> {
+    pub fn upload_file(&self, parent_id: Option<&str>, local_path: &Path) -> Result<(String, bool)> {
         let file_name = local_path
             .file_name()
             .ok_or_else(|| anyhow!("invalid file path"))?
@@ -894,8 +894,8 @@ impl PikPak {
             "upload_type": "UPLOAD_TYPE_RESUMABLE",
             "objProvider": { "provider": "UPLOAD_TYPE_UNKNOWN" },
         });
-        if !parent_id.is_empty() {
-            payload["parent_id"] = serde_json::json!(parent_id);
+        if let Some(pid) = parent_id {
+            payload["parent_id"] = serde_json::json!(pid);
         }
 
         let mut rb = self.http.post(&url).bearer_auth(&token).json(&payload);
