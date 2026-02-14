@@ -76,6 +76,9 @@ enum PreviewState {
         size: u64,
         truncated: bool,
     },
+    ThumbnailImage {
+        image: image::DynamicImage,
+    },
 }
 
 enum OpResult {
@@ -87,6 +90,7 @@ enum OpResult {
     PreviewLs(String, Result<Vec<Entry>>),
     PreviewInfo(String, Result<FileInfoResponse>),
     PreviewText(String, Result<(String, String, u64, bool)>),
+    PreviewThumbnail(String, Result<image::DynamicImage>),
     OfflineTasks(Result<Vec<crate::pikpak::OfflineTask>>),
 }
 
@@ -537,6 +541,17 @@ impl App {
                     }
                     self.push_log(format!("Text preview failed: {e:#}"));
                 }
+                OpResult::PreviewThumbnail(id, Ok(image)) => {
+                    if self.preview_target_id.as_deref() == Some(&id) {
+                        self.preview_state = PreviewState::ThumbnailImage { image };
+                    }
+                }
+                OpResult::PreviewThumbnail(id, Err(e)) => {
+                    if self.preview_target_id.as_deref() == Some(&id) {
+                        self.preview_state = PreviewState::FileBasicInfo;
+                    }
+                    self.push_log(format!("Thumbnail preview failed: {e:#}"));
+                }
                 OpResult::OfflineTasks(Ok(tasks)) => {
                     self.loading = false;
                     if matches!(self.input, InputMode::InfoLoading) {
@@ -698,11 +713,24 @@ impl App {
         let eid = entry.id.clone();
         match entry.kind {
             EntryKind::Folder => {
+                // Folders always show content listing, never thumbnails
                 std::thread::spawn(move || {
                     let _ = tx.send(OpResult::PreviewLs(eid.clone(), client.ls(&eid)));
                 });
             }
             EntryKind::File => {
+                if let Some(ref thumb_url) = entry.thumbnail_link {
+                    if !thumb_url.is_empty() {
+                        let thumb_url = thumb_url.clone();
+                        std::thread::spawn(move || {
+                            let _ = tx.send(OpResult::PreviewThumbnail(
+                                eid.clone(),
+                                fetch_and_render_thumbnail(&thumb_url, &client),
+                            ));
+                        });
+                        return;
+                    }
+                }
                 if theme::is_text_previewable(&entry) {
                     let max_bytes = self.config.preview_max_size;
                     std::thread::spawn(move || {
@@ -843,3 +871,32 @@ fn handle_text_input(value: &mut String, code: KeyCode) -> Option<bool> {
         _ => None,
     }
 }
+
+fn fetch_and_render_thumbnail(
+    url: &str,
+    client: &crate::pikpak::PikPak,
+) -> Result<image::DynamicImage> {
+    use anyhow::Context;
+    use image::ImageReader;
+    use std::io::Cursor;
+
+    let response = client
+        .http()
+        .get(url)
+        .send()
+        .context("failed to download thumbnail")?;
+
+    if !response.status().is_success() {
+        return Err(anyhow::anyhow!("thumbnail download failed: {}", response.status()));
+    }
+
+    let bytes = response.bytes().context("failed to read thumbnail bytes")?;
+    let img = ImageReader::new(Cursor::new(&bytes))
+        .with_guessed_format()
+        .context("failed to guess image format")?
+        .decode()
+        .context("failed to decode thumbnail image")?;
+
+    Ok(img)
+}
+

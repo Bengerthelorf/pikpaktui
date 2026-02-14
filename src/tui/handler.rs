@@ -1443,7 +1443,7 @@ impl App {
                 if *selected > 0 {
                     *selected -= 1;
                 }
-            } else if *selected < 8 {
+            } else if *selected < 9 {
                 *selected += 1;
             }
             self.input = InputMode::Settings {
@@ -1465,11 +1465,11 @@ impl App {
 
                     let categories = vec![
                         ("UI Settings", 4),
-                        ("Preview Settings", 3),
+                        ("Preview Settings", 4),
                         ("Interface Settings", 2),
                     ];
 
-                    let bool_items = vec![0, 3, 4, 5, 8];
+                    let bool_items = vec![0, 3, 4, 5, 9];
                     let mut current_line = 0;
                     let mut item_idx = 0;
                     let terminal_width = (area.width.saturating_sub(4)) as usize;
@@ -1487,7 +1487,7 @@ impl App {
                                             3 => draft.show_help_bar = !draft.show_help_bar,
                                             4 => draft.show_preview = !draft.show_preview,
                                             5 => draft.lazy_preview = !draft.lazy_preview,
-                                            8 => draft.cli_nerd_font = !draft.cli_nerd_font,
+                                            9 => draft.cli_nerd_font = !draft.cli_nerd_font,
                                             _ => {}
                                         }
                                         modified = true;
@@ -1913,6 +1913,25 @@ impl App {
                 7 => {
                     match code {
                         KeyCode::Left => {
+                            draft.thumbnail_mode = draft.thumbnail_mode.prev();
+                            *modified = true;
+                        }
+                        KeyCode::Right => {
+                            draft.thumbnail_mode = draft.thumbnail_mode.next();
+                            *modified = true;
+                        }
+                        KeyCode::Enter => {
+                            *editing = false;
+                        }
+                        KeyCode::Esc => {
+                            *editing = false;
+                        }
+                        _ => {}
+                    }
+                }
+                8 => {
+                    match code {
+                        KeyCode::Left => {
                             draft.move_mode = if draft.move_mode == "picker" {
                                 "input".to_string()
                             } else {
@@ -1937,7 +1956,7 @@ impl App {
                         _ => {}
                     }
                 }
-                8 => {
+                9 => {
                     match code {
                         KeyCode::Char(' ')
                         | KeyCode::Enter
@@ -1959,7 +1978,7 @@ impl App {
         } else {
             match code {
                 KeyCode::Down | KeyCode::Char('j') => {
-                    *selected = (*selected + 1).min(8);
+                    *selected = (*selected + 1).min(9);
                     None
                 }
                 KeyCode::Up | KeyCode::Char('k') => {

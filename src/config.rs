@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use std::env;
 use std::fs;
 use std::path::PathBuf;
 
@@ -108,6 +109,114 @@ pub enum ColorScheme {
     Vibrant,
     Classic,
     Custom,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ThumbnailMode {
+    Auto,
+    Off,
+    ForceColor,
+    ForceGrayscale,
+}
+
+impl Default for ThumbnailMode {
+    fn default() -> Self {
+        Self::Auto
+    }
+}
+
+impl ThumbnailMode {
+    pub fn all() -> &'static [Self] {
+        &[Self::Auto, Self::Off, Self::ForceColor, Self::ForceGrayscale]
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Off => "off",
+            Self::ForceColor => "force-color",
+            Self::ForceGrayscale => "force-grayscale",
+        }
+    }
+
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::Auto => "Auto",
+            Self::Off => "Off",
+            Self::ForceColor => "Force: Color",
+            Self::ForceGrayscale => "Force: Grayscale",
+        }
+    }
+
+    pub fn next(&self) -> Self {
+        let all = Self::all();
+        let idx = all.iter().position(|s| s == self).unwrap();
+        all[(idx + 1) % all.len()]
+    }
+
+    pub fn prev(&self) -> Self {
+        let all = Self::all();
+        let idx = all.iter().position(|s| s == self).unwrap();
+        all[(idx + all.len() - 1) % all.len()]
+    }
+
+    /// Check if current mode should render colored thumbnails
+    pub fn should_use_color(&self) -> ThumbnailRenderMode {
+        match self {
+            Self::Auto => {
+                if detect_truecolor_support() {
+                    ThumbnailRenderMode::Color
+                } else {
+                    ThumbnailRenderMode::Grayscale
+                }
+            }
+            Self::Off => ThumbnailRenderMode::Off,
+            Self::ForceColor => ThumbnailRenderMode::Color,
+            Self::ForceGrayscale => ThumbnailRenderMode::Grayscale,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThumbnailRenderMode {
+    Color,
+    Grayscale,
+    Off,
+}
+
+/// Detect if terminal supports 24-bit true color
+pub fn detect_truecolor_support() -> bool {
+    // 1. Check COLORTERM environment variable (most reliable)
+    if let Ok(ct) = env::var("COLORTERM") {
+        if ct.contains("truecolor") || ct.contains("24bit") {
+            return true;
+        }
+    }
+
+    // 2. Check known terminal programs
+    if let Ok(term_program) = env::var("TERM_PROGRAM") {
+        match term_program.as_str() {
+            "iTerm.app" | "WezTerm" | "vscode" | "Hyper" => return true,
+            "Apple_Terminal" => return false, // Terminal.app doesn't support true color well
+            _ => {}
+        }
+    }
+
+    // 3. Check TERM variable
+    if let Ok(term) = env::var("TERM") {
+        // Explicit true color support
+        if term.contains("truecolor") || term.contains("24bit") {
+            return true;
+        }
+        // Known terminals
+        if term.starts_with("xterm-kitty") || term.starts_with("alacritty") {
+            return true;
+        }
+    }
+
+    // Conservative default: assume no support
+    false
 }
 
 impl Default for ColorScheme {
@@ -225,6 +334,8 @@ pub struct TuiConfig {
     pub preview_max_size: u64,
     #[serde(default)]
     pub custom_colors: CustomColors,
+    #[serde(default)]
+    pub thumbnail_mode: ThumbnailMode,
 }
 
 fn default_preview_max_size() -> u64 {
@@ -252,6 +363,7 @@ impl Default for TuiConfig {
             lazy_preview: false,
             preview_max_size: default_preview_max_size(),
             custom_colors: CustomColors::default(),
+            thumbnail_mode: ThumbnailMode::default(),
         }
     }
 }

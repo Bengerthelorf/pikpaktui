@@ -499,6 +499,76 @@ impl App {
                 );
                 f.render_widget(p, area);
             }
+            PreviewState::ThumbnailImage { image } => {
+                use crate::config::ThumbnailRenderMode;
+
+                // Calculate available space (minus borders and info lines)
+                let panel_width = area.width.saturating_sub(2) as u32; // borders
+                let panel_height = area.height.saturating_sub(2) as u32; // borders
+
+                // Reserve 4 lines for file info at bottom
+                let image_height = panel_height.saturating_sub(4).max(10);
+
+                let render_width = panel_width;
+                let render_height = image_height;
+
+                // Determine rendering mode
+                let render_mode = self.config.thumbnail_mode.should_use_color();
+
+                let mut lines = match render_mode {
+                    ThumbnailRenderMode::Color => {
+                        render_image_to_colored_lines(image, render_width, render_height)
+                    }
+                    ThumbnailRenderMode::Grayscale => {
+                        render_image_to_grayscale_lines(image, render_width, render_height)
+                    }
+                    ThumbnailRenderMode::Off => {
+                        vec![Line::from("")]
+                    }
+                };
+
+                // Add file info below the thumbnail
+                if let Some(entry) = self.entries.get(self.selected) {
+                    lines.push(Line::from(""));
+                    lines.push(Line::from(vec![
+                        Span::styled("  Name:  ", Style::default().fg(Color::Cyan)),
+                        Span::styled(&entry.name, Style::default().fg(Color::White)),
+                    ]));
+                    if entry.kind == EntryKind::File {
+                        lines.push(Line::from(vec![
+                            Span::styled("  Size:  ", Style::default().fg(Color::Cyan)),
+                            Span::styled(
+                                format_size(entry.size),
+                                Style::default().fg(Color::White),
+                            ),
+                        ]));
+                    }
+                    if !entry.created_time.is_empty() {
+                        lines.push(Line::from(vec![
+                            Span::styled("  Time:  ", Style::default().fg(Color::Cyan)),
+                            Span::styled(&entry.created_time, Style::default().fg(Color::DarkGray)),
+                        ]));
+                    }
+                }
+
+                let title = self
+                    .entries
+                    .get(self.selected)
+                    .map(|e| format!(" \u{1f5bc} {} ", truncate_name(&e.name, 25)))
+                    .unwrap_or_else(|| " Preview ".to_string());
+
+                let p = Paragraph::new(Text::from(lines)).block(
+                    self.styled_block()
+                        .title(title)
+                        .title_style(
+                            Style::default()
+                                .fg(Color::Magenta)
+                                .add_modifier(Modifier::BOLD),
+                        )
+                        .border_style(Style::default().fg(Color::DarkGray)),
+                );
+                f.render_widget(p, area);
+            }
             PreviewState::FileDetailedInfo(info) => {
                 let mut lines = vec![Line::from("")];
                 lines.push(Line::from(vec![
@@ -1912,6 +1982,11 @@ impl App {
                         "Maximum bytes for text preview".to_string(),
                         format!("{} KB", draft.preview_max_size / 1024),
                     ),
+                    (
+                        "Thumbnail Mode".to_string(),
+                        "Colored thumbnail rendering".to_string(),
+                        draft.thumbnail_mode.display_name().to_string(),
+                    ),
                 ],
             ),
             (
@@ -2256,4 +2331,120 @@ fn warn_triangle_lines() -> Vec<Line<'static>> {
             w,
         )),
     ]
+}
+
+fn render_image_to_colored_lines(
+    img: &image::DynamicImage,
+    max_width: u32,
+    max_height: u32,
+) -> Vec<Line<'static>> {
+    use image::GenericImageView;
+
+    let (orig_w, orig_h) = img.dimensions();
+    let orig_aspect = orig_w as f32 / orig_h as f32;
+
+    // Terminal characters are ~2x taller than wide
+    let target_width = max_width;
+    let target_height_chars = ((target_width as f32 / orig_aspect) / 2.0) as u32;
+
+    let (final_width, final_height_chars) = if target_height_chars > max_height {
+        let h = max_height;
+        let w = (h as f32 * 2.0 * orig_aspect) as u32;
+        (w, h)
+    } else {
+        (target_width, target_height_chars)
+    };
+
+    // Resize to double height (each char shows 2 pixels vertically)
+    let img = img.resize(
+        final_width,
+        final_height_chars * 2,
+        image::imageops::FilterType::Lanczos3,
+    );
+
+    let (w, h) = img.dimensions();
+    let mut lines = Vec::new();
+
+    for y in 0..final_height_chars {
+        let mut spans = Vec::new();
+        for x in 0..w {
+            let y_top = (y * 2).min(h - 1);
+            let y_bottom = (y * 2 + 1).min(h - 1);
+
+            let top_pixel = img.get_pixel(x, y_top);
+            let bottom_pixel = img.get_pixel(x, y_bottom);
+
+            // Use upper half block '▀'
+            // Foreground color = top pixel
+            // Background color = bottom pixel
+            let span = Span::styled(
+                "▀",
+                Style::default()
+                    .fg(Color::Rgb(top_pixel[0], top_pixel[1], top_pixel[2]))
+                    .bg(Color::Rgb(bottom_pixel[0], bottom_pixel[1], bottom_pixel[2])),
+            );
+            spans.push(span);
+        }
+        lines.push(Line::from(spans));
+    }
+
+    lines
+}
+
+fn render_image_to_grayscale_lines(
+    img: &image::DynamicImage,
+    max_width: u32,
+    max_height: u32,
+) -> Vec<Line<'static>> {
+    use image::GenericImageView;
+
+    const ASCII_CHARS: &[char] = &[' ', '.', ':', '-', '=', '+', '*', '#', '%', '@'];
+
+    let (orig_w, orig_h) = img.dimensions();
+    let orig_aspect = orig_w as f32 / orig_h as f32;
+
+    // Terminal characters are ~2x taller than wide
+    let target_width = max_width;
+    let target_height_chars = ((target_width as f32 / orig_aspect) / 2.0) as u32;
+
+    let (final_width, final_height_chars) = if target_height_chars > max_height {
+        let h = max_height;
+        let w = (h as f32 * 2.0 * orig_aspect) as u32;
+        (w, h)
+    } else {
+        (target_width, target_height_chars)
+    };
+
+    // Resize to double height (sample every 2 rows)
+    let img = img.resize(
+        final_width,
+        final_height_chars * 2,
+        image::imageops::FilterType::Lanczos3,
+    );
+
+    let (w, h) = img.dimensions();
+    let mut lines = Vec::new();
+
+    for y in 0..final_height_chars {
+        let mut line_str = String::new();
+        for x in 0..w {
+            // Average 2 vertical pixels
+            let y1 = (y * 2).min(h - 1);
+            let y2 = (y * 2 + 1).min(h - 1);
+
+            let pixel1 = img.get_pixel(x, y1);
+            let pixel2 = img.get_pixel(x, y2);
+
+            let brightness = ((pixel1[0] as u32 + pixel2[0] as u32) / 2
+                + (pixel1[1] as u32 + pixel2[1] as u32) / 2
+                + (pixel1[2] as u32 + pixel2[2] as u32) / 2)
+                / 3;
+
+            let idx = (brightness as usize * ASCII_CHARS.len()) / 256;
+            line_str.push(ASCII_CHARS[idx.min(ASCII_CHARS.len() - 1)]);
+        }
+        lines.push(Line::from(line_str));
+    }
+
+    lines
 }
