@@ -30,6 +30,7 @@ pub struct Entry {
     pub size: u64,
     pub created_time: String,
     pub starred: bool,
+    pub thumbnail_link: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -249,6 +250,7 @@ impl PikPak {
             ("parent_id", parent_id),
             ("limit", "500"),
             ("filters", filters),
+            ("thumbnail_size", "SIZE_MEDIUM"),
         ]);
         rb = self.authed_headers(rb);
 
@@ -276,6 +278,7 @@ impl PikPak {
                     size: f.size.unwrap_or(0),
                     created_time: f.created_time.unwrap_or_default(),
                     starred,
+                    thumbnail_link: f.thumbnail_link,
                 }
             })
             .collect();
@@ -415,6 +418,7 @@ impl PikPak {
             size: 0,
             created_time: f.created_time.unwrap_or_default(),
             starred,
+            thumbnail_link: f.thumbnail_link,
         })
     }
 
@@ -702,6 +706,7 @@ impl PikPak {
             ("parent_id", "*"),
             ("limit", &limit.to_string()),
             ("filters", filters),
+            ("thumbnail_size", "SIZE_MEDIUM"),
         ]);
         rb = self.authed_headers(rb);
 
@@ -731,6 +736,7 @@ impl PikPak {
                 size: f.size.unwrap_or(0),
                 created_time: f.created_time.unwrap_or_default(),
                 starred: true, // starred_list only returns starred items
+                thumbnail_link: f.thumbnail_link,
             })
             .collect();
         Ok(entries)
@@ -1465,6 +1471,8 @@ struct DriveFile {
     created_time: Option<String>,
     #[serde(default)]
     tags: Vec<DriveFileTag>,
+    #[serde(default)]
+    thumbnail_link: Option<String>,
 }
 
 #[derive(Deserialize)]

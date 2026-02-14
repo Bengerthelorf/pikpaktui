@@ -266,7 +266,7 @@ impl App {
                 let result = self.handle_settings_key(code, &mut selected, &mut editing, &mut draft, &mut modified);
 
                 // Check if handle_settings_key changed the input mode (e.g., entered CustomColorSettings)
-                if !matches!(self.input, InputMode::Settings { .. }) {
+                if !matches!(self.input, InputMode::Normal) {
                     return Ok(false);
                 }
 
