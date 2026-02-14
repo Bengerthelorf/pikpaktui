@@ -501,35 +501,66 @@ impl App {
             }
             PreviewState::ThumbnailImage { image } => {
                 use crate::config::ThumbnailRenderMode;
+                use ratatui_image::{picker::Picker, StatefulImage};
 
-                // Calculate available space (minus borders and info lines)
-                let panel_width = area.width.saturating_sub(2) as u32; // borders
-                let panel_height = area.height.saturating_sub(2) as u32; // borders
+                // Calculate available space
+                let panel_width = area.width.saturating_sub(2); // borders
+                let panel_height = area.height.saturating_sub(2); // borders
+                let image_height = panel_height.saturating_sub(4).max(10); // reserve 4 lines for info
 
-                // Reserve 4 lines for file info at bottom
-                let image_height = panel_height.saturating_sub(4).max(10);
+                // Create image area (top part for image, bottom for info)
+                let chunks = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([
+                        Constraint::Length(image_height),
+                        Constraint::Min(0),
+                    ])
+                    .split(ratatui::layout::Rect {
+                        x: area.x + 1,
+                        y: area.y + 1,
+                        width: panel_width,
+                        height: panel_height,
+                    });
 
-                let render_width = panel_width;
-                let render_height = image_height;
+                let image_area = chunks[0];
+                let info_area = chunks[1];
 
-                // Determine rendering mode
+                // Render image based on mode
                 let render_mode = self.config.thumbnail_mode.should_use_color();
 
-                let mut lines = match render_mode {
-                    ThumbnailRenderMode::Color => {
-                        render_image_to_colored_lines(image, render_width, render_height)
+                match render_mode {
+                    ThumbnailRenderMode::Auto => {
+                        if let Ok(picker) = Picker::from_query_stdio() {
+                            let mut protocol = picker.new_resize_protocol(image.clone());
+                            let img_widget = StatefulImage::default();
+                            f.render_stateful_widget(img_widget, image_area, &mut protocol);
+                        }
+                    }
+                    ThumbnailRenderMode::ColoredHalf => {
+                        let colored_lines = render_image_to_colored_lines(
+                            image,
+                            image_area.width as u32,
+                            image_area.height as u32,
+                        );
+                        let colored_para = Paragraph::new(Text::from(colored_lines));
+                        f.render_widget(colored_para, image_area);
                     }
                     ThumbnailRenderMode::Grayscale => {
-                        render_image_to_grayscale_lines(image, render_width, render_height)
+                        let ascii_lines = render_image_to_grayscale_lines(
+                            image,
+                            image_area.width as u32,
+                            image_area.height as u32,
+                        );
+                        let ascii_para = Paragraph::new(Text::from(ascii_lines))
+                            .style(Style::default().fg(Color::DarkGray));
+                        f.render_widget(ascii_para, image_area);
                     }
-                    ThumbnailRenderMode::Off => {
-                        vec![Line::from("")]
-                    }
-                };
+                    ThumbnailRenderMode::Off => {}
+                }
 
-                // Add file info below the thumbnail
+                // Render file info in bottom area
+                let mut lines = vec![];
                 if let Some(entry) = self.entries.get(self.selected) {
-                    lines.push(Line::from(""));
                     lines.push(Line::from(vec![
                         Span::styled("  Name:  ", Style::default().fg(Color::Cyan)),
                         Span::styled(&entry.name, Style::default().fg(Color::White)),
@@ -551,23 +582,26 @@ impl App {
                     }
                 }
 
+                let info_p = Paragraph::new(Text::from(lines));
+                f.render_widget(info_p, info_area);
+
+                // Render border with title
                 let title = self
                     .entries
                     .get(self.selected)
                     .map(|e| format!(" \u{1f5bc} {} ", truncate_name(&e.name, 25)))
                     .unwrap_or_else(|| " Preview ".to_string());
 
-                let p = Paragraph::new(Text::from(lines)).block(
-                    self.styled_block()
-                        .title(title)
-                        .title_style(
-                            Style::default()
-                                .fg(Color::Magenta)
-                                .add_modifier(Modifier::BOLD),
-                        )
-                        .border_style(Style::default().fg(Color::DarkGray)),
-                );
-                f.render_widget(p, area);
+                let border = self
+                    .styled_block()
+                    .title(title)
+                    .title_style(
+                        Style::default()
+                            .fg(Color::Magenta)
+                            .add_modifier(Modifier::BOLD),
+                    )
+                    .border_style(Style::default().fg(Color::DarkGray));
+                f.render_widget(border, area);
             }
             PreviewState::FileDetailedInfo(info) => {
                 let mut lines = vec![Line::from("")];
@@ -2333,6 +2367,7 @@ fn warn_triangle_lines() -> Vec<Line<'static>> {
     ]
 }
 
+/// Render image to colored halfblock lines
 fn render_image_to_colored_lines(
     img: &image::DynamicImage,
     max_width: u32,
@@ -2391,6 +2426,7 @@ fn render_image_to_colored_lines(
     lines
 }
 
+/// Render image to grayscale ASCII art lines
 fn render_image_to_grayscale_lines(
     img: &image::DynamicImage,
     max_width: u32,

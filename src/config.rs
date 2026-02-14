@@ -161,18 +161,17 @@ impl ThumbnailMode {
         all[(idx + all.len() - 1) % all.len()]
     }
 
-    /// Check if current mode should render colored thumbnails
     pub fn should_use_color(&self) -> ThumbnailRenderMode {
         match self {
             Self::Auto => {
                 if detect_truecolor_support() {
-                    ThumbnailRenderMode::Color
+                    ThumbnailRenderMode::Auto
                 } else {
                     ThumbnailRenderMode::Grayscale
                 }
             }
             Self::Off => ThumbnailRenderMode::Off,
-            Self::ForceColor => ThumbnailRenderMode::Color,
+            Self::ForceColor => ThumbnailRenderMode::ColoredHalf,
             Self::ForceGrayscale => ThumbnailRenderMode::Grayscale,
         }
     }
@@ -180,42 +179,28 @@ impl ThumbnailMode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThumbnailRenderMode {
-    Color,
+    Auto,
+    ColoredHalf,
     Grayscale,
     Off,
 }
 
-/// Detect if terminal supports 24-bit true color
 pub fn detect_truecolor_support() -> bool {
-    // 1. Check COLORTERM environment variable (most reliable)
     if let Ok(ct) = env::var("COLORTERM") {
         if ct.contains("truecolor") || ct.contains("24bit") {
             return true;
         }
     }
 
-    // 2. Check known terminal programs
-    if let Ok(term_program) = env::var("TERM_PROGRAM") {
-        match term_program.as_str() {
-            "iTerm.app" | "WezTerm" | "vscode" | "Hyper" => return true,
-            "Apple_Terminal" => return false, // Terminal.app doesn't support true color well
-            _ => {}
-        }
-    }
-
-    // 3. Check TERM variable
     if let Ok(term) = env::var("TERM") {
-        // Explicit true color support
         if term.contains("truecolor") || term.contains("24bit") {
             return true;
         }
-        // Known terminals
-        if term.starts_with("xterm-kitty") || term.starts_with("alacritty") {
+        if term.starts_with("xterm-256color") {
             return true;
         }
     }
 
-    // Conservative default: assume no support
     false
 }
 

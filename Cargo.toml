@@ -24,7 +24,7 @@ base64 = "0.22"
 unicode-width = "0.2"
 syntect = { version = "5.3.0", default-features = false, features = ["default-syntaxes", "default-themes", "regex-fancy", "plist-load"] }
 image = "0.25"
-viuer = "0.8"
+ratatui-image = { version = "10.0", default-features = false, features = ["crossterm"] }
 
 [profile.release]
 codegen-units = 1
