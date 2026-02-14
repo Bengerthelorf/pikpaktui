@@ -60,7 +60,7 @@ fn home_config_dir() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".config"))
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum BorderStyle {
     Rounded,
@@ -75,11 +75,39 @@ impl Default for BorderStyle {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+impl BorderStyle {
+    pub fn all() -> &'static [Self] {
+        &[Self::Rounded, Self::Thick, Self::ThickRounded, Self::Double]
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Rounded => "rounded",
+            Self::Thick => "thick",
+            Self::ThickRounded => "thick-rounded",
+            Self::Double => "double",
+        }
+    }
+
+    pub fn next(&self) -> Self {
+        let all = Self::all();
+        let idx = all.iter().position(|s| s == self).unwrap();
+        all[(idx + 1) % all.len()]
+    }
+
+    pub fn prev(&self) -> Self {
+        let all = Self::all();
+        let idx = all.iter().position(|s| s == self).unwrap();
+        all[(idx + all.len() - 1) % all.len()]
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ColorScheme {
     Vibrant,
     Classic,
+    Custom,
 }
 
 impl Default for ColorScheme {
@@ -88,7 +116,94 @@ impl Default for ColorScheme {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+impl ColorScheme {
+    pub fn all() -> &'static [Self] {
+        &[Self::Vibrant, Self::Classic, Self::Custom]
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Vibrant => "vibrant",
+            Self::Classic => "classic",
+            Self::Custom => "custom",
+        }
+    }
+
+    pub fn next(&self) -> Self {
+        let all = Self::all();
+        let idx = all.iter().position(|s| s == self).unwrap();
+        all[(idx + 1) % all.len()]
+    }
+
+    pub fn prev(&self) -> Self {
+        let all = Self::all();
+        let idx = all.iter().position(|s| s == self).unwrap();
+        all[(idx + all.len() - 1) % all.len()]
+    }
+}
+
+/// Custom color configuration for file categories
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+pub struct CustomColors {
+    #[serde(default = "default_folder_color")]
+    pub folder: (u8, u8, u8),
+    #[serde(default = "default_archive_color")]
+    pub archive: (u8, u8, u8),
+    #[serde(default = "default_image_color")]
+    pub image: (u8, u8, u8),
+    #[serde(default = "default_video_color")]
+    pub video: (u8, u8, u8),
+    #[serde(default = "default_audio_color")]
+    pub audio: (u8, u8, u8),
+    #[serde(default = "default_document_color")]
+    pub document: (u8, u8, u8),
+    #[serde(default = "default_code_color")]
+    pub code: (u8, u8, u8),
+    #[serde(default = "default_default_color")]
+    pub default: (u8, u8, u8),
+}
+
+fn default_folder_color() -> (u8, u8, u8) {
+    (92, 176, 255) // Light Blue
+}
+fn default_archive_color() -> (u8, u8, u8) {
+    (255, 102, 102) // Light Red
+}
+fn default_image_color() -> (u8, u8, u8) {
+    (255, 102, 255) // Light Magenta
+}
+fn default_video_color() -> (u8, u8, u8) {
+    (102, 255, 255) // Light Cyan
+}
+fn default_audio_color() -> (u8, u8, u8) {
+    (0, 255, 255) // Cyan
+}
+fn default_document_color() -> (u8, u8, u8) {
+    (102, 255, 102) // Light Green
+}
+fn default_code_color() -> (u8, u8, u8) {
+    (255, 255, 102) // Light Yellow
+}
+fn default_default_color() -> (u8, u8, u8) {
+    (255, 255, 255) // White
+}
+
+impl Default for CustomColors {
+    fn default() -> Self {
+        Self {
+            folder: default_folder_color(),
+            archive: default_archive_color(),
+            image: default_image_color(),
+            video: default_video_color(),
+            audio: default_audio_color(),
+            document: default_document_color(),
+            code: default_code_color(),
+            default: default_default_color(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TuiConfig {
     #[serde(default)]
     pub nerd_font: bool,
@@ -108,6 +223,8 @@ pub struct TuiConfig {
     pub lazy_preview: bool,
     #[serde(default = "default_preview_max_size")]
     pub preview_max_size: u64,
+    #[serde(default)]
+    pub custom_colors: CustomColors,
 }
 
 fn default_preview_max_size() -> u64 {
@@ -134,6 +251,7 @@ impl Default for TuiConfig {
             show_preview: true,
             lazy_preview: false,
             preview_max_size: default_preview_max_size(),
+            custom_colors: CustomColors::default(),
         }
     }
 }
@@ -141,6 +259,25 @@ impl Default for TuiConfig {
 impl TuiConfig {
     pub fn use_picker(&self) -> bool {
         self.move_mode != "input"
+    }
+
+    pub fn get_color(&self, category: crate::theme::FileCategory) -> ratatui::style::Color {
+        use ratatui::style::Color;
+        if self.color_scheme == ColorScheme::Custom {
+            let rgb = match category {
+                crate::theme::FileCategory::Folder => self.custom_colors.folder,
+                crate::theme::FileCategory::Archive => self.custom_colors.archive,
+                crate::theme::FileCategory::Image => self.custom_colors.image,
+                crate::theme::FileCategory::Video => self.custom_colors.video,
+                crate::theme::FileCategory::Audio => self.custom_colors.audio,
+                crate::theme::FileCategory::Document => self.custom_colors.document,
+                crate::theme::FileCategory::Code => self.custom_colors.code,
+                crate::theme::FileCategory::Default => self.custom_colors.default,
+            };
+            Color::Rgb(rgb.0, rgb.1, rgb.2)
+        } else {
+            crate::theme::color_for_scheme(category, self.color_scheme)
+        }
     }
 }
 
@@ -158,5 +295,23 @@ impl TuiConfig {
             Err(_) => return Self::default(),
         };
         toml::from_str(&raw).unwrap_or_default()
+    }
+
+    pub fn save(&self) -> Result<()> {
+        let path = match home_config_dir() {
+            Some(base) => base.join("pikpaktui").join("config.toml"),
+            None => return Err(anyhow::anyhow!("unable to locate config dir")),
+        };
+
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create dir {}", parent.display()))?;
+        }
+
+        let raw = toml::to_string_pretty(self)
+            .context("failed to serialize config")?;
+        fs::write(&path, raw)
+            .with_context(|| format!("failed to write config {}", path.display()))?;
+        Ok(())
     }
 }

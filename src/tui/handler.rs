@@ -257,6 +257,72 @@ impl App {
                 // Any key closes text preview view
                 Ok(false)
             }
+            InputMode::Settings {
+                mut selected,
+                mut editing,
+                mut draft,
+                mut modified,
+            } => {
+                let result = self.handle_settings_key(code, &mut selected, &mut editing, &mut draft, &mut modified);
+
+                // Check if handle_settings_key changed the input mode (e.g., entered CustomColorSettings)
+                if !matches!(self.input, InputMode::Settings { .. }) {
+                    return Ok(false);
+                }
+
+                match result {
+                    None => {
+                        self.input = InputMode::Settings {
+                            selected,
+                            editing,
+                            draft,
+                            modified,
+                        };
+                    }
+                    Some(should_save) => {
+                        if should_save {
+                            match draft.save() {
+                                Ok(()) => {
+                                    self.config = draft;
+                                    self.push_log("Settings saved to config.toml".into());
+                                    self.input = InputMode::Normal;
+                                }
+                                Err(e) => {
+                                    self.push_log(format!("Failed to save config: {:#}", e));
+                                    self.input = InputMode::Settings {
+                                        selected,
+                                        editing,
+                                        draft,
+                                        modified,
+                                    };
+                                }
+                            }
+                        } else {
+                            self.input = InputMode::Normal;
+                        }
+                    }
+                }
+                Ok(false)
+            }
+            InputMode::CustomColorSettings {
+                mut selected,
+                mut draft,
+                mut modified,
+                mut editing_rgb,
+                mut rgb_input,
+                mut rgb_component,
+            } => {
+                self.handle_custom_color_key(
+                    code,
+                    &mut selected,
+                    &mut draft,
+                    &mut modified,
+                    &mut editing_rgb,
+                    &mut rgb_input,
+                    &mut rgb_component,
+                );
+                Ok(false)
+            }
         }
     }
 
@@ -446,6 +512,14 @@ impl App {
                         }
                     }
                 }
+            }
+            KeyCode::Char(',') => {
+                self.input = InputMode::Settings {
+                    selected: 0,
+                    editing: false,
+                    draft: self.config.clone(),
+                    modified: false,
+                };
             }
             KeyCode::Char(' ') => {
                 if let Some(entry) = self.current_entry().cloned() {
@@ -1363,10 +1437,81 @@ impl App {
                 self.download_state.selected =
                     (self.download_state.selected + 1).min(count - 1);
             }
+        } else if let InputMode::Settings { selected, editing, draft, modified } = &mut self.input {
+            // Settings overlay scroll support
+            if up {
+                if *selected > 0 {
+                    *selected -= 1;
+                }
+            } else if *selected < 8 {
+                *selected += 1;
+            }
+            self.input = InputMode::Settings {
+                selected: *selected,
+                editing: *editing,
+                draft: draft.clone(),
+                modified: *modified,
+            };
         }
     }
 
     fn handle_mouse_click(&mut self, col: u16, row: u16, double: bool) {
+        if matches!(self.input, InputMode::Settings { .. }) {
+            let area = self.settings_area.get();
+            if let InputMode::Settings { mut selected, mut editing, mut draft, mut modified } = std::mem::replace(&mut self.input, InputMode::Normal) {
+                if self.is_in_rect(col, row, area) && !editing {
+                    let content_y = row.saturating_sub(area.y + 1) as usize;
+                    let content_x = col.saturating_sub(area.x + 1) as usize;
+
+                    let categories = vec![
+                        ("UI Settings", 4),
+                        ("Preview Settings", 3),
+                        ("Interface Settings", 2),
+                    ];
+
+                    let bool_items = vec![0, 3, 4, 5, 8];
+                    let mut current_line = 0;
+                    let mut item_idx = 0;
+                    let terminal_width = (area.width.saturating_sub(4)) as usize;
+
+                    for (_cat_name, item_count) in categories {
+                        current_line += 1;
+                        for _ in 0..item_count {
+                            if content_y >= current_line && content_y < current_line + 2 {
+                                selected = item_idx;
+
+                                if content_y == current_line && bool_items.contains(&item_idx) {
+                                    if content_x + 10 >= terminal_width {
+                                        match item_idx {
+                                            0 => draft.nerd_font = !draft.nerd_font,
+                                            3 => draft.show_help_bar = !draft.show_help_bar,
+                                            4 => draft.show_preview = !draft.show_preview,
+                                            5 => draft.lazy_preview = !draft.lazy_preview,
+                                            8 => draft.cli_nerd_font = !draft.cli_nerd_font,
+                                            _ => {}
+                                        }
+                                        modified = true;
+                                    }
+                                } else if double {
+                                    editing = true;
+                                }
+                                break;
+                            }
+                            current_line += 2;
+                            item_idx += 1;
+                        }
+                    }
+                }
+                self.input = InputMode::Settings {
+                    selected,
+                    editing,
+                    draft,
+                    modified,
+                };
+            }
+            return;
+        }
+
         if !matches!(self.input, InputMode::Normal) {
             return;
         }
@@ -1439,5 +1584,410 @@ impl App {
                 Err(e) => OpResult::Err(format!("Permanent delete failed: {e:#}")),
             });
         });
+    }
+
+    fn handle_custom_color_key(
+        &mut self,
+        code: KeyCode,
+        selected: &mut usize,
+        draft: &mut crate::config::TuiConfig,
+        modified: &mut bool,
+        editing_rgb: &mut bool,
+        rgb_input: &mut String,
+        rgb_component: &mut usize,
+    ) {
+        if *editing_rgb {
+            match code {
+                KeyCode::Char(c) if c.is_ascii_digit() => {
+                    if rgb_input.len() < 3 {
+                        rgb_input.push(c);
+                    }
+                }
+                KeyCode::Backspace => {
+                    rgb_input.pop();
+                }
+                KeyCode::Enter => {
+                    if let Ok(value) = rgb_input.parse::<u8>() {
+                        let color_ref = match *selected {
+                            0 => &mut draft.custom_colors.folder,
+                            1 => &mut draft.custom_colors.archive,
+                            2 => &mut draft.custom_colors.image,
+                            3 => &mut draft.custom_colors.video,
+                            4 => &mut draft.custom_colors.audio,
+                            5 => &mut draft.custom_colors.document,
+                            6 => &mut draft.custom_colors.code,
+                            7 => &mut draft.custom_colors.default,
+                            _ => return,
+                        };
+                        match *rgb_component {
+                            0 => color_ref.0 = value,
+                            1 => color_ref.1 = value,
+                            2 => color_ref.2 = value,
+                            _ => {}
+                        }
+                        *modified = true;
+                    }
+                    *editing_rgb = false;
+                    rgb_input.clear();
+                }
+                KeyCode::Esc => {
+                    *editing_rgb = false;
+                    rgb_input.clear();
+                }
+                _ => {}
+            }
+            self.input = InputMode::CustomColorSettings {
+                selected: *selected,
+                draft: draft.clone(),
+                modified: *modified,
+                editing_rgb: *editing_rgb,
+                rgb_input: rgb_input.clone(),
+                rgb_component: *rgb_component,
+            };
+        } else {
+            match code {
+                KeyCode::Down | KeyCode::Char('j') => {
+                    *selected = (*selected + 1).min(7);
+                    self.input = InputMode::CustomColorSettings {
+                        selected: *selected,
+                        draft: draft.clone(),
+                        modified: *modified,
+                        editing_rgb: false,
+                        rgb_input: String::new(),
+                        rgb_component: 0,
+                    };
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    *selected = selected.saturating_sub(1);
+                    self.input = InputMode::CustomColorSettings {
+                        selected: *selected,
+                        draft: draft.clone(),
+                        modified: *modified,
+                        editing_rgb: false,
+                        rgb_input: String::new(),
+                        rgb_component: 0,
+                    };
+                }
+                KeyCode::Char('r') => {
+                    *editing_rgb = true;
+                    *rgb_component = 0;
+                    rgb_input.clear();
+                    self.input = InputMode::CustomColorSettings {
+                        selected: *selected,
+                        draft: draft.clone(),
+                        modified: *modified,
+                        editing_rgb: true,
+                        rgb_input: rgb_input.clone(),
+                        rgb_component: 0,
+                    };
+                }
+                KeyCode::Char('g') => {
+                    *editing_rgb = true;
+                    *rgb_component = 1;
+                    rgb_input.clear();
+                    self.input = InputMode::CustomColorSettings {
+                        selected: *selected,
+                        draft: draft.clone(),
+                        modified: *modified,
+                        editing_rgb: true,
+                        rgb_input: rgb_input.clone(),
+                        rgb_component: 1,
+                    };
+                }
+                KeyCode::Char('b') => {
+                    *editing_rgb = true;
+                    *rgb_component = 2;
+                    rgb_input.clear();
+                    self.input = InputMode::CustomColorSettings {
+                        selected: *selected,
+                        draft: draft.clone(),
+                        modified: *modified,
+                        editing_rgb: true,
+                        rgb_input: rgb_input.clone(),
+                        rgb_component: 2,
+                    };
+                }
+                KeyCode::Char('s') => {
+                    if *modified {
+                        match draft.save() {
+                            Ok(()) => {
+                                self.config = draft.clone();
+                                self.push_log("Custom colors saved to config.toml".into());
+                                self.input = InputMode::Settings {
+                                    selected: 5, // Return to Color Scheme item
+                                    editing: false,
+                                    draft: draft.clone(),
+                                    modified: false,
+                                };
+                            }
+                            Err(e) => {
+                                self.push_log(format!("Failed to save config: {:#}", e));
+                                self.input = InputMode::CustomColorSettings {
+                                    selected: *selected,
+                                    draft: draft.clone(),
+                                    modified: *modified,
+                                    editing_rgb: false,
+                                    rgb_input: String::new(),
+                                    rgb_component: 0,
+                                };
+                            }
+                        }
+                    } else {
+                        self.input = InputMode::CustomColorSettings {
+                            selected: *selected,
+                            draft: draft.clone(),
+                            modified: *modified,
+                            editing_rgb: false,
+                            rgb_input: String::new(),
+                            rgb_component: 0,
+                        };
+                    }
+                }
+                KeyCode::Esc | KeyCode::Backspace => {
+                    // Return to main settings
+                    self.input = InputMode::Settings {
+                        selected: 5, // Return to Color Scheme item
+                        editing: false,
+                        draft: draft.clone(),
+                        modified: *modified,
+                    };
+                }
+                _ => {
+                    self.input = InputMode::CustomColorSettings {
+                        selected: *selected,
+                        draft: draft.clone(),
+                        modified: *modified,
+                        editing_rgb: false,
+                        rgb_input: String::new(),
+                        rgb_component: 0,
+                    };
+                }
+            }
+        }
+    }
+
+    fn handle_settings_key(
+        &mut self,
+        code: KeyCode,
+        selected: &mut usize,
+        editing: &mut bool,
+        draft: &mut crate::config::TuiConfig,
+        modified: &mut bool,
+    ) -> Option<bool> {
+
+        if *editing {
+            match *selected {
+                0 => {
+                    match code {
+                        KeyCode::Char(' ')
+                        | KeyCode::Enter
+                        | KeyCode::Left
+                        | KeyCode::Right => {
+                            draft.nerd_font = !draft.nerd_font;
+                            *modified = true;
+                            *editing = false;
+                        }
+                        KeyCode::Esc => {
+                            *editing = false;
+                        }
+                        _ => {}
+                    }
+                }
+                1 => {
+                    match code {
+                        KeyCode::Left => {
+                            draft.border_style = draft.border_style.prev();
+                            *modified = true;
+                        }
+                        KeyCode::Right => {
+                            draft.border_style = draft.border_style.next();
+                            *modified = true;
+                        }
+                        KeyCode::Enter => {
+                            *editing = false;
+                        }
+                        KeyCode::Esc => {
+                            *editing = false;
+                        }
+                        _ => {}
+                    }
+                }
+                2 => {
+                    match code {
+                        KeyCode::Left => {
+                            draft.color_scheme = draft.color_scheme.prev();
+                            *modified = true;
+                        }
+                        KeyCode::Right => {
+                            draft.color_scheme = draft.color_scheme.next();
+                            *modified = true;
+                        }
+                        KeyCode::Enter => {
+                            use crate::config::ColorScheme;
+                            if draft.color_scheme == ColorScheme::Custom {
+                                self.input = InputMode::CustomColorSettings {
+                                    selected: 0,
+                                    draft: draft.clone(),
+                                    modified: *modified,
+                                    editing_rgb: false,
+                                    rgb_input: String::new(),
+                                    rgb_component: 0,
+                                };
+                                return None;
+                            }
+                            *editing = false;
+                        }
+                        KeyCode::Esc => {
+                            *editing = false;
+                        }
+                        _ => {}
+                    }
+                }
+                3 => {
+                    match code {
+                        KeyCode::Char(' ')
+                        | KeyCode::Enter
+                        | KeyCode::Left
+                        | KeyCode::Right => {
+                            draft.show_help_bar = !draft.show_help_bar;
+                            *modified = true;
+                            *editing = false;
+                        }
+                        KeyCode::Esc => {
+                            *editing = false;
+                        }
+                        _ => {}
+                    }
+                }
+                4 => {
+                    match code {
+                        KeyCode::Char(' ')
+                        | KeyCode::Enter
+                        | KeyCode::Left
+                        | KeyCode::Right => {
+                            draft.show_preview = !draft.show_preview;
+                            *modified = true;
+                            *editing = false;
+                        }
+                        KeyCode::Esc => {
+                            *editing = false;
+                        }
+                        _ => {}
+                    }
+                }
+                5 => {
+                    match code {
+                        KeyCode::Char(' ')
+                        | KeyCode::Enter
+                        | KeyCode::Left
+                        | KeyCode::Right => {
+                            draft.lazy_preview = !draft.lazy_preview;
+                            *modified = true;
+                            *editing = false;
+                        }
+                        KeyCode::Esc => {
+                            *editing = false;
+                        }
+                        _ => {}
+                    }
+                }
+                6 => {
+                    match code {
+                        KeyCode::Char('+') | KeyCode::Up => {
+                            draft.preview_max_size = (draft.preview_max_size + 1024).min(10485760);
+                            *modified = true;
+                        }
+                        KeyCode::Char('-') | KeyCode::Down => {
+                            draft.preview_max_size = (draft.preview_max_size.saturating_sub(1024)).max(1024);
+                            *modified = true;
+                        }
+                        KeyCode::Enter => {
+                            *editing = false;
+                        }
+                        KeyCode::Esc => {
+                            *editing = false;
+                        }
+                        _ => {}
+                    }
+                }
+                7 => {
+                    match code {
+                        KeyCode::Left => {
+                            draft.move_mode = if draft.move_mode == "picker" {
+                                "input".to_string()
+                            } else {
+                                "picker".to_string()
+                            };
+                            *modified = true;
+                        }
+                        KeyCode::Right => {
+                            draft.move_mode = if draft.move_mode == "picker" {
+                                "input".to_string()
+                            } else {
+                                "picker".to_string()
+                            };
+                            *modified = true;
+                        }
+                        KeyCode::Enter => {
+                            *editing = false;
+                        }
+                        KeyCode::Esc => {
+                            *editing = false;
+                        }
+                        _ => {}
+                    }
+                }
+                8 => {
+                    match code {
+                        KeyCode::Char(' ')
+                        | KeyCode::Enter
+                        | KeyCode::Left
+                        | KeyCode::Right => {
+                            draft.cli_nerd_font = !draft.cli_nerd_font;
+                            *modified = true;
+                            *editing = false;
+                        }
+                        KeyCode::Esc => {
+                            *editing = false;
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+            None
+        } else {
+            match code {
+                KeyCode::Down | KeyCode::Char('j') => {
+                    *selected = (*selected + 1).min(8);
+                    None
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    *selected = selected.saturating_sub(1);
+                    None
+                }
+                KeyCode::Char(' ') | KeyCode::Enter => {
+                    *editing = true;
+                    None
+                }
+                KeyCode::Char('s') => {
+                    if *modified {
+                        Some(true) // Save and exit
+                    } else {
+                        None // Nothing to save, stay in settings
+                    }
+                }
+                KeyCode::Esc => {
+                    if *modified {
+                        // TODO: Add confirmation dialog
+                        // For now, just discard changes
+                        Some(false) // Discard changes and exit
+                    } else {
+                        Some(false) // Exit without changes
+                    }
+                }
+                _ => None,
+            }
+        }
     }
 }

@@ -164,6 +164,20 @@ enum InputMode {
         lines: Vec<ratatui::text::Line<'static>>,
         truncated: bool,
     },
+    Settings {
+        selected: usize,
+        editing: bool,
+        draft: TuiConfig,
+        modified: bool,
+    },
+    CustomColorSettings {
+        selected: usize,
+        draft: TuiConfig,
+        modified: bool,
+        editing_rgb: bool,
+        rgb_input: String,
+        rgb_component: usize, // 0=R, 1=G, 2=B
+    },
 }
 
 struct App {
@@ -212,6 +226,8 @@ struct App {
     last_click_pos: (u16, u16),
     // Preview pane scroll offset
     preview_scroll: usize,
+    // Settings overlay area for mouse support
+    settings_area: Cell<ratatui::layout::Rect>,
 }
 
 impl App {
@@ -259,6 +275,7 @@ impl App {
             last_click_time: Instant::now(),
             last_click_pos: (0, 0),
             preview_scroll: 0,
+            settings_area: Cell::new(ratatui::layout::Rect::default()),
         };
         app.refresh();
         app
@@ -323,6 +340,7 @@ impl App {
             last_click_time: Instant::now(),
             last_click_pos: (0, 0),
             preview_scroll: 0,
+            settings_area: Cell::new(ratatui::layout::Rect::default()),
         }
     }
 

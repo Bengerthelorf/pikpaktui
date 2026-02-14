@@ -40,7 +40,7 @@ impl App {
 
     /// File-type color respecting the selected color scheme.
     fn file_color(&self, cat: theme::FileCategory) -> Color {
-        theme::color_for_scheme(cat, self.config.color_scheme)
+        self.config.get_color(cat)
     }
 
     /// Highlight style for selected items.
@@ -641,6 +641,35 @@ impl App {
             InputMode::InfoView { .. }
             | InputMode::InfoFolderView { .. }
             | InputMode::TextPreviewView { .. } => vec![("any key", "close")],
+            InputMode::Settings { editing, .. } => {
+                if *editing {
+                    vec![
+                        ("Left/Right", "change"),
+                        ("Space", "toggle"),
+                        ("Enter", "confirm"),
+                        ("Esc", "cancel"),
+                    ]
+                } else {
+                    vec![
+                        ("j/k", "nav"),
+                        ("Space/Enter", "edit"),
+                        ("s", "save"),
+                        ("Esc", "close"),
+                    ]
+                }
+            }
+            InputMode::CustomColorSettings { editing_rgb, .. } => {
+                if *editing_rgb {
+                    vec![("0-9", "input"), ("Enter", "confirm"), ("Esc", "cancel")]
+                } else {
+                    vec![
+                        ("j/k", "nav"),
+                        ("r/g/b", "edit RGB"),
+                        ("s", "save"),
+                        ("Esc", "back"),
+                    ]
+                }
+            }
             _ => vec![],
         }
     }
@@ -859,6 +888,24 @@ impl App {
                 truncated,
             } => {
                 self.draw_text_preview_overlay(f, name, lines, *truncated);
+            }
+            InputMode::Settings {
+                selected,
+                editing,
+                draft,
+                modified,
+            } => {
+                self.draw_settings_overlay(f, *selected, *editing, draft, *modified);
+            }
+            InputMode::CustomColorSettings {
+                selected,
+                draft,
+                modified,
+                editing_rgb,
+                rgb_input,
+                rgb_component,
+            } => {
+                self.draw_custom_color_overlay(f, *selected, draft, *modified, *editing_rgb, rgb_input, *rgb_component);
             }
         }
     }
@@ -1121,6 +1168,7 @@ impl App {
                     ("A", "View cart"),
                     ("o", "Cloud download"),
                     ("O", "Offline tasks"),
+                    (",", "Settings"),
                     ("h", "Toggle help"),
                     ("q", "Quit"),
                 ]);
@@ -1799,6 +1847,329 @@ impl App {
                 .title(title)
                 .title_style(Style::default().fg(in_tc).add_modifier(Modifier::BOLD))
                 .border_style(Style::default().fg(in_bc)),
+        );
+        f.render_widget(p, area);
+    }
+
+    // --- Settings overlay ---
+
+    fn draw_settings_overlay(
+        &self,
+        f: &mut Frame,
+        selected: usize,
+        editing: bool,
+        draft: &crate::config::TuiConfig,
+        modified: bool,
+    ) {
+        let area = centered_rect(70, 65, f.area());
+        self.settings_area.set(area);
+        f.render_widget(Clear, area);
+
+        // Categorized settings: (category_name, settings_list)
+        // Each setting: (name, description, value)
+        type SettingItem = (String, String, String);
+        let categories: Vec<(&str, Vec<SettingItem>)> = vec![
+            (
+                "UI Settings",
+                vec![
+                    (
+                        "Nerd Font Icons".to_string(),
+                        "Use Nerd Font icons in TUI".to_string(),
+                        if draft.nerd_font { "[✓]" } else { "[ ]" }.to_string(),
+                    ),
+                    (
+                        "Border Style".to_string(),
+                        "Window border appearance".to_string(),
+                        draft.border_style.as_str().to_string(),
+                    ),
+                    (
+                        "Color Scheme".to_string(),
+                        "UI color theme".to_string(),
+                        draft.color_scheme.as_str().to_string(),
+                    ),
+                    (
+                        "Show Help Bar".to_string(),
+                        "Display keyboard shortcuts".to_string(),
+                        if draft.show_help_bar { "[✓]" } else { "[ ]" }.to_string(),
+                    ),
+                ],
+            ),
+            (
+                "Preview Settings",
+                vec![
+                    (
+                        "Show Preview Pane".to_string(),
+                        "Enable three-column layout".to_string(),
+                        if draft.show_preview { "[✓]" } else { "[ ]" }.to_string(),
+                    ),
+                    (
+                        "Lazy Preview".to_string(),
+                        "Auto-load preview after delay".to_string(),
+                        if draft.lazy_preview { "[✓]" } else { "[ ]" }.to_string(),
+                    ),
+                    (
+                        "Preview Max Size".to_string(),
+                        "Maximum bytes for text preview".to_string(),
+                        format!("{} KB", draft.preview_max_size / 1024),
+                    ),
+                ],
+            ),
+            (
+                "Interface Settings",
+                vec![
+                    (
+                        "Move Mode".to_string(),
+                        "Interface for move/copy operations".to_string(),
+                        draft.move_mode.clone(),
+                    ),
+                    (
+                        "CLI Nerd Font".to_string(),
+                        "Use icons in CLI output".to_string(),
+                        if draft.cli_nerd_font { "[✓]" } else { "[ ]" }.to_string(),
+                    ),
+                ],
+            ),
+        ];
+
+        // Map each item index to its line position for scrolling
+        let mut item_line_map: Vec<usize> = Vec::new();
+        let mut line_idx = 0;
+        for (_cat_name, items) in &categories {
+            line_idx += 1; // Category header
+            for _ in items {
+                item_line_map.push(line_idx);
+                line_idx += 2; // Name line + description line
+            }
+        }
+
+        let inner_height = area.height.saturating_sub(4) as usize; // -2 borders, -2 for blank+help
+        let selected_line = item_line_map.get(selected).copied().unwrap_or(0);
+        let scroll_offset = if selected_line >= inner_height {
+            (selected_line + 2).saturating_sub(inner_height)
+        } else {
+            0
+        };
+
+        let mut lines = vec![Line::from("")];
+        let mut global_idx = 0;
+
+        for (cat_name, items) in &categories {
+            lines.push(Line::from(Span::styled(
+                format!(" {}", cat_name),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+            )));
+
+            for (name, desc, value) in items {
+                let is_selected = global_idx == selected;
+                let prefix = if is_selected { " › " } else { "   " };
+
+                let name_style = if is_selected && editing {
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD)
+                } else if is_selected {
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::White)
+                };
+
+                let value_style = if is_selected && editing {
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::Green)
+                };
+
+                let mut name_value_spans = vec![
+                    Span::styled(prefix, name_style),
+                    Span::styled(name.clone(), name_style),
+                ];
+
+                // Right-align value with padding
+                let terminal_width = (f.area().width * 70 / 100).saturating_sub(4) as usize;
+                let name_len = prefix.len() + name.len();
+                let value_len = value.len();
+                let padding = terminal_width.saturating_sub(name_len + value_len + 1);
+
+                name_value_spans.push(Span::raw(" ".repeat(padding)));
+                name_value_spans.push(Span::styled(value.clone(), value_style));
+
+                lines.push(Line::from(name_value_spans));
+                lines.push(Line::from(Span::styled(
+                    format!("     {}", desc),
+                    Style::default().fg(Color::DarkGray),
+                )));
+
+                global_idx += 1;
+            }
+        }
+
+        lines.push(Line::from(""));
+
+        // Help bar
+        let hints = if editing {
+            vec![
+                ("Left/Right", "change"),
+                ("Space", "toggle"),
+                ("Enter", "confirm"),
+                ("Esc", "cancel"),
+            ]
+        } else {
+            vec![
+                ("j/k", "nav"),
+                ("Space/Enter", "edit"),
+                ("s", "save"),
+                ("Esc", "close"),
+            ]
+        };
+        let mut hint_spans = vec![Span::raw("  ")];
+        hint_spans.extend(Self::styled_help_spans(&hints));
+        lines.push(Line::from(hint_spans));
+
+        // Apply scroll offset
+        let visible_lines: Vec<Line> = lines
+            .into_iter()
+            .skip(scroll_offset)
+            .take(inner_height + 2) // +2 for blank and help
+            .collect();
+
+        let (st_bc, st_tc) = if self.is_vibrant() {
+            (Color::LightMagenta, Color::LightMagenta)
+        } else {
+            (Color::Cyan, Color::Yellow)
+        };
+
+        let title = if modified {
+            " Settings * "
+        } else {
+            " Settings "
+        };
+
+        let p = Paragraph::new(Text::from(visible_lines)).block(
+            self.styled_block()
+                .title(title)
+                .title_style(Style::default().fg(st_tc))
+                .border_style(Style::default().fg(st_bc)),
+        );
+        f.render_widget(p, area);
+    }
+
+    // --- Custom color settings overlay ---
+
+    fn draw_custom_color_overlay(
+        &self,
+        f: &mut Frame,
+        selected: usize,
+        draft: &crate::config::TuiConfig,
+        modified: bool,
+        editing_rgb: bool,
+        rgb_input: &str,
+        rgb_component: usize,
+    ) {
+        let area = centered_rect(70, 70, f.area());
+        self.settings_area.set(area);
+        f.render_widget(Clear, area);
+
+        let colors = [
+            ("Folder", draft.custom_colors.folder),
+            ("Archive", draft.custom_colors.archive),
+            ("Image", draft.custom_colors.image),
+            ("Video", draft.custom_colors.video),
+            ("Audio", draft.custom_colors.audio),
+            ("Document", draft.custom_colors.document),
+            ("Code", draft.custom_colors.code),
+            ("Default", draft.custom_colors.default),
+        ];
+
+        let mut lines = vec![Line::from("")];
+
+        for (i, (name, (r, g, b))) in colors.iter().enumerate() {
+            let is_selected = i == selected;
+            let prefix = if is_selected { " › " } else { "   " };
+
+            let name_style = if is_selected {
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::White)
+            };
+
+            // Show color preview and RGB values
+            let color_preview = "███";
+            let rgb_text = format!("R:{:3} G:{:3} B:{:3}", r, g, b);
+
+            let mut spans = vec![
+                Span::styled(prefix, name_style),
+                Span::styled(format!("{:<12}", name), name_style),
+                Span::styled(color_preview, Style::default().fg(Color::Rgb(*r, *g, *b))),
+                Span::raw("  "),
+                Span::styled(rgb_text, Style::default().fg(Color::DarkGray)),
+            ];
+
+            // Show editing indicator
+            if is_selected && editing_rgb {
+                let component_name = match rgb_component {
+                    0 => "R",
+                    1 => "G",
+                    2 => "B",
+                    _ => "?",
+                };
+                spans.push(Span::raw("  "));
+                spans.push(Span::styled(
+                    format!("  Editing {}: {}_", component_name, rgb_input),
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ));
+            }
+
+            lines.push(Line::from(spans));
+        }
+
+        lines.push(Line::from(""));
+
+        // Help bar
+        let hints = if editing_rgb {
+            vec![
+                ("0-9", "input"),
+                ("Enter", "confirm"),
+                ("Esc", "cancel"),
+            ]
+        } else {
+            vec![
+                ("j/k", "nav"),
+                ("r/g/b", "edit RGB"),
+                ("s", "save"),
+                ("Esc", "back"),
+            ]
+        };
+        let mut hint_spans = vec![Span::raw("  ")];
+        hint_spans.extend(Self::styled_help_spans(&hints));
+        lines.push(Line::from(hint_spans));
+
+        let (st_bc, st_tc) = if self.is_vibrant() {
+            (Color::LightMagenta, Color::LightMagenta)
+        } else {
+            (Color::Cyan, Color::Yellow)
+        };
+
+        let title = if modified {
+            " Custom Colors * "
+        } else {
+            " Custom Colors "
+        };
+
+        let p = Paragraph::new(Text::from(lines)).block(
+            self.styled_block()
+                .title(title)
+                .title_style(Style::default().fg(st_tc))
+                .border_style(Style::default().fg(st_bc)),
         );
         f.render_widget(p, area);
     }
