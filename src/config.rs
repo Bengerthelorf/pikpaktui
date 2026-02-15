@@ -174,15 +174,6 @@ impl ThumbnailMode {
         &[Self::Auto, Self::Off, Self::ForceColor, Self::ForceGrayscale]
     }
 
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Auto => "auto",
-            Self::Off => "off",
-            Self::ForceColor => "force-color",
-            Self::ForceGrayscale => "force-grayscale",
-        }
-    }
-
     pub fn display_name(&self) -> &'static str {
         match self {
             Self::Auto => "Auto",
