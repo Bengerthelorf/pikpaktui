@@ -1,3 +1,5 @@
+pub mod complete_path;
+pub mod completions;
 pub mod cp;
 pub mod download;
 pub mod events;

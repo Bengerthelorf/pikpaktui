@@ -95,6 +95,14 @@ pub fn run() -> Result<()> {
         ("vip",                      "Show VIP & account info"),
     ];
     print_commands(acct_cmds);
+    println!();
+
+    // Utility
+    println!("  {MAGENTA}{BOLD}Utility{RESET}");
+    let util_cmds: &[(&str, &str)] = &[
+        ("completions <shell>",      "Generate shell completions (zsh)"),
+    ];
+    print_commands(util_cmds);
 
     println!();
     println!("{BOLD}OPTIONS:{RESET}");
