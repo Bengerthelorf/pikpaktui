@@ -10,24 +10,26 @@ A TUI and CLI client for [PikPak](https://mypikpak.com) cloud storage, written i
 
 ### Interactive TUI
 - **Three-column Miller layout** — Parent / current / preview panes (Yazi-style), with optional two-column mode
-- **Preview pane** — Folder listing, file info, syntax-highlighted text preview, and thumbnail image rendering (Kitty / iTerm2 / Sixel protocols)
+- **Thumbnail preview** — Media files display thumbnail images directly in the terminal via native image protocols (Kitty, iTerm2, Sixel) using [ratatui-image](https://github.com/benjajaja/ratatui-image). Fallback modes: colored half-block rendering and grayscale ASCII art. Per-terminal protocol auto-detection with manual override
+- **Text preview** — Syntax-highlighted code/text preview powered by [syntect](https://github.com/trishume/syntect) (base16-ocean.dark theme), supporting 50+ languages with line numbers
+- **Folder preview** — Instant children listing in the preview pane; cached entries are reused when opening folders (zero extra API calls)
 - **File operations** — Move, copy, rename, delete (trash or permanent), create folder, star/unstar
 - **Folder picker** — Visual two-pane picker for move/copy destinations, with tab-completion text input as alternative
-- **Cart & batch download** — Add files to cart, batch download with progress bars, pause/resume/cancel, persistent download state across sessions
-- **Download dashboard** — Collapsed popup or expanded full-screen view with network activity graph, per-file progress, ETA
+- **Cart & batch download** — Add files to cart, batch download with pause/resume/cancel, HTTP Range resume for interrupted transfers, download state persisted across sessions
+- **Download dashboard** — Collapsed popup or expanded full-screen view with braille-character network activity graph, per-file progress, speed, ETA
 - **Offline download** — Submit URLs/magnets for PikPak cloud download, view and manage tasks
-- **Interactive settings** — In-app settings editor with live preview, custom RGB colors per file category, per-terminal image protocol configuration
+- **Interactive settings** — In-app settings editor (`,`), custom RGB colors per file category, per-terminal image protocol configuration
 - **Mouse support** — Click to select, double-click to open, scroll wheel navigation
 
 ### CLI
 - **20 subcommands** — `ls`, `mv`, `cp`, `rename`, `rm`, `mkdir`, `download`, `upload`, `share`, `offline`, `tasks`, `star`, `unstar`, `starred`, `events`, `quota`, `vip`, `completions`, `help`, `version`
 - **Colored output** — `ls` with multi-column grid layout (eza-style), Nerd Font icons support
-- **Resumable upload** — Dedup-aware (instant upload on hash match), multipart resumable with 10 MB chunks
+- **Resumable transfer** — Upload: dedup-aware instant upload on hash match, multipart resumable with 10 MB chunks via OSS. Download: HTTP Range resume for interrupted transfers
 - **Shell completions** — Zsh completion with dynamic cloud path completion (like `scp`)
 
 ### General
 - **Pure Rust** — Built with `ratatui` + `crossterm` + `reqwest` (rustls-tls), no OpenSSL or C dependencies
-- **Persistent sessions** — Login once, session auto-refreshes
+- **Persistent sessions** — Login once, session auto-refreshes via token refresh
 - **Cross-platform** — Linux (x86_64 musl static), macOS Intel, macOS Apple Silicon
 
 ## Install
@@ -279,6 +281,16 @@ Auto-managed. Stores access/refresh tokens. No manual editing needed.
 ### Download State — `downloads.json`
 
 Auto-managed. Persists incomplete download tasks (pending / paused / failed) across sessions.
+
+## Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `PIKPAK_DRIVE_BASE_URL` | Override PikPak drive API endpoint |
+| `PIKPAK_AUTH_BASE_URL` | Override PikPak auth API endpoint |
+| `PIKPAK_CLIENT_ID` | Override OAuth client ID |
+| `PIKPAK_CLIENT_SECRET` | Override OAuth client secret |
+| `PIKPAK_CAPTCHA_TOKEN` | Provide CAPTCHA token for login |
 
 ## Project Structure
 
