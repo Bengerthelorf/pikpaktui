@@ -323,6 +323,23 @@ impl App {
                 );
                 Ok(false)
             }
+            InputMode::ImageProtocolSettings {
+                mut selected,
+                mut draft,
+                mut modified,
+                current_terminal,
+                terminals,
+            } => {
+                self.handle_image_protocol_key(
+                    code,
+                    &mut selected,
+                    &mut draft,
+                    &mut modified,
+                    &current_terminal,
+                    &terminals,
+                );
+                Ok(false)
+            }
         }
     }
 
@@ -1586,6 +1603,129 @@ impl App {
         });
     }
 
+    fn handle_image_protocol_key(
+        &mut self,
+        code: KeyCode,
+        selected: &mut usize,
+        draft: &mut crate::config::TuiConfig,
+        modified: &mut bool,
+        current_terminal: &str,
+        terminals: &[String],
+    ) {
+        match code {
+            KeyCode::Down | KeyCode::Char('j') => {
+                if !terminals.is_empty() {
+                    *selected = (*selected + 1).min(terminals.len() - 1);
+                }
+                self.input = InputMode::ImageProtocolSettings {
+                    selected: *selected,
+                    draft: draft.clone(),
+                    modified: *modified,
+                    current_terminal: current_terminal.to_string(),
+                    terminals: terminals.to_vec(),
+                };
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                *selected = selected.saturating_sub(1);
+                self.input = InputMode::ImageProtocolSettings {
+                    selected: *selected,
+                    draft: draft.clone(),
+                    modified: *modified,
+                    current_terminal: current_terminal.to_string(),
+                    terminals: terminals.to_vec(),
+                };
+            }
+            KeyCode::Left => {
+                if let Some(term) = terminals.get(*selected) {
+                    let proto = draft
+                        .image_protocols
+                        .get(term)
+                        .copied()
+                        .unwrap_or(crate::config::ImageProtocol::Auto);
+                    draft.image_protocols.insert(term.clone(), proto.prev());
+                    *modified = true;
+                }
+                self.input = InputMode::ImageProtocolSettings {
+                    selected: *selected,
+                    draft: draft.clone(),
+                    modified: *modified,
+                    current_terminal: current_terminal.to_string(),
+                    terminals: terminals.to_vec(),
+                };
+            }
+            KeyCode::Right => {
+                if let Some(term) = terminals.get(*selected) {
+                    let proto = draft
+                        .image_protocols
+                        .get(term)
+                        .copied()
+                        .unwrap_or(crate::config::ImageProtocol::Auto);
+                    draft.image_protocols.insert(term.clone(), proto.next());
+                    *modified = true;
+                }
+                self.input = InputMode::ImageProtocolSettings {
+                    selected: *selected,
+                    draft: draft.clone(),
+                    modified: *modified,
+                    current_terminal: current_terminal.to_string(),
+                    terminals: terminals.to_vec(),
+                };
+            }
+            KeyCode::Char('s') => {
+                if *modified {
+                    match draft.save() {
+                        Ok(()) => {
+                            self.config = draft.clone();
+                            self.push_log("Image protocol settings saved to config.toml".into());
+                            self.input = InputMode::Settings {
+                                selected: 8,
+                                editing: false,
+                                draft: draft.clone(),
+                                modified: false,
+                            };
+                        }
+                        Err(e) => {
+                            self.push_log(format!("Failed to save config: {:#}", e));
+                            self.input = InputMode::ImageProtocolSettings {
+                                selected: *selected,
+                                draft: draft.clone(),
+                                modified: *modified,
+                                current_terminal: current_terminal.to_string(),
+                                terminals: terminals.to_vec(),
+                            };
+                        }
+                    }
+                } else {
+                    self.input = InputMode::ImageProtocolSettings {
+                        selected: *selected,
+                        draft: draft.clone(),
+                        modified: *modified,
+                        current_terminal: current_terminal.to_string(),
+                        terminals: terminals.to_vec(),
+                    };
+                }
+            }
+            KeyCode::Esc | KeyCode::Backspace => {
+                // Return to main settings at item #8
+                self.input = InputMode::Settings {
+                    selected: 8,
+                    editing: false,
+                    draft: draft.clone(),
+                    modified: *modified,
+                };
+            }
+            _ => {
+                self.input = InputMode::ImageProtocolSettings {
+                    selected: *selected,
+                    draft: draft.clone(),
+                    modified: *modified,
+                    current_terminal: current_terminal.to_string(),
+                    terminals: terminals.to_vec(),
+                };
+            }
+        }
+    }
+
     fn handle_custom_color_key(
         &mut self,
         code: KeyCode,
@@ -1931,6 +2071,31 @@ impl App {
                 }
                 8 => {
                     match code {
+                        KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Left | KeyCode::Right => {
+                            let current_terminal = draft.ensure_current_terminal();
+                            let terminals: Vec<String> =
+                                draft.image_protocols.keys().cloned().collect();
+                            let sel = terminals
+                                .iter()
+                                .position(|t| t == &current_terminal)
+                                .unwrap_or(0);
+                            self.input = InputMode::ImageProtocolSettings {
+                                selected: sel,
+                                draft: draft.clone(),
+                                modified: *modified,
+                                current_terminal,
+                                terminals,
+                            };
+                            return None;
+                        }
+                        KeyCode::Esc => {
+                            *editing = false;
+                        }
+                        _ => {}
+                    }
+                }
+                9 => {
+                    match code {
                         KeyCode::Left => {
                             draft.move_mode = if draft.move_mode == "picker" {
                                 "input".to_string()
@@ -1956,7 +2121,7 @@ impl App {
                         _ => {}
                     }
                 }
-                9 => {
+                10 => {
                     match code {
                         KeyCode::Char(' ')
                         | KeyCode::Enter
@@ -1978,7 +2143,7 @@ impl App {
         } else {
             match code {
                 KeyCode::Down | KeyCode::Char('j') => {
-                    *selected = (*selected + 1).min(9);
+                    *selected = (*selected + 1).min(10);
                     None
                 }
                 KeyCode::Up | KeyCode::Char('k') => {
@@ -1986,6 +2151,24 @@ impl App {
                     None
                 }
                 KeyCode::Char(' ') | KeyCode::Enter => {
+                    if *selected == 8 {
+                        // Directly enter image protocol sub-menu
+                        let current_terminal = draft.ensure_current_terminal();
+                        let terminals: Vec<String> =
+                            draft.image_protocols.keys().cloned().collect();
+                        let sel = terminals
+                            .iter()
+                            .position(|t| t == &current_terminal)
+                            .unwrap_or(0);
+                        self.input = InputMode::ImageProtocolSettings {
+                            selected: sel,
+                            draft: draft.clone(),
+                            modified: *modified,
+                            current_terminal,
+                            terminals,
+                        };
+                        return None;
+                    }
                     *editing = true;
                     None
                 }

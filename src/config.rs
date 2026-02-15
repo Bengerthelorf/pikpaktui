@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -109,6 +110,48 @@ pub enum ColorScheme {
     Vibrant,
     Classic,
     Custom,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ImageProtocol {
+    Auto,
+    Kitty,
+    Iterm2,
+    Sixel,
+}
+
+impl Default for ImageProtocol {
+    fn default() -> Self {
+        Self::Auto
+    }
+}
+
+impl ImageProtocol {
+    pub fn all() -> &'static [Self] {
+        &[Self::Auto, Self::Kitty, Self::Iterm2, Self::Sixel]
+    }
+
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::Auto => "Auto",
+            Self::Kitty => "Kitty",
+            Self::Iterm2 => "iTerm2",
+            Self::Sixel => "Sixel",
+        }
+    }
+
+    pub fn next(&self) -> Self {
+        let all = Self::all();
+        let idx = all.iter().position(|s| s == self).unwrap();
+        all[(idx + 1) % all.len()]
+    }
+
+    pub fn prev(&self) -> Self {
+        let all = Self::all();
+        let idx = all.iter().position(|s| s == self).unwrap();
+        all[(idx + all.len() - 1) % all.len()]
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
@@ -321,6 +364,11 @@ pub struct TuiConfig {
     pub custom_colors: CustomColors,
     #[serde(default)]
     pub thumbnail_mode: ThumbnailMode,
+    #[serde(default)]
+    pub image_protocols: BTreeMap<String, ImageProtocol>,
+    /// Legacy single-value field kept for backward-compatible deserialization.
+    #[serde(default, skip_serializing)]
+    image_protocol: Option<ImageProtocol>,
 }
 
 fn default_preview_max_size() -> u64 {
@@ -349,6 +397,8 @@ impl Default for TuiConfig {
             preview_max_size: default_preview_max_size(),
             custom_colors: CustomColors::default(),
             thumbnail_mode: ThumbnailMode::default(),
+            image_protocols: BTreeMap::new(),
+            image_protocol: None,
         }
     }
 }
@@ -356,6 +406,31 @@ impl Default for TuiConfig {
 impl TuiConfig {
     pub fn use_picker(&self) -> bool {
         self.move_mode != "input"
+    }
+
+    /// Detect the current terminal emulator name via `TERM_PROGRAM`.
+    pub fn detect_terminal() -> String {
+        env::var("TERM_PROGRAM").unwrap_or_else(|_| "unknown".to_string())
+    }
+
+    /// Return the image protocol configured for the current terminal,
+    /// falling back to `Auto`.
+    pub fn current_image_protocol(&self) -> ImageProtocol {
+        let term = Self::detect_terminal();
+        self.image_protocols
+            .get(&term)
+            .copied()
+            .unwrap_or(ImageProtocol::Auto)
+    }
+
+    /// Ensure the current terminal has an entry in the map (defaulting to `Auto`)
+    /// and return its name.
+    pub fn ensure_current_terminal(&mut self) -> String {
+        let term = Self::detect_terminal();
+        self.image_protocols
+            .entry(term.clone())
+            .or_insert(ImageProtocol::Auto);
+        term
     }
 
     pub fn get_color(&self, category: crate::theme::FileCategory) -> ratatui::style::Color {
@@ -391,7 +466,15 @@ impl TuiConfig {
             Ok(r) => r,
             Err(_) => return Self::default(),
         };
-        toml::from_str(&raw).unwrap_or_default()
+        let mut cfg: TuiConfig = toml::from_str(&raw).unwrap_or_default();
+        // Migrate legacy single-value `image_protocol` into per-terminal map
+        if let Some(proto) = cfg.image_protocol.take() {
+            if cfg.image_protocols.is_empty() {
+                let term = Self::detect_terminal();
+                cfg.image_protocols.insert(term, proto);
+            }
+        }
+        cfg
     }
 
     pub fn save(&self) -> Result<()> {

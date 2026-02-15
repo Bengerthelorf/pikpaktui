@@ -182,6 +182,13 @@ enum InputMode {
         rgb_input: String,
         rgb_component: usize, // 0=R, 1=G, 2=B
     },
+    ImageProtocolSettings {
+        selected: usize,
+        draft: TuiConfig,
+        modified: bool,
+        current_terminal: String,
+        terminals: Vec<String>,
+    },
 }
 
 struct App {

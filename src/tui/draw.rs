@@ -15,6 +15,20 @@ use super::local_completion::LocalPathInput;
 use super::{App, InputMode, LoginField, PreviewState, SPINNER_FRAMES, centered_rect, format_size};
 
 impl App {
+    /// Returns `true` when a popup overlay is active that may cover the preview pane.
+    /// Used to suppress terminal-image-protocol rendering so that iTerm2 / Kitty
+    /// don't leave stale image data under the overlay.
+    fn has_overlay(&self) -> bool {
+        !matches!(
+            self.input,
+            InputMode::Normal
+                | InputMode::Login { .. }
+                | InputMode::MovePicker { .. }
+                | InputMode::CopyPicker { .. }
+                | InputMode::DownloadView
+        )
+    }
+
     pub(super) fn draw(&self, f: &mut Frame) {
         match &self.input {
             InputMode::Login { .. } => self.draw_login_screen(f),
@@ -499,9 +513,9 @@ impl App {
                 );
                 f.render_widget(p, area);
             }
-            PreviewState::ThumbnailImage { image } => {
+            PreviewState::ThumbnailImage { image } if !self.has_overlay() => {
                 use crate::config::ThumbnailRenderMode;
-                use ratatui_image::{picker::Picker, StatefulImage};
+                use ratatui_image::{picker::{Picker, ProtocolType}, StatefulImage};
 
                 // Calculate available space
                 let panel_width = area.width.saturating_sub(2); // borders
@@ -530,7 +544,30 @@ impl App {
 
                 match render_mode {
                     ThumbnailRenderMode::Auto => {
-                        if let Ok(picker) = Picker::from_query_stdio() {
+                        if let Ok(mut picker) = Picker::from_query_stdio() {
+                            // Apply user-configured protocol override
+                            match self.config.current_image_protocol() {
+                                crate::config::ImageProtocol::Auto => {
+                                    // Fix: iTerm2 incorrectly detected as Kitty
+                                    if picker.protocol_type() == ProtocolType::Kitty {
+                                        if let Ok(term_program) = std::env::var("TERM_PROGRAM") {
+                                            if term_program.contains("iTerm") {
+                                                picker.set_protocol_type(ProtocolType::Iterm2);
+                                            }
+                                        }
+                                    }
+                                }
+                                crate::config::ImageProtocol::Kitty => {
+                                    picker.set_protocol_type(ProtocolType::Kitty);
+                                }
+                                crate::config::ImageProtocol::Iterm2 => {
+                                    picker.set_protocol_type(ProtocolType::Iterm2);
+                                }
+                                crate::config::ImageProtocol::Sixel => {
+                                    picker.set_protocol_type(ProtocolType::Sixel);
+                                }
+                            }
+
                             let mut protocol = picker.new_resize_protocol(image.clone());
                             let img_widget = StatefulImage::default();
                             f.render_stateful_widget(img_widget, image_area, &mut protocol);
@@ -602,6 +639,23 @@ impl App {
                     )
                     .border_style(Style::default().fg(Color::DarkGray));
                 f.render_widget(border, area);
+            }
+            // Overlay is active — suppress protocol-image to avoid artifacts in iTerm2
+            PreviewState::ThumbnailImage { .. } => {
+                let p = Paragraph::new(Text::from(vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "  [thumbnail hidden during overlay]",
+                        Style::default().fg(Color::DarkGray),
+                    )),
+                ]))
+                .block(
+                    self.styled_block()
+                        .title(" Preview ")
+                        .title_style(Style::default().fg(Color::DarkGray))
+                        .border_style(Style::default().fg(Color::DarkGray)),
+                );
+                f.render_widget(p, area);
             }
             PreviewState::FileDetailedInfo(info) => {
                 let mut lines = vec![Line::from("")];
@@ -773,6 +827,14 @@ impl App {
                         ("Esc", "back"),
                     ]
                 }
+            }
+            InputMode::ImageProtocolSettings { .. } => {
+                vec![
+                    ("j/k", "nav"),
+                    ("Left/Right", "protocol"),
+                    ("s", "save"),
+                    ("Esc", "back"),
+                ]
             }
             _ => vec![],
         }
@@ -1010,6 +1072,15 @@ impl App {
                 rgb_component,
             } => {
                 self.draw_custom_color_overlay(f, *selected, draft, *modified, *editing_rgb, rgb_input, *rgb_component);
+            }
+            InputMode::ImageProtocolSettings {
+                selected,
+                draft,
+                modified,
+                current_terminal,
+                terminals,
+            } => {
+                self.draw_image_protocol_overlay(f, *selected, draft, *modified, current_terminal, terminals);
             }
         }
     }
@@ -2021,6 +2092,11 @@ impl App {
                         "Colored thumbnail rendering".to_string(),
                         draft.thumbnail_mode.display_name().to_string(),
                     ),
+                    (
+                        "Image Protocol".to_string(),
+                        "Terminal image rendering protocol".to_string(),
+                        ">".to_string(),
+                    ),
                 ],
             ),
             (
@@ -2160,6 +2236,111 @@ impl App {
         };
 
         let p = Paragraph::new(Text::from(visible_lines)).block(
+            self.styled_block()
+                .title(title)
+                .title_style(Style::default().fg(st_tc))
+                .border_style(Style::default().fg(st_bc)),
+        );
+        f.render_widget(p, area);
+    }
+
+    // --- Image protocol settings overlay ---
+
+    fn draw_image_protocol_overlay(
+        &self,
+        f: &mut Frame,
+        selected: usize,
+        draft: &crate::config::TuiConfig,
+        modified: bool,
+        current_terminal: &str,
+        terminals: &[String],
+    ) {
+        let area = centered_rect(70, 60, f.area());
+        self.settings_area.set(area);
+        f.render_widget(Clear, area);
+
+        let mut lines = vec![
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  Current terminal: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    current_terminal,
+                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                ),
+            ]),
+            Line::from(""),
+        ];
+
+        for (i, term) in terminals.iter().enumerate() {
+            let is_selected = i == selected;
+            let is_current = term == current_terminal;
+            let prefix = if is_selected { " \u{203a} " } else { "   " };
+            let marker = if is_current { " *" } else { "" };
+
+            let proto = draft
+                .image_protocols
+                .get(term)
+                .copied()
+                .unwrap_or(crate::config::ImageProtocol::Auto);
+
+            let name_style = if is_selected {
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::White)
+            };
+
+            let value_str = format!("< {} >", proto.display_name());
+            let value_style = if is_selected {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::Green)
+            };
+
+            let terminal_width = (f.area().width * 70 / 100).saturating_sub(4) as usize;
+            let name_with_marker = format!("{}{}{}", prefix, term, marker);
+            let name_len = name_with_marker.len();
+            let value_len = value_str.len();
+            let padding = terminal_width.saturating_sub(name_len + value_len + 1);
+
+            lines.push(Line::from(vec![
+                Span::styled(prefix, name_style),
+                Span::styled(term.as_str(), name_style),
+                Span::styled(marker, Style::default().fg(Color::Yellow)),
+                Span::raw(" ".repeat(padding)),
+                Span::styled(value_str, value_style),
+            ]));
+        }
+
+        lines.push(Line::from(""));
+
+        // Help bar
+        let hints = vec![
+            ("j/k", "nav"),
+            ("Left/Right", "protocol"),
+            ("s", "save"),
+            ("Esc", "back"),
+        ];
+        let mut hint_spans = vec![Span::raw("  ")];
+        hint_spans.extend(Self::styled_help_spans(&hints));
+        lines.push(Line::from(hint_spans));
+
+        let (st_bc, st_tc) = if self.is_vibrant() {
+            (Color::LightMagenta, Color::LightMagenta)
+        } else {
+            (Color::Cyan, Color::Yellow)
+        };
+
+        let title = if modified {
+            " Image Protocol * "
+        } else {
+            " Image Protocol "
+        };
+
+        let p = Paragraph::new(Text::from(lines)).block(
             self.styled_block()
                 .title(title)
                 .title_style(Style::default().fg(st_tc))
