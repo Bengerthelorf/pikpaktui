@@ -48,7 +48,7 @@ pub fn run() -> Result<()> {
     // File Management
     println!("  {MAGENTA}{BOLD}File Management{RESET}");
     let file_cmds: &[(&str, &str)] = &[
-        ("ls [-l] [path]",           "List files (colored grid; long with -l)"),
+        ("ls [-l] [-s field] [path]", "List files (sort: name,size,created,type,ext)"),
         ("mv <src> <dst>",           "Move a file or folder"),
         ("cp <src> <dst>",           "Copy a file or folder"),
         ("rename <path> <new_name>", "Rename a file or folder"),

@@ -247,6 +247,59 @@ pub fn detect_truecolor_support() -> bool {
     false
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SortField {
+    Name,
+    Size,
+    Created,
+    Type,
+    Extension,
+    None,
+}
+
+impl Default for SortField {
+    fn default() -> Self {
+        Self::Name
+    }
+}
+
+impl SortField {
+    pub fn all() -> &'static [Self] {
+        &[
+            Self::Name,
+            Self::Size,
+            Self::Created,
+            Self::Type,
+            Self::Extension,
+            Self::None,
+        ]
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Name => "name",
+            Self::Size => "size",
+            Self::Created => "created",
+            Self::Type => "type",
+            Self::Extension => "extension",
+            Self::None => "none",
+        }
+    }
+
+    pub fn next(&self) -> Self {
+        let all = Self::all();
+        let idx = all.iter().position(|s| s == self).unwrap();
+        all[(idx + 1) % all.len()]
+    }
+
+    pub fn prev(&self) -> Self {
+        let all = Self::all();
+        let idx = all.iter().position(|s| s == self).unwrap();
+        all[(idx + all.len() - 1) % all.len()]
+    }
+}
+
 impl Default for ColorScheme {
     fn default() -> Self {
         Self::Vibrant
@@ -365,6 +418,10 @@ pub struct TuiConfig {
     #[serde(default)]
     pub thumbnail_mode: ThumbnailMode,
     #[serde(default)]
+    pub sort_field: SortField,
+    #[serde(default)]
+    pub sort_reverse: bool,
+    #[serde(default)]
     pub image_protocols: BTreeMap<String, ImageProtocol>,
     /// Legacy single-value field kept for backward-compatible deserialization.
     #[serde(default, skip_serializing)]
@@ -397,6 +454,8 @@ impl Default for TuiConfig {
             preview_max_size: default_preview_max_size(),
             custom_colors: CustomColors::default(),
             thumbnail_mode: ThumbnailMode::default(),
+            sort_field: SortField::default(),
+            sort_reverse: false,
             image_protocols: BTreeMap::new(),
             image_protocol: None,
         }
@@ -493,5 +552,81 @@ impl TuiConfig {
         fs::write(&path, raw)
             .with_context(|| format!("failed to write config {}", path.display()))?;
         Ok(())
+    }
+}
+
+/// Sort a list of entries in-place based on the given sort field and direction.
+/// For all sort modes except `None`, folders are always sorted before files.
+pub fn sort_entries(entries: &mut Vec<crate::pikpak::Entry>, field: SortField, reverse: bool) {
+    use crate::pikpak::EntryKind;
+
+    match field {
+        SortField::None => return,
+        SortField::Name => {
+            entries.sort_by(|a, b| {
+                let kind_ord = kind_order(&a.kind).cmp(&kind_order(&b.kind));
+                kind_ord.then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+            });
+        }
+        SortField::Size => {
+            entries.sort_by(|a, b| {
+                let kind_ord = kind_order(&a.kind).cmp(&kind_order(&b.kind));
+                kind_ord.then_with(|| b.size.cmp(&a.size))
+            });
+        }
+        SortField::Created => {
+            entries.sort_by(|a, b| {
+                let kind_ord = kind_order(&a.kind).cmp(&kind_order(&b.kind));
+                kind_ord.then_with(|| b.created_time.cmp(&a.created_time))
+            });
+        }
+        SortField::Type => {
+            entries.sort_by(|a, b| {
+                let kind_ord = kind_order(&a.kind).cmp(&kind_order(&b.kind));
+                kind_ord.then_with(|| {
+                    let cat_a = category_order(crate::theme::categorize(a));
+                    let cat_b = category_order(crate::theme::categorize(b));
+                    cat_a.cmp(&cat_b).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+                })
+            });
+        }
+        SortField::Extension => {
+            entries.sort_by(|a, b| {
+                let kind_ord = kind_order(&a.kind).cmp(&kind_order(&b.kind));
+                kind_ord.then_with(|| {
+                    let ext_a = a.name.rsplit('.').next().unwrap_or("").to_lowercase();
+                    let ext_b = b.name.rsplit('.').next().unwrap_or("").to_lowercase();
+                    ext_a.cmp(&ext_b).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+                })
+            });
+        }
+    }
+
+    if reverse {
+        // Only reverse within each kind group (folders stay first)
+        let folder_end = entries.iter().position(|e| e.kind == EntryKind::File).unwrap_or(entries.len());
+        entries[..folder_end].reverse();
+        entries[folder_end..].reverse();
+    }
+}
+
+fn kind_order(kind: &crate::pikpak::EntryKind) -> u8 {
+    match kind {
+        crate::pikpak::EntryKind::Folder => 0,
+        crate::pikpak::EntryKind::File => 1,
+    }
+}
+
+fn category_order(cat: crate::theme::FileCategory) -> u8 {
+    use crate::theme::FileCategory;
+    match cat {
+        FileCategory::Folder => 0,
+        FileCategory::Archive => 1,
+        FileCategory::Image => 2,
+        FileCategory::Video => 3,
+        FileCategory::Audio => 4,
+        FileCategory::Document => 5,
+        FileCategory::Code => 6,
+        FileCategory::Default => 7,
     }
 }

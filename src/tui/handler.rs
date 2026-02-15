@@ -284,6 +284,7 @@ impl App {
                             match draft.save() {
                                 Ok(()) => {
                                     self.config = draft;
+                                    self.resort_entries();
                                     self.push_log("Settings saved to config.toml".into());
                                     self.input = InputMode::Normal;
                                 }
@@ -505,6 +506,18 @@ impl App {
             KeyCode::Char('O') => {
                 // Offline tasks view
                 self.open_offline_tasks_view();
+            }
+            KeyCode::Char('S') => {
+                // Cycle sort field
+                self.config.sort_field = self.config.sort_field.next();
+                self.resort_entries();
+                let _ = self.config.save();
+            }
+            KeyCode::Char('R') => {
+                // Toggle reverse sort order
+                self.config.sort_reverse = !self.config.sort_reverse;
+                self.resort_entries();
+                let _ = self.config.save();
             }
             KeyCode::Char('p') => {
                 if let Some(entry) = self.current_entry().cloned() {
@@ -2095,6 +2108,44 @@ impl App {
                     }
                 }
                 9 => {
+                    // Sort Field
+                    match code {
+                        KeyCode::Left => {
+                            draft.sort_field = draft.sort_field.prev();
+                            *modified = true;
+                        }
+                        KeyCode::Right => {
+                            draft.sort_field = draft.sort_field.next();
+                            *modified = true;
+                        }
+                        KeyCode::Enter => {
+                            *editing = false;
+                        }
+                        KeyCode::Esc => {
+                            *editing = false;
+                        }
+                        _ => {}
+                    }
+                }
+                10 => {
+                    // Reverse Order
+                    match code {
+                        KeyCode::Char(' ')
+                        | KeyCode::Enter
+                        | KeyCode::Left
+                        | KeyCode::Right => {
+                            draft.sort_reverse = !draft.sort_reverse;
+                            *modified = true;
+                            *editing = false;
+                        }
+                        KeyCode::Esc => {
+                            *editing = false;
+                        }
+                        _ => {}
+                    }
+                }
+                11 => {
+                    // Move Mode
                     match code {
                         KeyCode::Left => {
                             draft.move_mode = if draft.move_mode == "picker" {
@@ -2121,7 +2172,8 @@ impl App {
                         _ => {}
                     }
                 }
-                10 => {
+                12 => {
+                    // CLI Nerd Font
                     match code {
                         KeyCode::Char(' ')
                         | KeyCode::Enter
@@ -2143,7 +2195,7 @@ impl App {
         } else {
             match code {
                 KeyCode::Down | KeyCode::Char('j') => {
-                    *selected = (*selected + 1).min(10);
+                    *selected = (*selected + 1).min(12);
                     None
                 }
                 KeyCode::Up | KeyCode::Char('k') => {

@@ -425,8 +425,9 @@ impl App {
     fn poll_results(&mut self) {
         while let Ok(result) = self.result_rx.try_recv() {
             match result {
-                OpResult::Ls(Ok(entries)) => {
+                OpResult::Ls(Ok(mut entries)) => {
                     self.loading = false;
+                    crate::config::sort_entries(&mut entries, self.config.sort_field, self.config.sort_reverse);
                     self.entries = entries;
                     if self.selected >= self.entries.len() {
                         self.selected = self.entries.len().saturating_sub(1);
@@ -459,10 +460,11 @@ impl App {
                     }
                     self.push_log(format!("File info failed: {e:#}"));
                 }
-                OpResult::ParentLs(pid, Ok(entries)) => {
+                OpResult::ParentLs(pid, Ok(mut entries)) => {
                     // Only accept if this is still the expected parent
                     let expected = self.breadcrumb.last().map(|(id, _)| id.as_str());
                     if expected == Some(&pid) {
+                        crate::config::sort_entries(&mut entries, self.config.sort_field, self.config.sort_reverse);
                         self.parent_entries = entries;
                         if let Some(pos) = self
                             .parent_entries
@@ -479,7 +481,8 @@ impl App {
                         self.push_log(format!("Parent listing failed: {e:#}"));
                     }
                 }
-                OpResult::PreviewLs(id, Ok(children)) => {
+                OpResult::PreviewLs(id, Ok(mut children)) => {
+                    crate::config::sort_entries(&mut children, self.config.sort_field, self.config.sort_reverse);
                     if matches!(self.input, InputMode::InfoLoading) {
                         // Popup mode (show_preview=false)
                         self.loading = false;
@@ -753,6 +756,15 @@ impl App {
                 }
             }
         }
+    }
+
+    fn resort_entries(&mut self) {
+        crate::config::sort_entries(&mut self.entries, self.config.sort_field, self.config.sort_reverse);
+        if self.selected >= self.entries.len() {
+            self.selected = self.entries.len().saturating_sub(1);
+        }
+        let arrow = if self.config.sort_reverse { "\u{2193}" } else { "\u{2191}" };
+        self.push_log(format!("Sort: {} {}", self.config.sort_field.as_str(), arrow));
     }
 
     fn fetch_text_preview_for_selected(&mut self) {

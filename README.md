@@ -18,12 +18,13 @@ A TUI and CLI client for [PikPak](https://mypikpak.com) cloud storage, written i
 - **Cart & batch download** — Add files to cart, batch download with pause/resume/cancel, HTTP Range resume for interrupted transfers, download state persisted across sessions
 - **Download dashboard** — Collapsed popup or expanded full-screen view with braille-character network activity graph, per-file progress, speed, ETA
 - **Offline download** — Submit URLs/magnets for PikPak cloud download, view and manage tasks
-- **Interactive settings** — In-app settings editor (`,`), custom RGB colors per file category, per-terminal image protocol configuration
+- **Sorting** — eza-style `--sort` support (name, size, created, type, extension, none) with `--reverse`; TUI keybindings `S`/`R` to cycle sort field and toggle order, persisted in config
+- **Interactive settings** — In-app settings editor (`,`), custom RGB colors per file category, per-terminal image protocol configuration, sort settings
 - **Mouse support** — Click to select, double-click to open, scroll wheel navigation
 
 ### CLI
 - **20 subcommands** — `ls`, `mv`, `cp`, `rename`, `rm`, `mkdir`, `download`, `upload`, `share`, `offline`, `tasks`, `star`, `unstar`, `starred`, `events`, `quota`, `vip`, `completions`, `help`, `version`
-- **Colored output** — `ls` with multi-column grid layout (eza-style), Nerd Font icons support
+- **Colored output** — `ls` with multi-column grid layout (eza-style), `--sort`/`--reverse` flags, Nerd Font icons support
 - **Resumable transfer** — Upload: dedup-aware instant upload on hash match, multipart resumable with 10 MB chunks via OSS. Download: HTTP Range resume for interrupted transfers
 - **Shell completions** — Zsh completion with dynamic cloud path completion (like `scp`)
 
@@ -83,7 +84,8 @@ What gets completed:
 |---------|------------|
 | `pikpaktui <Tab>` | Subcommands with descriptions |
 | `pikpaktui ls /<Tab>` | Remote directory listing |
-| `pikpaktui ls -<Tab>` | `-l`, `--long` |
+| `pikpaktui ls -<Tab>` | `-l`, `--long`, `-s`, `--sort`, `-r`, `--reverse` |
+| `pikpaktui ls --sort <Tab>` | `name`, `size`, `created`, `type`, `extension`, `none` |
 | `pikpaktui mv /src<Tab> /dst<Tab>` | Cloud paths for both arguments |
 | `pikpaktui download /cloud<Tab> ./<Tab>` | Cloud path, then local path |
 | `pikpaktui upload ./<Tab> /<Tab>` | Local path, then cloud path |
@@ -110,6 +112,8 @@ Press `,` to open the settings editor. Press `h` for the help sheet.
 # File management
 pikpaktui ls /                                        # Colored multi-column grid
 pikpaktui ls -l "/My Pack"                            # Long format (id + size + date + name)
+pikpaktui ls --sort=size -r /                         # Sort by size, largest last
+pikpaktui ls -s created "/My Pack"                    # Sort by creation time, newest first
 pikpaktui mv "/My Pack/file.txt" /Archive             # Move file
 pikpaktui cp "/My Pack/file.txt" /Backup              # Copy file
 pikpaktui rename "/My Pack/old.txt" new.txt           # Rename
@@ -161,6 +165,8 @@ CLI mode requires login: it checks for a valid session first, then falls back to
 | `f` | New folder |
 | `s` | Star / unstar |
 | `a` | Toggle in cart |
+| `S` | Cycle sort field (name → size → created → type → extension → none) |
+| `R` | Toggle reverse sort order |
 | `A` | View cart |
 | `D` | Downloads view |
 | `o` | Offline download (URL/magnet) |
@@ -254,6 +260,8 @@ show_preview = true       # Three-column layout (false = two-column)
 lazy_preview = false      # Auto-load preview on cursor move
 preview_max_size = 65536  # Max bytes for text preview (default 64 KB)
 thumbnail_mode = "auto"   # "auto" | "off" | "force-color" | "force-grayscale"
+sort_field = "name"       # "name" | "size" | "created" | "type" | "extension" | "none"
+sort_reverse = false      # Reverse sort direction
 
 # Per-terminal image protocol configuration
 # Detected via $TERM_PROGRAM environment variable

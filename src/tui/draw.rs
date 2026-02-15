@@ -1360,6 +1360,13 @@ impl App {
                         ],
                     ),
                     (
+                        "Sort",
+                        vec![
+                            ("S", "Cycle sort"),
+                            ("R", "Reverse sort"),
+                        ],
+                    ),
+                    (
                         "File Operations",
                         vec![
                             ("c", "Copy"),
@@ -1376,17 +1383,52 @@ impl App {
             }
         };
 
-        let col_count = sections.len();
-        let max_rows = sections.iter().map(|(_, items)| items.len()).max().unwrap_or(0);
-        let col_w = inner_w / col_count;
         let key_w: usize = 7;
 
+        // Group sections into visual columns.
+        // Each column is a Vec of (title, items) sections stacked vertically.
+        // Sections are assigned to columns by name-based grouping:
+        //   Column 0: "Navigation" + "Sort"
+        //   Column 1: "File Operations"
+        //   Column 2: "Views & More"
+        // For picker mode (2 sections), each section gets its own column.
+        let columns: Vec<Vec<(&str, &Vec<(&str, &str)>)>> = if sections.len() <= 3 {
+            // Simple: one section per column
+            sections.iter().map(|(name, items)| vec![(*name, items)]).collect()
+        } else {
+            // Group: first two sections share column 0
+            let mut cols: Vec<Vec<(&str, &Vec<(&str, &str)>)>> = Vec::new();
+            cols.push(vec![
+                (sections[0].0, &sections[0].1),
+                (sections[1].0, &sections[1].1),
+            ]);
+            for s in &sections[2..] {
+                cols.push(vec![(s.0, &s.1)]);
+            }
+            cols
+        };
+
+        let col_count = columns.len();
+        let col_w = inner_w / col_count;
+
+        // Calculate max rows per column (title line + items for each group, with blank separator)
+        let col_heights: Vec<usize> = columns.iter().map(|groups| {
+            let mut h = 0;
+            for (i, (_, items)) in groups.iter().enumerate() {
+                if i > 0 { h += 1; } // blank separator between groups
+                h += 1; // title
+                h += items.len(); // items
+            }
+            h
+        }).collect();
+        let max_rows = col_heights.iter().copied().max().unwrap_or(0);
+
         // Height — help content takes priority over ASCII art
-        let min_content_h = 1 + max_rows + 2 + 2; // blank + titles + items + hint/blank + borders
+        let min_content_h = max_rows + 2 + 2; // items + hint/blank + borders
         let art_lines: usize = 7; // 5 art + 2 blank lines
         let show_art = show_art && (term.height as usize) >= min_content_h + art_lines;
         let art_h: usize = if show_art { art_lines } else { 1 }; // art or just 1 blank
-        let content_h = art_h + 1 + max_rows + 2; // art + titles + items + blank + hint
+        let content_h = art_h + max_rows + 2; // art + items + blank + hint
         let sheet_h = ((content_h + 2) as u16).min(term.height); // +2 borders
 
         // Center the popup
@@ -1435,34 +1477,50 @@ impl App {
             lines.push(Line::from(""));
         }
 
-        // Section title row
-        let mut title_spans = Vec::new();
-        for (i, (name, _)) in sections.iter().enumerate() {
-            let prefix = if i == 0 { " " } else { "" };
-            let w = col_w.saturating_sub(prefix.len());
-            title_spans.push(Span::styled(
-                format!("{}{:<width$}", prefix, name, width = w),
-                title_style,
-            ));
-        }
-        lines.push(Line::from(title_spans));
+        // Pre-build each column's row content: (RowKind, data)
+        // RowKind: Title(name), Item(key, desc), Blank
+        enum RowKind<'a> { Title(&'a str), Item(&'a str, &'a str), Blank }
+        let col_rows: Vec<Vec<RowKind>> = columns.iter().map(|groups| {
+            let mut rows = Vec::new();
+            for (i, (name, items)) in groups.iter().enumerate() {
+                if i > 0 { rows.push(RowKind::Blank); }
+                rows.push(RowKind::Title(name));
+                for &(key, desc) in *items {
+                    rows.push(RowKind::Item(key, desc));
+                }
+            }
+            rows
+        }).collect();
 
-        // Item rows — all columns side by side
+        // Render rows side by side
         for row in 0..max_rows {
             let mut spans = Vec::new();
-            for (ci, (_, items)) in sections.iter().enumerate() {
-                if row < items.len() {
-                    let (key, desc) = items[row];
-                    let prefix = if ci == 0 { " " } else { "" };
-                    let dw = col_w.saturating_sub(key_w + 1 + prefix.len());
-                    spans.push(Span::styled(
-                        format!("{}{:<kw$} ", prefix, key, kw = key_w),
-                        key_style,
-                    ));
-                    spans.push(Span::styled(
-                        format!("{:<dw$}", desc, dw = dw),
-                        desc_style,
-                    ));
+            for (ci, rows) in col_rows.iter().enumerate() {
+                let prefix = if ci == 0 { " " } else { "" };
+                if row < rows.len() {
+                    match &rows[row] {
+                        RowKind::Title(name) => {
+                            let w = col_w.saturating_sub(prefix.len());
+                            spans.push(Span::styled(
+                                format!("{}{:<width$}", prefix, name, width = w),
+                                title_style,
+                            ));
+                        }
+                        RowKind::Item(key, desc) => {
+                            let dw = col_w.saturating_sub(key_w + 1 + prefix.len());
+                            spans.push(Span::styled(
+                                format!("{}{:<kw$} ", prefix, key, kw = key_w),
+                                key_style,
+                            ));
+                            spans.push(Span::styled(
+                                format!("{:<dw$}", desc, dw = dw),
+                                desc_style,
+                            ));
+                        }
+                        RowKind::Blank => {
+                            spans.push(Span::raw(format!("{:<width$}", "", width = col_w)));
+                        }
+                    }
                 } else {
                     spans.push(Span::raw(format!("{:<width$}", "", width = col_w)));
                 }
@@ -2100,6 +2158,21 @@ impl App {
                 ],
             ),
             (
+                "Sort Settings",
+                vec![
+                    (
+                        "Sort Field".to_string(),
+                        "Field to sort entries by".to_string(),
+                        draft.sort_field.as_str().to_string(),
+                    ),
+                    (
+                        "Reverse Order".to_string(),
+                        "Reverse sort direction".to_string(),
+                        if draft.sort_reverse { "[\u{2713}]" } else { "[ ]" }.to_string(),
+                    ),
+                ],
+            ),
+            (
                 "Interface Settings",
                 vec![
                     (
@@ -2110,7 +2183,7 @@ impl App {
                     (
                         "CLI Nerd Font".to_string(),
                         "Use icons in CLI output".to_string(),
-                        if draft.cli_nerd_font { "[✓]" } else { "[ ]" }.to_string(),
+                        if draft.cli_nerd_font { "[\u{2713}]" } else { "[ ]" }.to_string(),
                     ),
                 ],
             ),

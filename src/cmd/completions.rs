@@ -96,7 +96,9 @@ _pikpaktui() {
     case "$cmd" in
         ls)
             if [[ "${words[CURRENT]}" == -* ]]; then
-                compadd -- '-l' '--long'
+                compadd -- '-l' '--long' '-s' '--sort' '-r' '--reverse'
+            elif [[ "${words[CURRENT-1]}" == "-s" ]] || [[ "${words[CURRENT-1]}" == "--sort" ]]; then
+                compadd -- 'name' 'size' 'created' 'type' 'extension' 'none'
             else
                 _pikpaktui_cloud_path
             fi
