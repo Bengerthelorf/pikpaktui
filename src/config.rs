@@ -417,6 +417,8 @@ pub struct TuiConfig {
     /// Legacy single-value field kept for backward-compatible deserialization.
     #[serde(default, skip_serializing)]
     image_protocol: Option<ImageProtocol>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub player: Option<String>,
 }
 
 fn default_preview_max_size() -> u64 {
@@ -449,6 +451,7 @@ impl Default for TuiConfig {
             sort_reverse: false,
             image_protocols: BTreeMap::new(),
             image_protocol: None,
+            player: None,
         }
     }
 }

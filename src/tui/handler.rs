@@ -11,7 +11,7 @@ use crate::theme;
 use super::completion::PathInput;
 use super::download::{DownloadTask, TaskStatus};
 use super::local_completion::LocalPathInput;
-use super::{App, InputMode, LoginField, OpResult, PickerState, PreviewState, handle_text_input};
+use super::{App, InputMode, LoginField, OpResult, PickerState, PlayOption, PreviewState, handle_text_input};
 
 impl App {
     pub(super) fn handle_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> Result<bool> {
@@ -251,6 +251,138 @@ impl App {
                 self.handle_offline_tasks_key(code, &mut tasks, &mut selected);
                 Ok(false)
             }
+            InputMode::ConfirmPlay { name, url } => {
+                match code {
+                    KeyCode::Enter | KeyCode::Char('y') => {
+                        if let Some(player) = self.config.player.clone() {
+                            self.spawn_player(&player, &url);
+                        } else {
+                            self.input = InputMode::PlayerInput {
+                                value: String::new(),
+                                pending_url: url,
+                            };
+                        }
+                    }
+                    KeyCode::Esc | KeyCode::Char('n') => {}
+                    _ => {
+                        self.input = InputMode::ConfirmPlay { name, url };
+                    }
+                }
+                Ok(false)
+            }
+            InputMode::PlayPicker {
+                name,
+                medias,
+                mut selected,
+            } => {
+                match code {
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        // Find next available item
+                        let mut next = selected + 1;
+                        while next < medias.len() && !medias[next].available {
+                            next += 1;
+                        }
+                        if next < medias.len() {
+                            selected = next;
+                        }
+                        self.input = InputMode::PlayPicker {
+                            name,
+                            medias,
+                            selected,
+                        };
+                    }
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        if selected > 0 {
+                            let mut prev = selected - 1;
+                            while prev > 0 && !medias[prev].available {
+                                prev -= 1;
+                            }
+                            if medias[prev].available {
+                                selected = prev;
+                            }
+                        }
+                        self.input = InputMode::PlayPicker {
+                            name,
+                            medias,
+                            selected,
+                        };
+                    }
+                    KeyCode::Enter => {
+                        if let Some(opt) = medias.get(selected) {
+                            if opt.available {
+                                let url = opt.url.clone();
+                                if let Some(player) = self.config.player.clone() {
+                                    self.spawn_player(&player, &url);
+                                } else {
+                                    self.input = InputMode::PlayerInput {
+                                        value: String::new(),
+                                        pending_url: url,
+                                    };
+                                }
+                            } else {
+                                self.push_log("Stream not available (cold storage)".into());
+                                self.input = InputMode::PlayPicker {
+                                    name,
+                                    medias,
+                                    selected,
+                                };
+                            }
+                        }
+                    }
+                    KeyCode::Esc => {}
+                    _ => {
+                        self.input = InputMode::PlayPicker {
+                            name,
+                            medias,
+                            selected,
+                        };
+                    }
+                }
+                Ok(false)
+            }
+            InputMode::PlayerInput {
+                mut value,
+                pending_url,
+            } => {
+                match code {
+                    KeyCode::Esc => {}
+                    KeyCode::Enter => {
+                        let cmd = value.trim().to_string();
+                        if !cmd.is_empty() {
+                            self.config.player = Some(cmd.clone());
+                            let _ = self.config.save();
+                            self.push_log(format!("Player set to: {}", cmd));
+                            self.spawn_player(&cmd, &pending_url);
+                        } else {
+                            self.input = InputMode::PlayerInput {
+                                value,
+                                pending_url,
+                            };
+                        }
+                    }
+                    KeyCode::Backspace => {
+                        value.pop();
+                        self.input = InputMode::PlayerInput {
+                            value,
+                            pending_url,
+                        };
+                    }
+                    KeyCode::Char(c) => {
+                        value.push(c);
+                        self.input = InputMode::PlayerInput {
+                            value,
+                            pending_url,
+                        };
+                    }
+                    _ => {
+                        self.input = InputMode::PlayerInput {
+                            value,
+                            pending_url,
+                        };
+                    }
+                }
+                Ok(false)
+            }
             InputMode::InfoLoading => {
                 if code == KeyCode::Esc {
                     self.input = InputMode::Normal;
@@ -419,6 +551,17 @@ impl App {
                                 let _ = tx.send(OpResult::Ls(client.ls(&fid)));
                             });
                         }
+                    } else if entry.kind == EntryKind::File
+                        && theme::categorize(&entry) == theme::FileCategory::Video
+                    {
+                        // Video file: fetch info for playback
+                        self.loading = true;
+                        let client = Arc::clone(&self.client);
+                        let tx = self.result_tx.clone();
+                        let eid = entry.id.clone();
+                        std::thread::spawn(move || {
+                            let _ = tx.send(OpResult::PlayInfo(client.file_info(&eid)));
+                        });
                     }
                 }
             }
@@ -539,6 +682,76 @@ impl App {
                 self.config.sort_reverse = !self.config.sort_reverse;
                 self.resort_entries();
                 let _ = self.config.save();
+            }
+            KeyCode::Char('w') => {
+                // Watch: open video stream/resolution picker
+                if let Some(entry) = self.current_entry().cloned() {
+                    if entry.kind == EntryKind::File
+                        && theme::categorize(&entry) == theme::FileCategory::Video
+                    {
+                        self.loading = true;
+                        let client = Arc::clone(&self.client);
+                        let tx = self.result_tx.clone();
+                        let eid = entry.id.clone();
+                        std::thread::spawn(move || {
+                            let result = client.file_info(&eid);
+                            let _ = tx.send(match result {
+                                Ok(info) => {
+                                    let mut options = Vec::new();
+                                    // Original is always available via web_content_link
+                                    if let Some(ref url) = info.web_content_link {
+                                        if !url.is_empty() {
+                                            let size_str = info
+                                                .size
+                                                .as_deref()
+                                                .and_then(|s| s.parse::<u64>().ok())
+                                                .map(super::format_size)
+                                                .unwrap_or_default();
+                                            options.push(PlayOption {
+                                                label: format!("Original ({})", size_str),
+                                                url: url.clone(),
+                                                available: true,
+                                                is_origin: true,
+                                            });
+                                        }
+                                    }
+                                    // Transcoded streams from medias
+                                    if let Some(ref medias) = info.medias {
+                                        for m in medias {
+                                            if m.is_origin.unwrap_or(false) {
+                                                continue; // skip origin duplicate
+                                            }
+                                            let url = m
+                                                .link
+                                                .as_ref()
+                                                .and_then(|l| l.url.as_deref())
+                                                .unwrap_or("")
+                                                .to_string();
+                                            if url.is_empty() {
+                                                continue;
+                                            }
+                                            let label = m
+                                                .media_name
+                                                .as_deref()
+                                                .unwrap_or("Unknown")
+                                                .to_string();
+                                            let available =
+                                                crate::pikpak::PikPak::check_stream_available(&url);
+                                            options.push(PlayOption {
+                                                label,
+                                                url,
+                                                available,
+                                                is_origin: false,
+                                            });
+                                        }
+                                    }
+                                    OpResult::PlayPickerInfo(Ok((info, options)))
+                                }
+                                Err(e) => OpResult::PlayPickerInfo(Err(e)),
+                            });
+                        });
+                    }
+                }
             }
             KeyCode::Char('p') => {
                 if let Some(entry) = self.current_entry().cloned() {
@@ -1381,6 +1594,25 @@ impl App {
         });
     }
 
+    fn spawn_player(&mut self, cmd: &str, url: &str) {
+        let parts: Vec<&str> = cmd.split_whitespace().collect();
+        if parts.is_empty() {
+            self.push_log("Player command is empty".into());
+            return;
+        }
+        let program = parts[0];
+        let mut args: Vec<&str> = parts[1..].to_vec();
+        args.push(url);
+        match std::process::Command::new(program).args(&args).spawn() {
+            Ok(_) => {
+                self.push_log(format!("Launched {} with video URL", program));
+            }
+            Err(e) => {
+                self.push_log(format!("Failed to launch {}: {}", program, e));
+            }
+        }
+    }
+
     pub(super) fn spawn_delete(&mut self, entry: Entry) {
         let client = Arc::clone(&self.client);
         let tx = self.result_tx.clone();
@@ -1545,6 +1777,7 @@ impl App {
                         ("Preview Settings", 5),
                         ("Sort Settings", 2),
                         ("Interface Settings", 2),
+                        ("Playback Settings", 1),
                     ];
 
                     let bool_items = vec![0, 3, 4, 5, 10, 12];
@@ -2238,13 +2471,41 @@ impl App {
                         _ => {}
                     }
                 }
+                13 => {
+                    // Player Command (text input)
+                    match code {
+                        KeyCode::Esc => {
+                            *editing = false;
+                        }
+                        KeyCode::Enter => {
+                            *editing = false;
+                        }
+                        KeyCode::Backspace => {
+                            if let Some(ref mut p) = draft.player {
+                                p.pop();
+                                if p.is_empty() {
+                                    draft.player = None;
+                                }
+                            }
+                            *modified = true;
+                        }
+                        KeyCode::Char(c) => {
+                            match draft.player {
+                                Some(ref mut p) => p.push(c),
+                                None => draft.player = Some(String::from(c)),
+                            }
+                            *modified = true;
+                        }
+                        _ => {}
+                    }
+                }
                 _ => {}
             }
             None
         } else {
             match code {
                 KeyCode::Down | KeyCode::Char('j') => {
-                    *selected = (*selected + 1).min(12);
+                    *selected = (*selected + 1).min(13);
                     None
                 }
                 KeyCode::Up | KeyCode::Char('k') => {

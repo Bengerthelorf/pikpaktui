@@ -81,6 +81,14 @@ enum PreviewState {
     },
 }
 
+pub(crate) struct PlayOption {
+    pub label: String,
+    pub url: String,
+    pub available: bool,
+    #[allow(dead_code)]
+    pub is_origin: bool,
+}
+
 enum OpResult {
     Ls(Result<Vec<Entry>>),
     Ok(String),
@@ -92,6 +100,8 @@ enum OpResult {
     PreviewText(String, Result<(String, String, u64, bool)>),
     PreviewThumbnail(String, Result<image::DynamicImage>),
     OfflineTasks(Result<Vec<crate::pikpak::OfflineTask>>),
+    PlayInfo(Result<FileInfoResponse>),
+    PlayPickerInfo(Result<(FileInfoResponse, Vec<PlayOption>)>),
 }
 
 struct PickerState {
@@ -167,6 +177,19 @@ enum InputMode {
         name: String,
         lines: Vec<ratatui::text::Line<'static>>,
         truncated: bool,
+    },
+    ConfirmPlay {
+        name: String,
+        url: String,
+    },
+    PlayPicker {
+        name: String,
+        medias: Vec<PlayOption>,
+        selected: usize,
+    },
+    PlayerInput {
+        value: String,
+        pending_url: String,
     },
     ConfirmQuit,
     Settings {
@@ -583,6 +606,48 @@ impl App {
                         self.input = InputMode::Normal;
                     }
                     self.push_log(format!("Failed to load offline tasks: {e:#}"));
+                }
+                OpResult::PlayInfo(Ok(info)) => {
+                    self.loading = false;
+                    let url = info
+                        .web_content_link
+                        .as_deref()
+                        .or(info.links.as_ref().and_then(|l| {
+                            l.get("application/octet-stream")
+                                .and_then(|v| v.url.as_deref())
+                        }))
+                        .unwrap_or("")
+                        .to_string();
+                    if url.is_empty() {
+                        self.push_log("No playback URL available".into());
+                    } else {
+                        self.input = InputMode::ConfirmPlay {
+                            name: info.name.clone(),
+                            url,
+                        };
+                    }
+                }
+                OpResult::PlayInfo(Err(e)) => {
+                    self.loading = false;
+                    self.push_log(format!("Play info failed: {e:#}"));
+                }
+                OpResult::PlayPickerInfo(Ok((info, medias))) => {
+                    self.loading = false;
+                    if medias.is_empty() {
+                        self.push_log("No playback streams available".into());
+                    } else {
+                        // Select first available
+                        let first_avail = medias.iter().position(|m| m.available).unwrap_or(0);
+                        self.input = InputMode::PlayPicker {
+                            name: info.name.clone(),
+                            medias,
+                            selected: first_avail,
+                        };
+                    }
+                }
+                OpResult::PlayPickerInfo(Err(e)) => {
+                    self.loading = false;
+                    self.push_log(format!("Play picker info failed: {e:#}"));
                 }
             }
         }

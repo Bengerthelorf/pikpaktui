@@ -474,6 +474,22 @@ impl PikPak {
         &self.http
     }
 
+    /// Check if a streaming URL is available (not in cold/archive storage).
+    /// Sends a Range request and checks for a valid response.
+    pub fn check_stream_available(url: &str) -> bool {
+        let client = match reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+        {
+            Ok(c) => c,
+            Err(_) => return false,
+        };
+        match client.get(url).header("Range", "bytes=0-0").send() {
+            Ok(resp) => resp.headers().contains_key("content-range") && resp.content_length().unwrap_or(0) > 0,
+            Err(_) => false,
+        }
+    }
+
     pub fn download_to(&self, file_id: &str, dest: &std::path::Path) -> Result<u64> {
         let info = self.file_info(file_id)?;
         let download_url = info
@@ -1487,7 +1503,47 @@ impl DriveFile {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
+pub struct MediaLink {
+    #[serde(default)]
+    pub url: Option<String>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Deserialize)]
+pub struct MediaVideo {
+    #[serde(default)]
+    pub height: Option<i64>,
+    #[serde(default)]
+    pub width: Option<i64>,
+    #[serde(default)]
+    pub duration: Option<f64>,
+    #[serde(default)]
+    pub bit_rate: Option<i64>,
+    #[serde(default)]
+    pub video_codec: Option<String>,
+    #[serde(default)]
+    pub audio_codec: Option<String>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Deserialize)]
+pub struct MediaInfo {
+    #[serde(default)]
+    pub media_name: Option<String>,
+    #[serde(default)]
+    pub link: Option<MediaLink>,
+    #[serde(default)]
+    pub video: Option<MediaVideo>,
+    #[serde(default)]
+    pub is_default: Option<bool>,
+    #[serde(default)]
+    pub is_origin: Option<bool>,
+    #[serde(default)]
+    pub category: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct FileInfoResponse {
     pub name: String,
     #[serde(default)]
@@ -1498,9 +1554,14 @@ pub struct FileInfoResponse {
     pub web_content_link: Option<String>,
     #[serde(default)]
     pub links: Option<std::collections::HashMap<String, LinkInfo>>,
+    #[serde(default)]
+    pub medias: Option<Vec<MediaInfo>>,
+    #[allow(dead_code)]
+    #[serde(default)]
+    pub mime_type: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct LinkInfo {
     #[serde(default)]
     pub url: Option<String>,

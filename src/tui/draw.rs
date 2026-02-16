@@ -29,6 +29,172 @@ impl App {
         )
     }
 
+    fn draw_confirm_play_overlay(&self, f: &mut Frame, name: &str, _url: &str) {
+        let area = centered_rect(60, 20, f.area());
+        f.render_widget(Clear, area);
+        let player_display = self
+            .config
+            .player
+            .as_deref()
+            .unwrap_or("not configured");
+        let hints = vec![("y/Enter", "play"), ("n/Esc", "cancel")];
+        let mut hint_spans = vec![Span::raw("  ")];
+        hint_spans.extend(Self::styled_help_spans(&hints));
+        let (bc, tc) = if self.is_vibrant() {
+            (Color::LightGreen, Color::LightGreen)
+        } else {
+            (Color::Cyan, Color::Yellow)
+        };
+        let truncated_name = if name.len() > 40 {
+            format!("{}...", &name[..37])
+        } else {
+            name.to_string()
+        };
+        let p = Paragraph::new(Text::from(vec![
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  Play ", Style::default().fg(Color::Cyan)),
+                Span::styled(
+                    format!("\"{}\"", truncated_name),
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled("?", Style::default().fg(Color::Cyan)),
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  Open with: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    player_display,
+                    if self.config.player.is_some() {
+                        Style::default().fg(Color::Green)
+                    } else {
+                        Style::default().fg(Color::Red)
+                    },
+                ),
+            ]),
+            Line::from(""),
+            Line::from(hint_spans),
+        ]))
+        .block(
+            self.styled_block()
+                .title(" Play Video ")
+                .title_style(Style::default().fg(tc))
+                .border_style(Style::default().fg(bc)),
+        );
+        f.render_widget(p, area);
+    }
+
+    fn draw_play_picker_overlay(
+        &self,
+        f: &mut Frame,
+        name: &str,
+        medias: &[super::PlayOption],
+        selected: usize,
+    ) {
+        let height = std::cmp::min(50, 20 + medias.len() as u16 * 2);
+        let area = centered_rect(60, height, f.area());
+        f.render_widget(Clear, area);
+
+        let truncated_name = if name.len() > 40 {
+            format!("{}...", &name[..37])
+        } else {
+            name.to_string()
+        };
+
+        let mut lines = vec![
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  Play ", Style::default().fg(Color::Cyan)),
+                Span::styled(
+                    format!("\"{}\"", truncated_name),
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]),
+            Line::from(""),
+        ];
+
+        for (i, opt) in medias.iter().enumerate() {
+            let is_selected = i == selected;
+            let prefix = if is_selected { " > " } else { "   " };
+            let style = if !opt.available {
+                Style::default().fg(Color::DarkGray)
+            } else if is_selected {
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::White)
+            };
+            let suffix = if !opt.available { " (cold)" } else { "" };
+            lines.push(Line::from(vec![
+                Span::styled(prefix, style),
+                Span::styled(opt.label.clone(), style),
+                Span::styled(suffix, Style::default().fg(Color::DarkGray)),
+            ]));
+        }
+
+        lines.push(Line::from(""));
+        let hints = vec![("Enter", "play"), ("Esc", "cancel")];
+        let mut hint_spans = vec![Span::raw("  ")];
+        hint_spans.extend(Self::styled_help_spans(&hints));
+        lines.push(Line::from(hint_spans));
+
+        let (bc, tc) = if self.is_vibrant() {
+            (Color::LightGreen, Color::LightGreen)
+        } else {
+            (Color::Cyan, Color::Yellow)
+        };
+        let p = Paragraph::new(Text::from(lines)).block(
+            self.styled_block()
+                .title(" Select Stream ")
+                .title_style(Style::default().fg(tc))
+                .border_style(Style::default().fg(bc)),
+        );
+        f.render_widget(p, area);
+    }
+
+    fn draw_player_input_overlay(&self, f: &mut Frame, value: &str) {
+        let area = centered_rect(60, 20, f.area());
+        f.render_widget(Clear, area);
+        let cur = if self.cursor_visible { "\u{2588}" } else { " " };
+        let hints = vec![("Enter", "confirm"), ("Esc", "cancel")];
+        let mut hint_spans = vec![Span::raw("  ")];
+        hint_spans.extend(Self::styled_help_spans(&hints));
+        let (bc, tc) = if self.is_vibrant() {
+            (Color::LightYellow, Color::LightYellow)
+        } else {
+            (Color::Cyan, Color::Yellow)
+        };
+        let p = Paragraph::new(Text::from(vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                "  Enter player command (e.g. mpv, open -a IINA):",
+                Style::default().fg(Color::Cyan),
+            )),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  > ", Style::default().fg(Color::Cyan)),
+                Span::styled(
+                    format!("{}{}", value, cur),
+                    Style::default().fg(Color::Yellow),
+                ),
+            ]),
+            Line::from(""),
+            Line::from(hint_spans),
+        ]))
+        .block(
+            self.styled_block()
+                .title(" Player Command ")
+                .title_style(Style::default().fg(tc))
+                .border_style(Style::default().fg(bc)),
+        );
+        f.render_widget(p, area);
+    }
+
     pub(super) fn draw(&self, f: &mut Frame) {
         match &self.input {
             InputMode::Login { .. } => self.draw_login_screen(f),
@@ -861,6 +1027,15 @@ impl App {
                     ("Esc", "back"),
                 ]
             }
+            InputMode::ConfirmPlay { .. } => {
+                vec![("y/Enter", "play"), ("n/Esc", "cancel")]
+            }
+            InputMode::PlayPicker { .. } => {
+                vec![("j/k", "nav"), ("Enter", "play"), ("Esc", "cancel")]
+            }
+            InputMode::PlayerInput { .. } => {
+                vec![("Enter", "confirm"), ("Esc", "cancel")]
+            }
             _ => vec![],
         }
     }
@@ -1148,6 +1323,19 @@ impl App {
             } => {
                 self.draw_image_protocol_overlay(f, *selected, draft, *modified, current_terminal, terminals);
             }
+            InputMode::ConfirmPlay { name, url } => {
+                self.draw_confirm_play_overlay(f, name, url);
+            }
+            InputMode::PlayPicker {
+                name,
+                medias,
+                selected,
+            } => {
+                self.draw_play_picker_overlay(f, name, medias, *selected);
+            }
+            InputMode::PlayerInput { value, .. } => {
+                self.draw_player_input_overlay(f, value);
+            }
         }
     }
 
@@ -1402,7 +1590,8 @@ impl App {
                 } else if !self.config.lazy_preview {
                     views.push(("Space", "Load preview"));
                 }
-                views.push(("p", "Text preview"));
+                views.push(("p", "Preview"));
+                views.push(("w", "Watch (streams)"));
                 views.extend_from_slice(&[
                     ("l", "Toggle logs"),
                     ("D", "Downloads"),
@@ -1420,7 +1609,7 @@ impl App {
                         vec![
                             ("j / \u{2193}", "Move down"),
                             ("k / \u{2191}", "Move up"),
-                            ("Enter", "Open folder"),
+                            ("Enter", "Open / Play"),
                             ("Bksp", "Go to parent"),
                             ("r", "Refresh"),
                         ],
@@ -2253,6 +2442,16 @@ impl App {
                     ),
                 ],
             ),
+            (
+                "Playback Settings",
+                vec![
+                    (
+                        "Player Command".to_string(),
+                        "External player for video playback".to_string(),
+                        draft.player.as_deref().unwrap_or("(none)").to_string(),
+                    ),
+                ],
+            ),
         ];
 
         // Map each item index to its line position for scrolling
@@ -2309,19 +2508,33 @@ impl App {
                     Style::default().fg(Color::Green)
                 };
 
+                // Item 13 = Player Command: show as inline text input with cursor when editing
+                let is_text_input_item = global_idx == 13;
+                let cur = if self.cursor_visible { "\u{2588}" } else { " " };
+
                 let mut name_value_spans = vec![
                     Span::styled(prefix, name_style),
                     Span::styled(name.clone(), name_style),
                 ];
 
-                // Right-align value with padding
-                let terminal_width = (f.area().width * 70 / 100).saturating_sub(4) as usize;
-                let name_len = prefix.len() + name.len();
-                let value_len = value.len();
-                let padding = terminal_width.saturating_sub(name_len + value_len + 1);
+                if is_text_input_item && is_selected && editing {
+                    // Show as inline text input: "Player Command: value█"
+                    name_value_spans.push(Span::styled(": ", Style::default().fg(Color::DarkGray)));
+                    let display_val = draft.player.as_deref().unwrap_or("");
+                    name_value_spans.push(Span::styled(
+                        format!("{}{}", display_val, cur),
+                        Style::default().fg(Color::Yellow),
+                    ));
+                } else {
+                    // Right-align value with padding
+                    let terminal_width = (f.area().width * 70 / 100).saturating_sub(4) as usize;
+                    let name_len = prefix.len() + name.len();
+                    let value_len = value.len();
+                    let padding = terminal_width.saturating_sub(name_len + value_len + 1);
 
-                name_value_spans.push(Span::raw(" ".repeat(padding)));
-                name_value_spans.push(Span::styled(value.clone(), value_style));
+                    name_value_spans.push(Span::raw(" ".repeat(padding)));
+                    name_value_spans.push(Span::styled(value.clone(), value_style));
+                }
 
                 lines.push(Line::from(name_value_spans));
                 lines.push(Line::from(Span::styled(
