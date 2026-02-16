@@ -1,9 +1,11 @@
+pub mod cat;
 pub mod complete_path;
 pub mod completions;
 pub mod cp;
 pub mod download;
 pub mod events;
 pub mod help;
+pub mod info;
 pub mod ls;
 pub mod mkdir;
 pub mod mv;
@@ -15,7 +17,9 @@ pub mod share;
 pub mod star;
 pub mod starred;
 pub mod tasks;
+pub mod trash;
 pub mod unstar;
+pub mod untrash;
 pub mod upload;
 pub mod vip;
 

@@ -14,6 +14,7 @@ A TUI and CLI client for [PikPak](https://mypikpak.com) cloud storage, written i
 - **Text preview** — Syntax-highlighted code/text preview powered by [syntect](https://github.com/trishume/syntect) (base16-ocean.dark theme), supporting 50+ languages with line numbers
 - **Folder preview** — Instant children listing in the preview pane; cached entries are reused when opening folders (zero extra API calls)
 - **File operations** — Move, copy, rename, delete (trash or permanent), create folder, star/unstar
+- **Video playback** — Stream video files directly from PikPak using a configurable external player (mpv, vlc, etc.)
 - **Folder picker** — Visual two-pane picker for move/copy destinations, with tab-completion text input as alternative
 - **Cart & batch download** — Add files to cart, batch download with pause/resume/cancel, HTTP Range resume for interrupted transfers, download state persisted across sessions
 - **Download dashboard** — Collapsed popup or expanded full-screen view with braille-character network activity graph, per-file progress, speed, ETA
@@ -23,7 +24,7 @@ A TUI and CLI client for [PikPak](https://mypikpak.com) cloud storage, written i
 - **Mouse support** — Click to select, double-click to open, scroll wheel navigation
 
 ### CLI
-- **20 subcommands** — `ls`, `mv`, `cp`, `rename`, `rm`, `mkdir`, `download`, `upload`, `share`, `offline`, `tasks`, `star`, `unstar`, `starred`, `events`, `quota`, `vip`, `completions`, `help`, `version`
+- **24 subcommands** — `ls`, `mv`, `cp`, `rename`, `rm`, `mkdir`, `info`, `cat`, `download`, `upload`, `share`, `offline`, `tasks`, `star`, `unstar`, `starred`, `events`, `trash`, `untrash`, `quota`, `vip`, `completions`, `help`, `version`
 - **Colored output** — `ls` with multi-column grid layout (eza-style), `--sort`/`--reverse` flags, Nerd Font icons support
 - **Resumable transfer** — Upload: dedup-aware instant upload on hash match, multipart resumable with 10 MB chunks via OSS. Download: HTTP Range resume for interrupted transfers
 - **Shell completions** — Zsh completion with dynamic cloud path completion (like `scp`)
@@ -91,6 +92,8 @@ What gets completed:
 | `pikpaktui upload ./<Tab> /<Tab>` | Local path, then cloud path |
 | `pikpaktui tasks <Tab>` | `list`, `retry`, `delete` subcommands |
 | `pikpaktui rm -<Tab>` | `-f` flag |
+| `pikpaktui info /path<Tab>` | Cloud path completion |
+| `pikpaktui cat /path<Tab>` | Cloud path completion |
 
 ## Usage
 
@@ -120,6 +123,12 @@ pikpaktui rename "/My Pack/old.txt" new.txt           # Rename
 pikpaktui rm "/My Pack/file.txt"                      # Delete (to trash)
 pikpaktui rm -f "/My Pack/file.txt"                   # Delete permanently
 pikpaktui mkdir "/My Pack" newfolder                  # Create folder
+pikpaktui info "/My Pack/video.mp4"                   # Detailed file info (media metadata)
+pikpaktui cat "/My Pack/notes.txt"                    # Preview text file contents
+
+# Trash
+pikpaktui trash                                       # List trashed files
+pikpaktui untrash "file.txt"                          # Restore file from trash
 
 # Transfer
 pikpaktui download "/My Pack/file.txt"                # Download to current dir
@@ -155,8 +164,9 @@ CLI mode requires login: it checks for a valid session first, then falls back to
 | Key | Action |
 |-----|--------|
 | `j` / `k` / `↑` / `↓` | Navigate |
-| `Enter` | Open folder |
+| `Enter` | Open folder / play video |
 | `Backspace` | Go back to parent |
+| `w` | Watch video (open in external player) |
 | `r` | Refresh |
 | `m` | Move |
 | `c` | Copy |
@@ -262,6 +272,7 @@ preview_max_size = 65536  # Max bytes for text preview (default 64 KB)
 thumbnail_mode = "auto"   # "auto" | "off" | "force-color" | "force-grayscale"
 sort_field = "name"       # "name" | "size" | "created" | "type" | "extension" | "none"
 sort_reverse = false      # Reverse sort direction
+player = "mpv"           # External video player command (mpv, vlc, iina, etc.)
 
 # Per-terminal image protocol configuration
 # Detected via $TERM_PROGRAM environment variable
@@ -327,6 +338,10 @@ src/
     unstar.rs            unstar — unstar files
     starred.rs           starred — list starred files
     events.rs            events — recent activity
+    trash.rs             trash — list trashed files
+    untrash.rs           untrash — restore from trash
+    info.rs              info — detailed file/folder info
+    cat.rs               cat — text file preview
     vip.rs               vip — VIP status and invite code
     completions.rs       completions — shell completion script generator
     complete_path.rs     __complete_path — internal dynamic path completion helper

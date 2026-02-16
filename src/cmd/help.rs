@@ -54,6 +54,8 @@ pub fn run() -> Result<()> {
         ("rename <path> <new_name>", "Rename a file or folder"),
         ("rm [-f] <path>",           "Remove to trash (-f permanent delete)"),
         ("mkdir <parent> <name>",    "Create a new folder"),
+        ("info <path>",             "Show detailed file/folder info"),
+        ("cat <path>",              "Preview text file contents"),
     ];
     print_commands(file_cmds);
     println!();
@@ -75,6 +77,15 @@ pub fn run() -> Result<()> {
         ("tasks [list|retry|rm]",    "Manage offline download tasks"),
     ];
     print_commands(cloud_cmds);
+    println!();
+
+    // Trash
+    println!("  {MAGENTA}{BOLD}Trash{RESET}");
+    let trash_cmds: &[(&str, &str)] = &[
+        ("trash [limit]",            "List trashed files"),
+        ("untrash <name...>",        "Restore files from trash"),
+    ];
+    print_commands(trash_cmds);
     println!();
 
     // Starred & Activity

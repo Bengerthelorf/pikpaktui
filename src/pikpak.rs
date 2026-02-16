@@ -285,6 +285,57 @@ impl PikPak {
         Ok(entries)
     }
 
+    pub fn ls_trash(&self, limit: u32) -> Result<Vec<Entry>> {
+        let token = self.access_token()?;
+        let url = format!(
+            "{}/drive/v1/files",
+            self.drive_base_url.trim_end_matches('/')
+        );
+
+        let filters = r#"{"trashed":{"eq":true}}"#;
+        let mut rb = self.http.get(&url).bearer_auth(&token).query(&[
+            ("parent_id", "*"),
+            ("limit", &limit.to_string()),
+            ("filters", filters),
+            ("thumbnail_size", "SIZE_MEDIUM"),
+        ]);
+        rb = self.authed_headers(rb);
+
+        let response = rb.send().context("ls_trash request failed")?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().unwrap_or_default();
+            return Err(anyhow!(
+                "ls_trash failed ({}): {}",
+                status,
+                sanitize(&body)
+            ));
+        }
+
+        let payload: DriveListResponse = response.json().context("invalid ls_trash json")?;
+        let entries = payload
+            .files
+            .into_iter()
+            .map(|f| {
+                let starred = f.is_starred();
+                Entry {
+                    id: f.id,
+                    name: f.name,
+                    kind: if f.kind.contains("folder") {
+                        EntryKind::Folder
+                    } else {
+                        EntryKind::File
+                    },
+                    size: f.size.unwrap_or(0),
+                    created_time: f.created_time.unwrap_or_default(),
+                    starred,
+                    thumbnail_link: f.thumbnail_link,
+                }
+            })
+            .collect();
+        Ok(entries)
+    }
+
     pub fn mv(&self, ids: &[&str], to_parent_id: &str) -> Result<()> {
         let token = self.access_token()?;
         let url = format!(
@@ -369,7 +420,6 @@ impl PikPak {
         ensure_success(response, "permanent delete")
     }
 
-    #[allow(dead_code)]
     pub fn untrash(&self, ids: &[&str]) -> Result<()> {
         let token = self.access_token()?;
         let url = format!(
@@ -1547,18 +1597,21 @@ pub struct MediaInfo {
 pub struct FileInfoResponse {
     pub name: String,
     #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
     pub size: Option<String>,
     #[serde(default)]
     pub hash: Option<String>,
+    #[serde(default)]
+    pub mime_type: Option<String>,
+    #[serde(default)]
+    pub created_time: Option<String>,
     #[serde(default)]
     pub web_content_link: Option<String>,
     #[serde(default)]
     pub links: Option<std::collections::HashMap<String, LinkInfo>>,
     #[serde(default)]
     pub medias: Option<Vec<MediaInfo>>,
-    #[allow(dead_code)]
-    #[serde(default)]
-    pub mime_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
