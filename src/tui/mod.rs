@@ -168,6 +168,7 @@ enum InputMode {
         lines: Vec<ratatui::text::Line<'static>>,
         truncated: bool,
     },
+    ConfirmQuit,
     Settings {
         selected: usize,
         editing: bool,
@@ -237,6 +238,10 @@ struct App {
     last_click_pos: (u16, u16),
     // Preview pane scroll offset
     preview_scroll: usize,
+    // Log overlay scroll offset and area for mouse support
+    /// `None` = auto-follow bottom; `Some(y)` = pinned at absolute scroll-from-top offset
+    logs_scroll: Option<usize>,
+    logs_overlay_area: Cell<ratatui::layout::Rect>,
     // Settings overlay area for mouse support
     settings_area: Cell<ratatui::layout::Rect>,
 }
@@ -286,6 +291,8 @@ impl App {
             last_click_time: Instant::now(),
             last_click_pos: (0, 0),
             preview_scroll: 0,
+            logs_scroll: None,
+            logs_overlay_area: Cell::new(ratatui::layout::Rect::default()),
             settings_area: Cell::new(ratatui::layout::Rect::default()),
         };
         app.refresh();
@@ -351,6 +358,8 @@ impl App {
             last_click_time: Instant::now(),
             last_click_pos: (0, 0),
             preview_scroll: 0,
+            logs_scroll: None,
+            logs_overlay_area: Cell::new(ratatui::layout::Rect::default()),
             settings_area: Cell::new(ratatui::layout::Rect::default()),
         }
     }
@@ -917,5 +926,153 @@ fn fetch_and_render_thumbnail(
         .context("failed to decode thumbnail image")?;
 
     Ok(img)
+}
+
+/// Wrap a string into visual lines based on display width.
+/// Each returned `String` fits within `max_width` display columns.
+pub(crate) fn wrap_line(s: &str, max_width: usize) -> Vec<String> {
+    use unicode_width::UnicodeWidthChar;
+    if max_width == 0 {
+        return vec![s.to_string()];
+    }
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    let mut current_width: usize = 0;
+    for ch in s.chars() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if current_width + ch_width > max_width && !current.is_empty() {
+            lines.push(std::mem::take(&mut current));
+            current_width = 0;
+        }
+        current.push(ch);
+        current_width += ch_width;
+    }
+    lines.push(current);
+    lines
+}
+
+/// Wrap all log messages and return total visual line count.
+pub(crate) fn wrap_logs<'a, I>(logs: I, max_width: usize) -> Vec<String>
+where
+    I: Iterator<Item = &'a str>,
+{
+    let mut all_lines = Vec::new();
+    for msg in logs {
+        all_lines.extend(wrap_line(msg, max_width));
+    }
+    all_lines
+}
+
+#[cfg(test)]
+mod wrap_tests {
+    use super::{wrap_line, wrap_logs};
+
+    #[test]
+    fn empty_string_gives_one_line() {
+        assert_eq!(wrap_line("", 50), vec![""]);
+    }
+
+    #[test]
+    fn short_string_no_wrap() {
+        assert_eq!(wrap_line("hello", 50), vec!["hello"]);
+    }
+
+    #[test]
+    fn exact_fit_no_wrap() {
+        assert_eq!(wrap_line("abcde", 5), vec!["abcde"]);
+    }
+
+    #[test]
+    fn simple_wrap() {
+        assert_eq!(wrap_line("abcdefgh", 5), vec!["abcde", "fgh"]);
+    }
+
+    #[test]
+    fn multiple_wraps() {
+        assert_eq!(
+            wrap_line("abcdefghijklm", 5),
+            vec!["abcde", "fghij", "klm"]
+        );
+    }
+
+    #[test]
+    fn cjk_double_width() {
+        // Each CJK char is width 2, so 3 chars = width 6
+        // In a width-5 area, "三上" (width 4) fits, "悠" starts new line
+        assert_eq!(wrap_line("三上悠", 5), vec!["三上", "悠"]);
+    }
+
+    #[test]
+    fn cjk_exact_fit() {
+        // "三上" = width 4, fits in width 4
+        assert_eq!(wrap_line("三上", 4), vec!["三上"]);
+    }
+
+    #[test]
+    fn mixed_ascii_cjk() {
+        // "ab三" = 2 + 2 = 4 width, fits in 5
+        // "cd" = 2, next line
+        assert_eq!(wrap_line("ab三cd", 5), vec!["ab三c", "d"]);
+    }
+
+    #[test]
+    fn long_url_wrap() {
+        let url = "https://dl-z01a-0049.mypikpak.com/download/?fid=KKGF0zFia";
+        let lines = wrap_line(url, 20);
+        // Each line should be at most 20 chars wide
+        for line in &lines {
+            assert!(
+                unicode_width::UnicodeWidthStr::width(line.as_str()) <= 20,
+                "line too wide: {:?} (width {})",
+                line,
+                unicode_width::UnicodeWidthStr::width(line.as_str())
+            );
+        }
+        // Rejoin should give original
+        let rejoined: String = lines.concat();
+        assert_eq!(rejoined, url);
+    }
+
+    #[test]
+    fn wrap_logs_total_lines() {
+        let logs = vec![
+            "short",
+            "a]medium length line here",
+            "abcdefghijklmnopqrstuvwxyz",
+        ];
+        let wrapped = wrap_logs(logs.iter().copied(), 10);
+        // "short" → 1 line
+        // "a]medium length line here" (24 chars) → 3 lines
+        // "abcdefghijklmnopqrstuvwxyz" (26 chars) → 3 lines
+        assert_eq!(wrapped.len(), 7);
+    }
+
+    #[test]
+    fn scroll_bottom_shows_last_lines() {
+        let logs = vec!["line1", "line2", "line3", "line4", "line5"];
+        let wrapped = wrap_logs(logs.iter().copied(), 50);
+        let visible = 3;
+        let max_scroll = wrapped.len().saturating_sub(visible); // 5 - 3 = 2
+        // At bottom (scroll_y = max_scroll = 2), show lines 2..5
+        let bottom: Vec<&str> = wrapped.iter().skip(max_scroll).take(visible).map(|s| s.as_str()).collect();
+        assert_eq!(bottom, vec!["line3", "line4", "line5"]);
+    }
+
+    #[test]
+    fn scroll_with_wrapped_lines_reaches_bottom() {
+        let logs = vec![
+            "short",
+            "this is a very long line that will wrap multiple times in a narrow window!",
+            "last line",
+        ];
+        let width = 20;
+        let visible = 5;
+        let wrapped = wrap_logs(logs.iter().copied(), width);
+        let total = wrapped.len();
+        let max_scroll = total.saturating_sub(visible);
+        // At bottom, last visible line should be "last line"
+        let bottom: Vec<&str> = wrapped.iter().skip(max_scroll).take(visible).map(|s| s.as_str()).collect();
+        assert_eq!(bottom.last().unwrap(), &"last line");
+    }
 }
 

@@ -42,7 +42,6 @@ impl NetworkStats {
             .fold(0.0, f64::max)
     }
 
-    #[allow(dead_code)]
     pub fn avg_speed(&self) -> f64 {
         if self.speed_history.is_empty() {
             return 0.0;
@@ -471,7 +470,7 @@ impl App {
         let content_height = area.height.saturating_sub(2) as usize;
         let content_width = area.width.saturating_sub(4) as usize;
 
-        let stats_lines = 4;
+        let stats_lines = 5;
         let graph_height = content_height.saturating_sub(stats_lines);
 
         let mut lines = vec![Line::from("")];
@@ -488,6 +487,13 @@ impl App {
             Span::styled(
                 format!("{:.2} MB/s", max_speed),
                 Style::default().fg(Color::Yellow),
+            ),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("  Avg: ", Style::default().fg(Color::Cyan)),
+            Span::styled(
+                format!("{:.2} MB/s", self.network_stats.avg_speed()),
+                Style::default().fg(Color::DarkGray),
             ),
         ]));
         lines.push(Line::from(""));

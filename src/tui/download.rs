@@ -79,7 +79,6 @@ impl DownloadState {
             .count()
     }
 
-    #[allow(dead_code)]
     pub fn has_active(&self) -> bool {
         self.tasks
             .iter()

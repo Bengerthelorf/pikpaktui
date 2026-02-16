@@ -147,6 +147,20 @@ impl App {
                 }
                 Ok(false)
             }
+            InputMode::ConfirmQuit => {
+                match code {
+                    KeyCode::Char('y') => {
+                        return Ok(true);
+                    }
+                    KeyCode::Char('n') | KeyCode::Esc => {
+                        // cancel, return to Normal
+                    }
+                    _ => {
+                        self.input = InputMode::ConfirmQuit;
+                    }
+                }
+                Ok(false)
+            }
             InputMode::ConfirmDelete => {
                 match code {
                     KeyCode::Char('y') => {
@@ -346,7 +360,13 @@ impl App {
 
     fn handle_normal_key(&mut self, code: KeyCode) -> Result<bool> {
         match code {
-            KeyCode::Char('q') => return Ok(true),
+            KeyCode::Char('q') => {
+                if self.download_state.has_active() {
+                    self.input = InputMode::ConfirmQuit;
+                } else {
+                    return Ok(true);
+                }
+            }
             KeyCode::Down | KeyCode::Char('j') => {
                 if !self.entries.is_empty() {
                     self.selected = (self.selected + 1).min(self.entries.len() - 1);
@@ -437,6 +457,7 @@ impl App {
             }
             KeyCode::Char('l') => {
                 self.show_logs_overlay = !self.show_logs_overlay;
+                self.logs_scroll = None;
             }
             KeyCode::Char('r') => self.refresh(),
             KeyCode::Char('m') => {
@@ -1400,6 +1421,32 @@ impl App {
     fn handle_mouse_scroll(&mut self, col: u16, row: u16, up: bool) {
         // Normal mode: scroll in any of the three panes
         if matches!(self.input, InputMode::Normal) {
+            // Log overlay scroll takes priority when visible
+            if self.show_logs_overlay
+                && self.is_in_rect(col, row, self.logs_overlay_area.get())
+            {
+                let area = self.logs_overlay_area.get();
+                let visible = area.height.saturating_sub(2) as usize;
+                let content_width = area.width.saturating_sub(2).max(1) as usize;
+                let total_visual = super::wrap_logs(
+                    self.logs.iter().map(|s| s.as_str()),
+                    content_width,
+                ).len();
+                let max_scroll = total_visual.saturating_sub(visible);
+                let current = self.logs_scroll.unwrap_or(max_scroll);
+                if up {
+                    let new_pos = current.saturating_sub(3);
+                    self.logs_scroll = Some(new_pos);
+                } else {
+                    let new_pos = (current + 3).min(max_scroll);
+                    if new_pos >= max_scroll {
+                        self.logs_scroll = None;
+                    } else {
+                        self.logs_scroll = Some(new_pos);
+                    }
+                }
+                return;
+            }
             if self.is_in_rect(col, row, self.current_pane_area.get()) {
                 if up {
                     if self.selected > 0 {
@@ -1473,7 +1520,7 @@ impl App {
                 if *selected > 0 {
                     *selected -= 1;
                 }
-            } else if *selected < 9 {
+            } else if *selected < 12 {
                 *selected += 1;
             }
             self.input = InputMode::Settings {
@@ -1495,11 +1542,12 @@ impl App {
 
                     let categories = vec![
                         ("UI Settings", 4),
-                        ("Preview Settings", 4),
+                        ("Preview Settings", 5),
+                        ("Sort Settings", 2),
                         ("Interface Settings", 2),
                     ];
 
-                    let bool_items = vec![0, 3, 4, 5, 9];
+                    let bool_items = vec![0, 3, 4, 5, 10, 12];
                     let mut current_line = 0;
                     let mut item_idx = 0;
                     let terminal_width = (area.width.saturating_sub(4)) as usize;
@@ -1517,7 +1565,8 @@ impl App {
                                             3 => draft.show_help_bar = !draft.show_help_bar,
                                             4 => draft.show_preview = !draft.show_preview,
                                             5 => draft.lazy_preview = !draft.lazy_preview,
-                                            9 => draft.cli_nerd_font = !draft.cli_nerd_font,
+                                            10 => draft.sort_reverse = !draft.sort_reverse,
+                                            12 => draft.cli_nerd_font = !draft.cli_nerd_font,
                                             _ => {}
                                         }
                                         modified = true;

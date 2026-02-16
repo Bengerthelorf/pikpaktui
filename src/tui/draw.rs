@@ -709,28 +709,50 @@ impl App {
     }
 
     fn draw_log_overlay(&self, f: &mut Frame, area: ratatui::layout::Rect) {
+        self.logs_overlay_area.set(area);
         f.render_widget(Clear, area);
-        let log_lines: Vec<Line> = self
-            .logs
-            .iter()
-            .rev()
-            .take(area.height.saturating_sub(2) as usize)
-            .rev()
-            .map(|s| Line::from(s.as_str()))
+        let visible = area.height.saturating_sub(2) as usize;
+        let content_width = area.width.saturating_sub(2).max(1) as usize;
+
+        // Pre-wrap all log messages into visual lines
+        let all_lines = super::wrap_logs(
+            self.logs.iter().map(|s| s.as_str()),
+            content_width,
+        );
+        let total_visual = all_lines.len();
+        let max_scroll = total_visual.saturating_sub(visible);
+
+        // None = auto-follow bottom, Some(y) = pinned at absolute offset
+        let scroll_y = match self.logs_scroll {
+            None => max_scroll,
+            Some(y) => y.min(max_scroll),
+        };
+
+        // Slice visible window
+        let visible_lines: Vec<Line> = all_lines
+            .into_iter()
+            .skip(scroll_y)
+            .take(visible)
+            .map(|s| Line::from(s))
             .collect();
+
         let (log_bc, log_tc) = if self.is_vibrant() {
             (Color::Magenta, Color::LightMagenta)
         } else {
             (Color::Cyan, Color::Green)
         };
-        let logs = Paragraph::new(Text::from(log_lines))
+        let title = if self.logs_scroll.is_some() {
+            format!(" Logs [{}/{}] (l to close) ", self.logs.len(), total_visual)
+        } else {
+            format!(" Logs [{}] (l to close) ", self.logs.len())
+        };
+        let logs = Paragraph::new(Text::from(visible_lines))
             .block(
                 self.styled_block()
-                    .title(" Logs (l to close) ")
+                    .title(title)
                     .title_style(Style::default().fg(log_tc))
                     .border_style(Style::default().fg(log_bc)),
-            )
-            .wrap(Wrap { trim: false });
+            );
         f.render_widget(logs, area);
     }
 
@@ -762,6 +784,9 @@ impl App {
             ],
             InputMode::Rename { .. } | InputMode::Mkdir { .. } => {
                 vec![("Enter", "confirm"), ("Esc", "cancel")]
+            }
+            InputMode::ConfirmQuit => {
+                vec![("y", "quit"), ("n/Esc", "cancel")]
             }
             InputMode::ConfirmDelete => {
                 vec![("y", "confirm"), ("p", "permanent"), ("n/Esc", "cancel")]
@@ -934,6 +959,47 @@ impl App {
                         .title_style(Style::default().fg(mk_tc))
                         .border_style(Style::default().fg(mk_bc)),
                 );
+                f.render_widget(p, area);
+            }
+            InputMode::ConfirmQuit => {
+                let area = centered_rect(60, 20, f.area());
+                f.render_widget(Clear, area);
+                let active = self
+                    .download_state
+                    .tasks
+                    .iter()
+                    .filter(|t| matches!(t.status, super::download::TaskStatus::Downloading | super::download::TaskStatus::Pending))
+                    .count();
+                let quit_hints = vec![("y", "quit"), ("n/Esc", "cancel")];
+                let mut hint_spans = vec![Span::raw("  ")];
+                hint_spans.extend(Self::styled_help_spans(&quit_hints));
+                let p = Paragraph::new(Text::from(vec![
+                    Line::from(""),
+                    Line::from(vec![
+                        Span::styled("  ", Style::default()),
+                        Span::styled(
+                            format!("{} download(s) still active.", active),
+                            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                        ),
+                    ]),
+                    Line::from(Span::styled(
+                        "  Quit anyway?",
+                        Style::default().fg(Color::Yellow),
+                    )),
+                    Line::from(""),
+                    Line::from(hint_spans),
+                ]))
+                .block({
+                    let (bc, tc) = if self.is_vibrant() {
+                        (Color::LightYellow, Color::LightYellow)
+                    } else {
+                        (Color::Yellow, Color::Yellow)
+                    };
+                    self.styled_block()
+                        .title(" Confirm Quit ")
+                        .title_style(Style::default().fg(tc))
+                        .border_style(Style::default().fg(bc))
+                });
                 f.render_widget(p, area);
             }
             InputMode::ConfirmDelete => {
