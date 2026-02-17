@@ -188,6 +188,7 @@ CLI mode requires login: it checks for a valid session first, then falls back to
 | `D` | Downloads view |
 | `o` | Offline download (URL/magnet) |
 | `O` | Offline tasks |
+| `t` | Trash view |
 | `Space` | Preview / file info |
 | `p` | Text content preview |
 | `l` | Toggle log overlay |
@@ -234,6 +235,18 @@ CLI mode requires login: it checks for a valid session first, then falls back to
 | `p` | Pause / resume |
 | `x` | Cancel task |
 | `r` | Retry failed task |
+| `Esc` | Close (or collapse) |
+
+### Trash View
+
+| Key | Action |
+|-----|--------|
+| `j` / `k` | Navigate |
+| `Enter` | Toggle collapsed / expanded |
+| `u` | Restore (untrash) |
+| `x` | Permanent delete |
+| `Space` | File info (expanded mode) |
+| `r` | Refresh |
 | `Esc` | Close (or collapse) |
 
 ### Settings

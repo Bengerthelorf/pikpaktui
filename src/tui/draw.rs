@@ -29,6 +29,149 @@ impl App {
         )
     }
 
+    fn draw_trash_view(
+        &self,
+        f: &mut Frame,
+        entries: &[Entry],
+        selected: usize,
+        expanded: bool,
+    ) {
+        let area = if expanded {
+            f.area()
+        } else {
+            let visible = entries.len().min(15);
+            let total_lines = 2 + visible.max(1) + 2; // padding + items + hint + padding
+            let pct = ((total_lines as u16 * 100) / f.area().height.max(1))
+                .max(25)
+                .min(75);
+            centered_rect(75, pct, f.area())
+        };
+        f.render_widget(Clear, area);
+
+        let title = format!(" Trash ({}) ", entries.len());
+        let (tr_bc, tr_tc) = if self.is_vibrant() {
+            (Color::LightRed, Color::LightRed)
+        } else {
+            (Color::Cyan, Color::Red)
+        };
+
+        if entries.is_empty() {
+            let mut lines = vec![
+                Line::from(""),
+                Line::from(Span::styled(
+                    "  Trash is empty.",
+                    Style::default().fg(Color::DarkGray),
+                )),
+            ];
+            lines.push(Line::from(""));
+            let hints = vec![("r", "refresh"), ("Esc", "close")];
+            let mut hint_spans = vec![Span::raw("  ")];
+            hint_spans.extend(Self::styled_help_spans(&hints));
+            lines.push(Line::from(hint_spans));
+
+            let p = Paragraph::new(Text::from(lines)).block(
+                self.styled_block()
+                    .title(title)
+                    .title_style(Style::default().fg(tr_tc))
+                    .border_style(Style::default().fg(tr_bc)),
+            );
+            f.render_widget(p, area);
+        } else {
+            let mut lines = vec![Line::from("")];
+
+            let max_visible = if expanded {
+                area.height.saturating_sub(4) as usize // borders + padding + hint
+            } else {
+                15
+            };
+            let scroll_offset = if selected >= max_visible {
+                selected - max_visible + 1
+            } else {
+                0
+            };
+
+            let name_max = if expanded {
+                area.width.saturating_sub(20) as usize
+            } else {
+                35
+            };
+
+            for (i, entry) in entries.iter().enumerate().skip(scroll_offset).take(max_visible) {
+                let is_sel = i == selected;
+                let prefix = if is_sel { " \u{203a} " } else { "   " };
+
+                let cat = theme::categorize(entry);
+                let icon = theme::cli_icon(cat, self.config.nerd_font);
+                let icon_color = self.file_color(cat);
+
+                let size_str = if entry.kind == EntryKind::Folder {
+                    "-".to_string()
+                } else {
+                    format_size(entry.size)
+                };
+
+                let name_style = if is_sel {
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::White)
+                };
+
+                lines.push(Line::from(vec![
+                    Span::styled(prefix, name_style),
+                    Span::styled(format!("{} ", icon), Style::default().fg(icon_color)),
+                    Span::styled(truncate_name(&entry.name, name_max), name_style),
+                    Span::styled(
+                        format!("  {:>9}", size_str),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                ]));
+            }
+
+            let remaining = entries.len().saturating_sub(scroll_offset + max_visible);
+            if remaining > 0 {
+                lines.push(Line::from(Span::styled(
+                    format!("   ... and {} more", remaining),
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
+
+            lines.push(Line::from(""));
+            let hints = if expanded {
+                vec![
+                    ("j/k", "nav"),
+                    ("u", "restore"),
+                    ("x", "delete"),
+                    ("Space", "info"),
+                    ("r", "refresh"),
+                    ("Enter", "collapse"),
+                    ("Esc", "close"),
+                ]
+            } else {
+                vec![
+                    ("j/k", "nav"),
+                    ("Enter", "expand"),
+                    ("u", "restore"),
+                    ("x", "delete"),
+                    ("r", "refresh"),
+                    ("Esc", "close"),
+                ]
+            };
+            let mut hint_spans = vec![Span::raw("  ")];
+            hint_spans.extend(Self::styled_help_spans(&hints));
+            lines.push(Line::from(hint_spans));
+
+            let p = Paragraph::new(Text::from(lines)).block(
+                self.styled_block()
+                    .title(title)
+                    .title_style(Style::default().fg(tr_tc))
+                    .border_style(Style::default().fg(tr_bc)),
+            );
+            f.render_widget(p, area);
+        }
+    }
+
     fn draw_confirm_play_overlay(&self, f: &mut Frame, name: &str, _url: &str) {
         let area = centered_rect(60, 20, f.area());
         f.render_widget(Clear, area);
@@ -986,6 +1129,28 @@ impl App {
                 ("x", "delete"),
                 ("Esc", "back"),
             ],
+            InputMode::TrashView { expanded, .. } => {
+                if *expanded {
+                    vec![
+                        ("j/k", "nav"),
+                        ("u", "restore"),
+                        ("x", "delete"),
+                        ("Space", "info"),
+                        ("r", "refresh"),
+                        ("Enter", "collapse"),
+                        ("Esc", "close"),
+                    ]
+                } else {
+                    vec![
+                        ("j/k", "nav"),
+                        ("Enter", "expand"),
+                        ("u", "restore"),
+                        ("x", "delete"),
+                        ("r", "refresh"),
+                        ("Esc", "close"),
+                    ]
+                }
+            }
             InputMode::InfoLoading => vec![("Esc", "cancel")],
             InputMode::InfoView { .. }
             | InputMode::InfoFolderView { .. }
@@ -1279,6 +1444,13 @@ impl App {
             }
             InputMode::OfflineTasksView { tasks, selected } => {
                 self.draw_offline_tasks_overlay(f, tasks, *selected);
+            }
+            InputMode::TrashView {
+                entries,
+                selected,
+                expanded,
+            } => {
+                self.draw_trash_view(f, entries, *selected, *expanded);
             }
             InputMode::InfoLoading => {
                 self.draw_info_loading_overlay(f);

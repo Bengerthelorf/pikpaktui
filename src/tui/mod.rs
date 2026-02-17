@@ -100,6 +100,9 @@ enum OpResult {
     OfflineTasks(Result<Vec<crate::pikpak::OfflineTask>>),
     PlayInfo(Result<FileInfoResponse>),
     PlayPickerInfo(Result<(FileInfoResponse, Vec<PlayOption>)>),
+    TrashList(Result<Vec<Entry>>),
+    TrashOp(String),
+    TrashInfo(Result<FileInfoResponse>),
 }
 
 struct PickerState {
@@ -189,6 +192,11 @@ enum InputMode {
         value: String,
         pending_url: String,
     },
+    TrashView {
+        entries: Vec<Entry>,
+        selected: usize,
+        expanded: bool,
+    },
     ConfirmQuit,
     Settings {
         selected: usize,
@@ -265,6 +273,10 @@ struct App {
     logs_overlay_area: Cell<ratatui::layout::Rect>,
     // Settings overlay area for mouse support
     settings_area: Cell<ratatui::layout::Rect>,
+    // Trash view state (preserved across InfoView popup)
+    trash_entries: Vec<Entry>,
+    trash_selected: usize,
+    trash_expanded: bool,
 }
 
 impl App {
@@ -315,6 +327,9 @@ impl App {
             logs_scroll: None,
             logs_overlay_area: Cell::new(ratatui::layout::Rect::default()),
             settings_area: Cell::new(ratatui::layout::Rect::default()),
+            trash_entries: Vec::new(),
+            trash_selected: 0,
+            trash_expanded: false,
         };
         app.refresh();
         app
@@ -382,6 +397,9 @@ impl App {
             logs_scroll: None,
             logs_overlay_area: Cell::new(ratatui::layout::Rect::default()),
             settings_area: Cell::new(ratatui::layout::Rect::default()),
+            trash_entries: Vec::new(),
+            trash_selected: 0,
+            trash_expanded: false,
         }
     }
 
@@ -647,6 +665,53 @@ impl App {
                     self.loading = false;
                     self.push_log(format!("Play picker info failed: {e:#}"));
                 }
+                OpResult::TrashList(Ok(entries)) => {
+                    self.loading = false;
+                    let expanded = if let InputMode::TrashView { expanded, .. } = &self.input {
+                        *expanded
+                    } else {
+                        self.trash_expanded
+                    };
+                    self.trash_entries = entries.clone();
+                    self.trash_selected = 0;
+                    self.trash_expanded = expanded;
+                    self.input = InputMode::TrashView {
+                        entries,
+                        selected: 0,
+                        expanded,
+                    };
+                }
+                OpResult::TrashList(Err(e)) => {
+                    self.loading = false;
+                    if matches!(self.input, InputMode::InfoLoading) {
+                        self.input = InputMode::Normal;
+                    }
+                    self.push_log(format!("Failed to load trash: {e:#}"));
+                }
+                OpResult::TrashOp(msg) => {
+                    self.loading = false;
+                    self.push_log(msg);
+                    // Re-fetch trash list
+                    self.open_trash_view_preserve();
+                }
+                OpResult::TrashInfo(Ok(info)) => {
+                    self.loading = false;
+                    if matches!(self.input, InputMode::InfoLoading) {
+                        self.input = InputMode::InfoView { info };
+                    }
+                }
+                OpResult::TrashInfo(Err(e)) => {
+                    self.loading = false;
+                    if matches!(self.input, InputMode::InfoLoading) {
+                        // Restore trash view
+                        self.input = InputMode::TrashView {
+                            entries: std::mem::take(&mut self.trash_entries),
+                            selected: self.trash_selected,
+                            expanded: self.trash_expanded,
+                        };
+                    }
+                    self.push_log(format!("Trash file info failed: {e:#}"));
+                }
             }
         }
 
@@ -828,6 +893,16 @@ impl App {
                 }
             }
         }
+    }
+
+    fn open_trash_view_preserve(&mut self) {
+        self.input = InputMode::InfoLoading;
+        self.loading = true;
+        let client = Arc::clone(&self.client);
+        let tx = self.result_tx.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(OpResult::TrashList(client.ls_trash(200)));
+        });
     }
 
     fn resort_entries(&mut self) {

@@ -251,6 +251,14 @@ impl App {
                 self.handle_offline_tasks_key(code, &mut tasks, &mut selected);
                 Ok(false)
             }
+            InputMode::TrashView {
+                mut entries,
+                mut selected,
+                expanded,
+            } => {
+                self.handle_trash_view_key(code, &mut entries, &mut selected, expanded);
+                Ok(false)
+            }
             InputMode::ConfirmPlay { name, url } => {
                 match code {
                     KeyCode::Enter | KeyCode::Char('y') => {
@@ -385,13 +393,28 @@ impl App {
             }
             InputMode::InfoLoading => {
                 if code == KeyCode::Esc {
-                    self.input = InputMode::Normal;
+                    if !self.trash_entries.is_empty() {
+                        self.input = InputMode::TrashView {
+                            entries: std::mem::take(&mut self.trash_entries),
+                            selected: self.trash_selected,
+                            expanded: self.trash_expanded,
+                        };
+                    } else {
+                        self.input = InputMode::Normal;
+                    }
                     self.loading = false;
                 }
                 Ok(false)
             }
             InputMode::InfoView { .. } => {
-                // Any key closes info view
+                // Any key closes info view; return to trash view if we came from there
+                if !self.trash_entries.is_empty() {
+                    self.input = InputMode::TrashView {
+                        entries: std::mem::take(&mut self.trash_entries),
+                        selected: self.trash_selected,
+                        expanded: self.trash_expanded,
+                    };
+                }
                 Ok(false)
             }
             InputMode::InfoFolderView { entries, .. } => {
@@ -670,6 +693,10 @@ impl App {
             KeyCode::Char('O') => {
                 // Offline tasks view
                 self.open_offline_tasks_view();
+            }
+            KeyCode::Char('t') => {
+                // Trash view
+                self.open_trash_view();
             }
             KeyCode::Char('S') => {
                 // Cycle sort field
@@ -1566,6 +1593,182 @@ impl App {
                 };
             }
         }
+    }
+
+    // --- Trash view ---
+
+    fn open_trash_view(&mut self) {
+        self.trash_entries.clear();
+        self.trash_selected = 0;
+        self.trash_expanded = false;
+        self.input = InputMode::InfoLoading;
+        self.loading = true;
+        let client = Arc::clone(&self.client);
+        let tx = self.result_tx.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(OpResult::TrashList(client.ls_trash(200)));
+        });
+    }
+
+    fn handle_trash_view_key(
+        &mut self,
+        code: KeyCode,
+        entries: &mut Vec<Entry>,
+        selected: &mut usize,
+        expanded: bool,
+    ) {
+        match code {
+            KeyCode::Esc => {
+                if expanded {
+                    // Expanded → collapsed
+                    self.trash_expanded = false;
+                    self.input = InputMode::TrashView {
+                        entries: std::mem::take(entries),
+                        selected: *selected,
+                        expanded: false,
+                    };
+                } else {
+                    // Collapsed → Normal
+                    self.trash_entries.clear();
+                    self.trash_selected = 0;
+                    self.trash_expanded = false;
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if !entries.is_empty() {
+                    *selected = (*selected + 1).min(entries.len() - 1);
+                }
+                self.trash_selected = *selected;
+                self.input = InputMode::TrashView {
+                    entries: std::mem::take(entries),
+                    selected: *selected,
+                    expanded,
+                };
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if *selected > 0 {
+                    *selected -= 1;
+                }
+                self.trash_selected = *selected;
+                self.input = InputMode::TrashView {
+                    entries: std::mem::take(entries),
+                    selected: *selected,
+                    expanded,
+                };
+            }
+            KeyCode::Enter => {
+                // Toggle collapsed ↔ expanded
+                let new_expanded = !expanded;
+                self.trash_expanded = new_expanded;
+                self.input = InputMode::TrashView {
+                    entries: std::mem::take(entries),
+                    selected: *selected,
+                    expanded: new_expanded,
+                };
+            }
+            KeyCode::Char('u') => {
+                // Untrash selected
+                if let Some(entry) = entries.get(*selected) {
+                    let client = Arc::clone(&self.client);
+                    let tx = self.result_tx.clone();
+                    let eid = entry.id.clone();
+                    let name = entry.name.clone();
+                    self.trash_entries = std::mem::take(entries);
+                    self.trash_selected = *selected;
+                    self.trash_expanded = expanded;
+                    self.input = InputMode::InfoLoading;
+                    self.loading = true;
+                    std::thread::spawn(move || {
+                        let _ = tx.send(match client.untrash(&[eid.as_str()]) {
+                            Ok(()) => OpResult::TrashOp(format!("Restored '{}'", name)),
+                            Err(e) => OpResult::TrashOp(format!("Untrash failed: {e:#}")),
+                        });
+                    });
+                    return;
+                }
+                self.input = InputMode::TrashView {
+                    entries: std::mem::take(entries),
+                    selected: *selected,
+                    expanded,
+                };
+            }
+            KeyCode::Char('x') => {
+                // Permanent delete selected
+                if let Some(entry) = entries.get(*selected) {
+                    let client = Arc::clone(&self.client);
+                    let tx = self.result_tx.clone();
+                    let eid = entry.id.clone();
+                    let name = entry.name.clone();
+                    self.trash_entries = std::mem::take(entries);
+                    self.trash_selected = *selected;
+                    self.trash_expanded = expanded;
+                    self.input = InputMode::InfoLoading;
+                    self.loading = true;
+                    std::thread::spawn(move || {
+                        let _ = tx.send(match client.delete_permanent(&[eid.as_str()]) {
+                            Ok(()) => {
+                                OpResult::TrashOp(format!("Permanently deleted '{}'", name))
+                            }
+                            Err(e) => {
+                                OpResult::TrashOp(format!("Permanent delete failed: {e:#}"))
+                            }
+                        });
+                    });
+                    return;
+                }
+                self.input = InputMode::TrashView {
+                    entries: std::mem::take(entries),
+                    selected: *selected,
+                    expanded,
+                };
+            }
+            KeyCode::Char(' ') => {
+                // File info popup (expanded mode only)
+                if expanded {
+                    if let Some(entry) = entries.get(*selected) {
+                        let client = Arc::clone(&self.client);
+                        let tx = self.result_tx.clone();
+                        let eid = entry.id.clone();
+                        self.trash_entries = std::mem::take(entries);
+                        self.trash_selected = *selected;
+                        self.trash_expanded = expanded;
+                        self.input = InputMode::InfoLoading;
+                        self.loading = true;
+                        std::thread::spawn(move || {
+                            let _ = tx.send(OpResult::TrashInfo(client.file_info(&eid)));
+                        });
+                        return;
+                    }
+                }
+                self.input = InputMode::TrashView {
+                    entries: std::mem::take(entries),
+                    selected: *selected,
+                    expanded,
+                };
+            }
+            KeyCode::Char('r') => {
+                // Refresh trash list
+                self.trash_expanded = expanded;
+                self.open_trash_view_preserve_expanded();
+            }
+            _ => {
+                self.input = InputMode::TrashView {
+                    entries: std::mem::take(entries),
+                    selected: *selected,
+                    expanded,
+                };
+            }
+        }
+    }
+
+    fn open_trash_view_preserve_expanded(&mut self) {
+        self.input = InputMode::InfoLoading;
+        self.loading = true;
+        let client = Arc::clone(&self.client);
+        let tx = self.result_tx.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(OpResult::TrashList(client.ls_trash(200)));
+        });
     }
 
     fn open_info_popup(&mut self, entry: Entry) {
