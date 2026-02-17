@@ -50,6 +50,7 @@ fn entry() -> Result<()> {
         "untrash" => cmd::untrash::run(&args[1..]),
         "info" => cmd::info::run(&args[1..]),
         "cat" => cmd::cat::run(&args[1..]),
+        "play" => cmd::play::run(&args[1..]),
         "vip" => cmd::vip::run(),
         "completions" => cmd::completions::run(&args[1..]),
         "__complete_path" => cmd::complete_path::run(&args[1..]),
@@ -67,7 +68,6 @@ fn run_tui() -> Result<()> {
         return tui::run(client, tui_config);
     }
 
-    // Check login.yaml for credentials
     let cfg = AppConfig::load()?;
     let credentials = match (cfg.username, cfg.password) {
         (Some(u), Some(p)) if !u.is_empty() && !p.is_empty() => Some((u, p)),

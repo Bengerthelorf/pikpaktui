@@ -24,7 +24,7 @@ A TUI and CLI client for [PikPak](https://mypikpak.com) cloud storage, written i
 - **Mouse support** — Click to select, double-click to open, scroll wheel navigation
 
 ### CLI
-- **24 subcommands** — `ls`, `mv`, `cp`, `rename`, `rm`, `mkdir`, `info`, `cat`, `download`, `upload`, `share`, `offline`, `tasks`, `star`, `unstar`, `starred`, `events`, `trash`, `untrash`, `quota`, `vip`, `completions`, `help`, `version`
+- **25 subcommands** — `ls`, `mv`, `cp`, `rename`, `rm`, `mkdir`, `info`, `cat`, `play`, `download`, `upload`, `share`, `offline`, `tasks`, `star`, `unstar`, `starred`, `events`, `trash`, `untrash`, `quota`, `vip`, `completions`, `help`, `version`
 - **Colored output** — `ls` with multi-column grid layout (eza-style), `--sort`/`--reverse` flags, Nerd Font icons support
 - **Resumable transfer** — Upload: dedup-aware instant upload on hash match, multipart resumable with 10 MB chunks via OSS. Download: HTTP Range resume for interrupted transfers
 - **Shell completions** — Zsh completion with dynamic cloud path completion (like `scp`)
@@ -94,6 +94,7 @@ What gets completed:
 | `pikpaktui rm -<Tab>` | `-f` flag |
 | `pikpaktui info /path<Tab>` | Cloud path completion |
 | `pikpaktui cat /path<Tab>` | Cloud path completion |
+| `pikpaktui play /path<Tab>` | Cloud path completion |
 
 ## Usage
 
@@ -125,6 +126,12 @@ pikpaktui rm -f "/My Pack/file.txt"                   # Delete permanently
 pikpaktui mkdir "/My Pack" newfolder                  # Create folder
 pikpaktui info "/My Pack/video.mp4"                   # Detailed file info (media metadata)
 pikpaktui cat "/My Pack/notes.txt"                    # Preview text file contents
+
+# Video playback
+pikpaktui play "/My Pack/video.mp4"                   # List available streams (720p, 1080p, etc.)
+pikpaktui play "/My Pack/video.mp4" 1080p             # Play 1080p stream with configured player
+pikpaktui play "/My Pack/video.mp4" original          # Play original quality
+pikpaktui play "/My Pack/video.mp4" 2                 # Play by stream number
 
 # Trash
 pikpaktui trash                                       # List trashed files
@@ -342,6 +349,7 @@ src/
     untrash.rs           untrash — restore from trash
     info.rs              info — detailed file/folder info
     cat.rs               cat — text file preview
+    play.rs              play — video playback via external player
     vip.rs               vip — VIP status and invite code
     completions.rs       completions — shell completion script generator
     complete_path.rs     __complete_path — internal dynamic path completion helper

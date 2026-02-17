@@ -10,6 +10,7 @@ pub mod ls;
 pub mod mkdir;
 pub mod mv;
 pub mod offline;
+pub mod play;
 pub mod quota;
 pub mod rename;
 pub mod rm;

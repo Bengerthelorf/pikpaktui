@@ -60,6 +60,14 @@ pub fn run() -> Result<()> {
     print_commands(file_cmds);
     println!();
 
+    // Playback
+    println!("  {MAGENTA}{BOLD}Playback{RESET}");
+    let play_cmds: &[(&str, &str)] = &[
+        ("play <path> [quality]",   "Play video with external player"),
+    ];
+    print_commands(play_cmds);
+    println!();
+
     // Transfer
     println!("  {MAGENTA}{BOLD}Transfer{RESET}");
     let transfer_cmds: &[(&str, &str)] = &[

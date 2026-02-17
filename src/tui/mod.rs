@@ -85,8 +85,6 @@ pub(crate) struct PlayOption {
     pub label: String,
     pub url: String,
     pub available: bool,
-    #[allow(dead_code)]
-    pub is_origin: bool,
 }
 
 enum OpResult {

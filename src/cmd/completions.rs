@@ -84,6 +84,7 @@ _pikpaktui() {
         'untrash:Restore files from trash'
         'info:Show detailed file/folder info'
         'cat:Preview text file contents'
+        'play:Play video with external player'
         'quota:Show storage quota'
         'vip:Show VIP & account info'
         'completions:Generate shell completions'
@@ -170,7 +171,7 @@ _pikpaktui() {
                 _describe -t subcmds 'tasks subcommand' subcmds
             fi
             ;;
-        star|unstar|info|cat)
+        star|unstar|info|cat|play)
             _pikpaktui_cloud_path
             ;;
         completions)
@@ -233,7 +234,7 @@ mod tests {
             "ls:", "mv:", "cp:", "rename:", "rm:", "mkdir:",
             "download:", "upload:", "share:", "offline:", "tasks:",
             "star:", "unstar:", "starred:", "events:",
-            "trash:", "untrash:", "info:", "cat:",
+            "trash:", "untrash:", "info:", "cat:", "play:",
             "quota:", "vip:", "completions:", "help:", "version:",
         ];
         for cmd in commands {

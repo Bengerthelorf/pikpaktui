@@ -711,7 +711,6 @@ impl App {
                                                 label: format!("Original ({})", size_str),
                                                 url: url.clone(),
                                                 available: true,
-                                                is_origin: true,
                                             });
                                         }
                                     }
@@ -741,7 +740,6 @@ impl App {
                                                 label,
                                                 url,
                                                 available,
-                                                is_origin: false,
                                             });
                                         }
                                     }
@@ -2542,13 +2540,7 @@ impl App {
                     }
                 }
                 KeyCode::Esc => {
-                    if *modified {
-                        // TODO: Add confirmation dialog
-                        // For now, just discard changes
-                        Some(false) // Discard changes and exit
-                    } else {
-                        Some(false) // Exit without changes
-                    }
+                    Some(false)
                 }
                 _ => None,
             }

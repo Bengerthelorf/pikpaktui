@@ -1003,7 +1003,6 @@ impl PikPak {
 
         let hash = pikpak_hash(local_path)?;
 
-        // Step 1: init upload
         let token = self.access_token()?;
         let url = format!(
             "{}/drive/v1/files",
@@ -1036,7 +1035,6 @@ impl PikPak {
 
         let init: UploadInitResponse = response.json().context("invalid upload init json")?;
 
-        // Step 2: check phase
         if init.upload_type == "UPLOAD_TYPE_RESUMABLE" {
             if let Some(resumable) = &init.resumable {
                 if resumable.kind == "drive#uploadContext"
@@ -1051,7 +1049,6 @@ impl PikPak {
             return Ok((file_name, true)); // dedup
         }
 
-        // Need to actually upload
         let resumable = init
             .resumable
             .ok_or_else(|| anyhow!("no resumable context in upload init response"))?;
@@ -1084,13 +1081,8 @@ impl PikPak {
                 .ok_or_else(|| anyhow!("upload init response missing OSS key"))?,
         };
 
-        // Step 3: initiate multipart upload
         let upload_id = self.oss_initiate_multipart(&oss_args)?;
-
-        // Step 4: upload chunks
         let etags = self.oss_upload_chunks(&oss_args, &upload_id, local_path, file_size)?;
-
-        // Step 5: complete multipart upload
         self.oss_complete_multipart(&oss_args, &upload_id, &etags)?;
 
         Ok((file_name, false))
@@ -1559,7 +1551,6 @@ pub struct MediaLink {
     pub url: Option<String>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct MediaVideo {
     #[serde(default)]
@@ -1576,7 +1567,6 @@ pub struct MediaVideo {
     pub audio_codec: Option<String>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct MediaInfo {
     #[serde(default)]
@@ -1585,10 +1575,12 @@ pub struct MediaInfo {
     pub link: Option<MediaLink>,
     #[serde(default)]
     pub video: Option<MediaVideo>,
+    #[allow(dead_code)]
     #[serde(default)]
     pub is_default: Option<bool>,
     #[serde(default)]
     pub is_origin: Option<bool>,
+    #[allow(dead_code)]
     #[serde(default)]
     pub category: Option<String>,
 }
