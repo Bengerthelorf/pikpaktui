@@ -2,10 +2,9 @@
 
 A TUI and CLI client for [PikPak](https://mypikpak.com) cloud storage, written in pure Rust with no external runtime dependencies.
 
-| ![main](assets/main.jpeg) | ![settings](assets/settings.png) | ![help](assets/help.png) |
-| --- | --- | --- |
-| ![cart](assets/cart.png) | ![downloads](assets/downloads.jpeg) | ![downloads](assets/downloads_mian.png) |
-| ![copy](assets/copy.png) | ![trash](assets/trash.png) | ![play](assets/play.png) |
+| ![main](assets/main.jpeg) | ![settings](assets/settings.png) |
+| --- | --- |
+| ![help](assets/help.png) | ![downloads](assets/downloads_mian.png) |
 
 ## Features
 
