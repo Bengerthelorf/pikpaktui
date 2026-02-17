@@ -1,12 +1,15 @@
 [package]
 name = "pikpaktui"
-version = "0.0.33"
+version = "0.0.34"
 edition = "2024"
 description = "A TUI and CLI client for PikPak cloud storage"
 license = "Apache-2.0"
 repository = "https://github.com/Bengerthelorf/pikpaktui"
 keywords = ["tui", "pikpak", "cloud-storage", "cli"]
 categories = ["command-line-utilities"]
+exclude = [
+    "assets/**",
+]
 
 [dependencies]
 anyhow = "1"
