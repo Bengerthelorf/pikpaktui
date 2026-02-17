@@ -273,10 +273,10 @@ struct App {
     logs_overlay_area: Cell<ratatui::layout::Rect>,
     // Settings overlay area for mouse support
     settings_area: Cell<ratatui::layout::Rect>,
-    // Trash view state (preserved across InfoView popup)
     trash_entries: Vec<Entry>,
     trash_selected: usize,
     trash_expanded: bool,
+    loading_label: Option<String>,
 }
 
 impl App {
@@ -330,6 +330,7 @@ impl App {
             trash_entries: Vec::new(),
             trash_selected: 0,
             trash_expanded: false,
+            loading_label: None,
         };
         app.refresh();
         app
@@ -400,6 +401,7 @@ impl App {
             trash_entries: Vec::new(),
             trash_selected: 0,
             trash_expanded: false,
+            loading_label: None,
         }
     }
 
@@ -474,7 +476,7 @@ impl App {
         while let Ok(result) = self.result_rx.try_recv() {
             match result {
                 OpResult::Ls(Ok(mut entries)) => {
-                    self.loading = false;
+                    self.finish_loading();
                     crate::config::sort_entries(&mut entries, self.config.sort_field, self.config.sort_reverse);
                     self.entries = entries;
                     if self.selected >= self.entries.len() {
@@ -484,7 +486,7 @@ impl App {
                     self.on_cursor_move();
                 }
                 OpResult::Ls(Err(e)) => {
-                    self.loading = false;
+                    self.finish_loading();
                     self.push_log(format!("Refresh failed: {e:#}"));
                 }
                 OpResult::Ok(msg) => {
@@ -493,16 +495,16 @@ impl App {
                 }
                 OpResult::Err(msg) => {
                     self.push_log(msg);
-                    self.loading = false;
+                    self.finish_loading();
                 }
                 OpResult::Info(Ok(info)) => {
-                    self.loading = false;
+                    self.finish_loading();
                     if matches!(self.input, InputMode::InfoLoading) {
                         self.input = InputMode::InfoView { info };
                     }
                 }
                 OpResult::Info(Err(e)) => {
-                    self.loading = false;
+                    self.finish_loading();
                     if matches!(self.input, InputMode::InfoLoading) {
                         self.input = InputMode::Normal;
                     }
@@ -533,7 +535,7 @@ impl App {
                     crate::config::sort_entries(&mut children, self.config.sort_field, self.config.sort_reverse);
                     if matches!(self.input, InputMode::InfoLoading) {
                         // Popup mode (show_preview=false)
-                        self.loading = false;
+                        self.finish_loading();
                         let name = self.preview_target_name.take().unwrap_or_default();
                         self.preview_state = PreviewState::FolderListing(children.clone());
                         self.preview_target_id = Some(id);
@@ -547,7 +549,7 @@ impl App {
                 }
                 OpResult::PreviewLs(id, Err(e)) => {
                     if matches!(self.input, InputMode::InfoLoading) {
-                        self.loading = false;
+                        self.finish_loading();
                         self.input = InputMode::Normal;
                     } else if self.preview_target_id.as_deref() == Some(&id) {
                         self.preview_state = PreviewState::Empty;
@@ -568,7 +570,7 @@ impl App {
                 OpResult::PreviewText(id, Ok((name, content, size, truncated))) => {
                     let lines = highlight_content(&name, &content);
                     if matches!(self.input, InputMode::InfoLoading) {
-                        self.loading = false;
+                        self.finish_loading();
                         self.input = InputMode::TextPreviewView {
                             name: name.clone(),
                             lines: lines.clone(),
@@ -592,7 +594,7 @@ impl App {
                 }
                 OpResult::PreviewText(id, Err(e)) => {
                     if matches!(self.input, InputMode::InfoLoading) {
-                        self.loading = false;
+                        self.finish_loading();
                         self.input = InputMode::Normal;
                     } else if self.preview_target_id.as_deref() == Some(&id) {
                         self.preview_state = PreviewState::FileBasicInfo;
@@ -611,20 +613,20 @@ impl App {
                     self.push_log(format!("Thumbnail preview failed: {e:#}"));
                 }
                 OpResult::OfflineTasks(Ok(tasks)) => {
-                    self.loading = false;
+                    self.finish_loading();
                     if matches!(self.input, InputMode::InfoLoading) {
                         self.input = InputMode::OfflineTasksView { tasks, selected: 0 };
                     }
                 }
                 OpResult::OfflineTasks(Err(e)) => {
-                    self.loading = false;
+                    self.finish_loading();
                     if matches!(self.input, InputMode::InfoLoading) {
                         self.input = InputMode::Normal;
                     }
                     self.push_log(format!("Failed to load offline tasks: {e:#}"));
                 }
                 OpResult::PlayInfo(Ok(info)) => {
-                    self.loading = false;
+                    self.finish_loading();
                     let url = info
                         .web_content_link
                         .as_deref()
@@ -644,11 +646,11 @@ impl App {
                     }
                 }
                 OpResult::PlayInfo(Err(e)) => {
-                    self.loading = false;
+                    self.finish_loading();
                     self.push_log(format!("Play info failed: {e:#}"));
                 }
                 OpResult::PlayPickerInfo(Ok((info, medias))) => {
-                    self.loading = false;
+                    self.finish_loading();
                     if medias.is_empty() {
                         self.push_log("No playback streams available".into());
                     } else {
@@ -662,11 +664,11 @@ impl App {
                     }
                 }
                 OpResult::PlayPickerInfo(Err(e)) => {
-                    self.loading = false;
+                    self.finish_loading();
                     self.push_log(format!("Play picker info failed: {e:#}"));
                 }
                 OpResult::TrashList(Ok(entries)) => {
-                    self.loading = false;
+                    self.finish_loading();
                     let expanded = if let InputMode::TrashView { expanded, .. } = &self.input {
                         *expanded
                     } else {
@@ -682,28 +684,26 @@ impl App {
                     };
                 }
                 OpResult::TrashList(Err(e)) => {
-                    self.loading = false;
+                    self.finish_loading();
                     if matches!(self.input, InputMode::InfoLoading) {
                         self.input = InputMode::Normal;
                     }
                     self.push_log(format!("Failed to load trash: {e:#}"));
                 }
                 OpResult::TrashOp(msg) => {
-                    self.loading = false;
+                    self.finish_loading();
                     self.push_log(msg);
-                    // Re-fetch trash list
                     self.open_trash_view_preserve();
                 }
                 OpResult::TrashInfo(Ok(info)) => {
-                    self.loading = false;
+                    self.finish_loading();
                     if matches!(self.input, InputMode::InfoLoading) {
                         self.input = InputMode::InfoView { info };
                     }
                 }
                 OpResult::TrashInfo(Err(e)) => {
-                    self.loading = false;
+                    self.finish_loading();
                     if matches!(self.input, InputMode::InfoLoading) {
-                        // Restore trash view
                         self.input = InputMode::TrashView {
                             entries: std::mem::take(&mut self.trash_entries),
                             selected: self.trash_selected,
@@ -779,6 +779,11 @@ impl App {
 
     fn current_entry(&self) -> Option<&Entry> {
         self.entries.get(self.selected)
+    }
+
+    fn finish_loading(&mut self) {
+        self.loading = false;
+        self.loading_label = None;
     }
 
     fn push_log(&mut self, msg: String) {

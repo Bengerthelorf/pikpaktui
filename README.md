@@ -2,9 +2,10 @@
 
 A TUI and CLI client for [PikPak](https://mypikpak.com) cloud storage, written in pure Rust with no external runtime dependencies.
 
-| main | setting |
-| --- | --- |
-| ![main](assets/main.jpeg) | ![setting](assets/setting.png) |
+| ![main](assets/main.jpeg) | ![settings](assets/settings.png) | ![help](assets/help.png) |
+| --- | --- | --- |
+| ![cart](assets/cart.png) | ![downloads](assets/downloads.jpeg) | ![downloads](assets/downloads_mian.png) |
+| ![copy](assets/copy.png) | ![trash](assets/trash.png) | ![play](assets/play.png) |
 
 ## Features
 
@@ -19,6 +20,7 @@ A TUI and CLI client for [PikPak](https://mypikpak.com) cloud storage, written i
 - **Cart & batch download** — Add files to cart, batch download with pause/resume/cancel, HTTP Range resume for interrupted transfers, download state persisted across sessions
 - **Download dashboard** — Collapsed popup or expanded full-screen view with braille-character network activity graph, per-file progress, speed, ETA
 - **Offline download** — Submit URLs/magnets for PikPak cloud download, view and manage tasks
+- **Trash view** — Browse trashed files in collapsed overlay or expanded full-screen, restore or permanently delete, with file info preview
 - **Sorting** — eza-style `--sort` support (name, size, created, type, extension, none) with `--reverse`; TUI keybindings `S`/`R` to cycle sort field and toggle order, persisted in config
 - **Interactive settings** — In-app settings editor (`,`), custom RGB colors per file category, per-terminal image protocol configuration, sort settings
 - **Mouse support** — Click to select, double-click to open, scroll wheel navigation

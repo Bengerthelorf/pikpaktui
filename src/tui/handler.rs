@@ -402,7 +402,7 @@ impl App {
                     } else {
                         self.input = InputMode::Normal;
                     }
-                    self.loading = false;
+                    self.finish_loading();
                 }
                 Ok(false)
             }
@@ -788,6 +788,7 @@ impl App {
                             // Popup overlay
                             self.input = InputMode::InfoLoading;
                             self.loading = true;
+                            self.loading_label = Some("Loading preview...".into());
                             let client = Arc::clone(&self.client);
                             let tx = self.result_tx.clone();
                             let eid = entry.id.clone();
@@ -1485,6 +1486,7 @@ impl App {
     fn open_offline_tasks_view(&mut self) {
         self.input = InputMode::InfoLoading;
         self.loading = true;
+        self.loading_label = Some("Loading offline tasks...".into());
         let client = Arc::clone(&self.client);
         let tx = self.result_tx.clone();
         std::thread::spawn(move || {
@@ -1541,6 +1543,7 @@ impl App {
                         let task_name = task.name.clone();
                         self.input = InputMode::InfoLoading;
                         self.loading = true;
+                        self.loading_label = Some("Retrying task...".into());
                         std::thread::spawn(move || match client.offline_task_retry(&task_id) {
                             Ok(()) => {
                                 let _ =
@@ -1567,6 +1570,7 @@ impl App {
                     let task_name = task.name.clone();
                     self.input = InputMode::InfoLoading;
                     self.loading = true;
+                    self.loading_label = Some("Deleting task...".into());
                     std::thread::spawn(move || {
                         match client.delete_tasks(&[task_id.as_str()], false) {
                             Ok(()) => {
@@ -1595,14 +1599,13 @@ impl App {
         }
     }
 
-    // --- Trash view ---
-
     fn open_trash_view(&mut self) {
         self.trash_entries.clear();
         self.trash_selected = 0;
         self.trash_expanded = false;
         self.input = InputMode::InfoLoading;
         self.loading = true;
+        self.loading_label = Some("Loading trash...".into());
         let client = Arc::clone(&self.client);
         let tx = self.result_tx.clone();
         std::thread::spawn(move || {
@@ -1620,7 +1623,6 @@ impl App {
         match code {
             KeyCode::Esc => {
                 if expanded {
-                    // Expanded → collapsed
                     self.trash_expanded = false;
                     self.input = InputMode::TrashView {
                         entries: std::mem::take(entries),
@@ -1628,7 +1630,6 @@ impl App {
                         expanded: false,
                     };
                 } else {
-                    // Collapsed → Normal
                     self.trash_entries.clear();
                     self.trash_selected = 0;
                     self.trash_expanded = false;
@@ -1657,7 +1658,6 @@ impl App {
                 };
             }
             KeyCode::Enter => {
-                // Toggle collapsed ↔ expanded
                 let new_expanded = !expanded;
                 self.trash_expanded = new_expanded;
                 self.input = InputMode::TrashView {
@@ -1667,7 +1667,6 @@ impl App {
                 };
             }
             KeyCode::Char('u') => {
-                // Untrash selected
                 if let Some(entry) = entries.get(*selected) {
                     let client = Arc::clone(&self.client);
                     let tx = self.result_tx.clone();
@@ -1678,6 +1677,7 @@ impl App {
                     self.trash_expanded = expanded;
                     self.input = InputMode::InfoLoading;
                     self.loading = true;
+                    self.loading_label = Some("Restoring...".into());
                     std::thread::spawn(move || {
                         let _ = tx.send(match client.untrash(&[eid.as_str()]) {
                             Ok(()) => OpResult::TrashOp(format!("Restored '{}'", name)),
@@ -1693,7 +1693,6 @@ impl App {
                 };
             }
             KeyCode::Char('x') => {
-                // Permanent delete selected
                 if let Some(entry) = entries.get(*selected) {
                     let client = Arc::clone(&self.client);
                     let tx = self.result_tx.clone();
@@ -1704,6 +1703,7 @@ impl App {
                     self.trash_expanded = expanded;
                     self.input = InputMode::InfoLoading;
                     self.loading = true;
+                    self.loading_label = Some("Deleting...".into());
                     std::thread::spawn(move || {
                         let _ = tx.send(match client.delete_permanent(&[eid.as_str()]) {
                             Ok(()) => {
@@ -1723,7 +1723,6 @@ impl App {
                 };
             }
             KeyCode::Char(' ') => {
-                // File info popup (expanded mode only)
                 if expanded {
                     if let Some(entry) = entries.get(*selected) {
                         let client = Arc::clone(&self.client);
@@ -1734,6 +1733,7 @@ impl App {
                         self.trash_expanded = expanded;
                         self.input = InputMode::InfoLoading;
                         self.loading = true;
+                        self.loading_label = Some("Loading file info...".into());
                         std::thread::spawn(move || {
                             let _ = tx.send(OpResult::TrashInfo(client.file_info(&eid)));
                         });
@@ -1747,7 +1747,6 @@ impl App {
                 };
             }
             KeyCode::Char('r') => {
-                // Refresh trash list
                 self.trash_expanded = expanded;
                 self.open_trash_view_preserve_expanded();
             }
@@ -1764,6 +1763,7 @@ impl App {
     fn open_trash_view_preserve_expanded(&mut self) {
         self.input = InputMode::InfoLoading;
         self.loading = true;
+        self.loading_label = Some("Loading trash...".into());
         let client = Arc::clone(&self.client);
         let tx = self.result_tx.clone();
         std::thread::spawn(move || {
@@ -1774,6 +1774,7 @@ impl App {
     fn open_info_popup(&mut self, entry: Entry) {
         self.input = InputMode::InfoLoading;
         self.loading = true;
+        self.loading_label = Some("Loading file info...".into());
         let client = Arc::clone(&self.client);
         let tx = self.result_tx.clone();
         let eid = entry.id.clone();
@@ -1785,6 +1786,7 @@ impl App {
     fn open_folder_info_popup(&mut self, entry: Entry) {
         self.input = InputMode::InfoLoading;
         self.loading = true;
+        self.loading_label = Some("Loading folder...".into());
         self.preview_target_id = Some(entry.id.clone());
         self.preview_target_name = Some(entry.name.clone());
         let client = Arc::clone(&self.client);
@@ -1947,6 +1949,18 @@ impl App {
                 self.download_state.selected =
                     (self.download_state.selected + 1).min(count - 1);
             }
+        } else if let InputMode::TrashView {
+            entries, selected, ..
+        } = &mut self.input
+        {
+            if up {
+                if *selected > 0 {
+                    *selected -= 1;
+                }
+            } else if !entries.is_empty() {
+                *selected = (*selected + 1).min(entries.len() - 1);
+            }
+            self.trash_selected = *selected;
         } else if let InputMode::Settings { selected, editing, draft, modified } = &mut self.input {
             // Settings overlay scroll support
             if up {

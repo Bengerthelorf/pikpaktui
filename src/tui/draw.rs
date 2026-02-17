@@ -36,18 +36,6 @@ impl App {
         selected: usize,
         expanded: bool,
     ) {
-        let area = if expanded {
-            f.area()
-        } else {
-            let visible = entries.len().min(15);
-            let total_lines = 2 + visible.max(1) + 2; // padding + items + hint + padding
-            let pct = ((total_lines as u16 * 100) / f.area().height.max(1))
-                .max(25)
-                .min(75);
-            centered_rect(75, pct, f.area())
-        };
-        f.render_widget(Clear, area);
-
         let title = format!(" Trash ({}) ", entries.len());
         let (tr_bc, tr_tc) = if self.is_vibrant() {
             (Color::LightRed, Color::LightRed)
@@ -55,120 +43,191 @@ impl App {
             (Color::Cyan, Color::Red)
         };
 
-        if entries.is_empty() {
-            let mut lines = vec![
-                Line::from(""),
-                Line::from(Span::styled(
-                    "  Trash is empty.",
-                    Style::default().fg(Color::DarkGray),
-                )),
-            ];
-            lines.push(Line::from(""));
-            let hints = vec![("r", "refresh"), ("Esc", "close")];
-            let mut hint_spans = vec![Span::raw("  ")];
-            hint_spans.extend(Self::styled_help_spans(&hints));
-            lines.push(Line::from(hint_spans));
-
-            let p = Paragraph::new(Text::from(lines)).block(
-                self.styled_block()
-                    .title(title)
-                    .title_style(Style::default().fg(tr_tc))
-                    .border_style(Style::default().fg(tr_bc)),
-            );
-            f.render_widget(p, area);
-        } else {
-            let mut lines = vec![Line::from("")];
-
-            let max_visible = if expanded {
-                area.height.saturating_sub(4) as usize // borders + padding + hint
+        if expanded {
+            let outer = if self.config.show_help_bar {
+                Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([Constraint::Min(1), Constraint::Length(1)])
+                    .split(f.area())
             } else {
-                15
+                Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([Constraint::Min(1)])
+                    .split(f.area())
             };
-            let scroll_offset = if selected >= max_visible {
-                selected - max_visible + 1
-            } else {
-                0
-            };
+            let list_area = outer[0];
 
-            let name_max = if expanded {
-                area.width.saturating_sub(20) as usize
-            } else {
-                35
-            };
-
-            for (i, entry) in entries.iter().enumerate().skip(scroll_offset).take(max_visible) {
-                let is_sel = i == selected;
-                let prefix = if is_sel { " \u{203a} " } else { "   " };
-
-                let cat = theme::categorize(entry);
-                let icon = theme::cli_icon(cat, self.config.nerd_font);
-                let icon_color = self.file_color(cat);
-
-                let size_str = if entry.kind == EntryKind::Folder {
-                    "-".to_string()
-                } else {
-                    format_size(entry.size)
-                };
-
-                let name_style = if is_sel {
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(Color::White)
-                };
-
-                lines.push(Line::from(vec![
-                    Span::styled(prefix, name_style),
-                    Span::styled(format!("{} ", icon), Style::default().fg(icon_color)),
-                    Span::styled(truncate_name(&entry.name, name_max), name_style),
-                    Span::styled(
-                        format!("  {:>9}", size_str),
+            if entries.is_empty() {
+                let lines = vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "  Trash is empty.",
                         Style::default().fg(Color::DarkGray),
-                    ),
-                ]));
-            }
-
-            let remaining = entries.len().saturating_sub(scroll_offset + max_visible);
-            if remaining > 0 {
-                lines.push(Line::from(Span::styled(
-                    format!("   ... and {} more", remaining),
-                    Style::default().fg(Color::DarkGray),
-                )));
-            }
-
-            lines.push(Line::from(""));
-            let hints = if expanded {
-                vec![
-                    ("j/k", "nav"),
-                    ("u", "restore"),
-                    ("x", "delete"),
-                    ("Space", "info"),
-                    ("r", "refresh"),
-                    ("Enter", "collapse"),
-                    ("Esc", "close"),
-                ]
+                    )),
+                ];
+                let p = Paragraph::new(Text::from(lines)).block(
+                    self.styled_block()
+                        .title(title)
+                        .title_style(Style::default().fg(tr_tc))
+                        .border_style(Style::default().fg(tr_bc)),
+                );
+                f.render_widget(p, list_area);
             } else {
-                vec![
+                let mut lines = vec![Line::from("")];
+                let max_visible = list_area.height.saturating_sub(4) as usize;
+                let scroll_offset = if selected >= max_visible {
+                    selected - max_visible + 1
+                } else {
+                    0
+                };
+                let name_max = list_area.width.saturating_sub(20) as usize;
+
+                for (i, entry) in entries.iter().enumerate().skip(scroll_offset).take(max_visible) {
+                    let is_sel = i == selected;
+                    let prefix = if is_sel { " \u{203a} " } else { "   " };
+                    let cat = theme::categorize(entry);
+                    let icon = theme::cli_icon(cat, self.config.nerd_font);
+                    let icon_color = self.file_color(cat);
+                    let size_str = if entry.kind == EntryKind::Folder {
+                        "-".to_string()
+                    } else {
+                        format_size(entry.size)
+                    };
+                    let name_style = if is_sel {
+                        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::White)
+                    };
+                    lines.push(Line::from(vec![
+                        Span::styled(prefix, name_style),
+                        Span::styled(format!("{} ", icon), Style::default().fg(icon_color)),
+                        Span::styled(truncate_name(&entry.name, name_max), name_style),
+                        Span::styled(
+                            format!("  {:>9}", size_str),
+                            Style::default().fg(Color::DarkGray),
+                        ),
+                    ]));
+                }
+
+                let remaining = entries.len().saturating_sub(scroll_offset + max_visible);
+                if remaining > 0 {
+                    lines.push(Line::from(Span::styled(
+                        format!("   ... and {} more", remaining),
+                        Style::default().fg(Color::DarkGray),
+                    )));
+                }
+
+                let p = Paragraph::new(Text::from(lines)).block(
+                    self.styled_block()
+                        .title(title)
+                        .title_style(Style::default().fg(tr_tc))
+                        .border_style(Style::default().fg(tr_bc)),
+                );
+                f.render_widget(p, list_area);
+            }
+
+            if self.config.show_help_bar {
+                let pairs = self.help_pairs();
+                let mut spans = vec![Span::raw(" ")];
+                spans.extend(Self::styled_help_spans(&pairs));
+                let bar = Paragraph::new(Line::from(spans));
+                f.render_widget(bar, outer[1]);
+            }
+        } else {
+            let visible = entries.len().min(15);
+            let total_lines = 2 + visible.max(1) + 2;
+            let pct = ((total_lines as u16 * 100) / f.area().height.max(1))
+                .max(25)
+                .min(75);
+            let area = centered_rect(75, pct, f.area());
+            f.render_widget(Clear, area);
+
+            if entries.is_empty() {
+                let mut lines = vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "  Trash is empty.",
+                        Style::default().fg(Color::DarkGray),
+                    )),
+                ];
+                lines.push(Line::from(""));
+                let hints = vec![("r", "refresh"), ("Esc", "close")];
+                let mut hint_spans = vec![Span::raw("  ")];
+                hint_spans.extend(Self::styled_help_spans(&hints));
+                lines.push(Line::from(hint_spans));
+
+                let p = Paragraph::new(Text::from(lines)).block(
+                    self.styled_block()
+                        .title(title)
+                        .title_style(Style::default().fg(tr_tc))
+                        .border_style(Style::default().fg(tr_bc)),
+                );
+                f.render_widget(p, area);
+            } else {
+                let mut lines = vec![Line::from("")];
+                let max_visible = 15;
+                let scroll_offset = if selected >= max_visible {
+                    selected - max_visible + 1
+                } else {
+                    0
+                };
+
+                for (i, entry) in entries.iter().enumerate().skip(scroll_offset).take(max_visible) {
+                    let is_sel = i == selected;
+                    let prefix = if is_sel { " \u{203a} " } else { "   " };
+                    let cat = theme::categorize(entry);
+                    let icon = theme::cli_icon(cat, self.config.nerd_font);
+                    let icon_color = self.file_color(cat);
+                    let size_str = if entry.kind == EntryKind::Folder {
+                        "-".to_string()
+                    } else {
+                        format_size(entry.size)
+                    };
+                    let name_style = if is_sel {
+                        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::White)
+                    };
+                    lines.push(Line::from(vec![
+                        Span::styled(prefix, name_style),
+                        Span::styled(format!("{} ", icon), Style::default().fg(icon_color)),
+                        Span::styled(truncate_name(&entry.name, 35), name_style),
+                        Span::styled(
+                            format!("  {:>9}", size_str),
+                            Style::default().fg(Color::DarkGray),
+                        ),
+                    ]));
+                }
+
+                let remaining = entries.len().saturating_sub(scroll_offset + max_visible);
+                if remaining > 0 {
+                    lines.push(Line::from(Span::styled(
+                        format!("   ... and {} more", remaining),
+                        Style::default().fg(Color::DarkGray),
+                    )));
+                }
+
+                lines.push(Line::from(""));
+                let hints = vec![
                     ("j/k", "nav"),
                     ("Enter", "expand"),
                     ("u", "restore"),
                     ("x", "delete"),
                     ("r", "refresh"),
                     ("Esc", "close"),
-                ]
-            };
-            let mut hint_spans = vec![Span::raw("  ")];
-            hint_spans.extend(Self::styled_help_spans(&hints));
-            lines.push(Line::from(hint_spans));
+                ];
+                let mut hint_spans = vec![Span::raw("  ")];
+                hint_spans.extend(Self::styled_help_spans(&hints));
+                lines.push(Line::from(hint_spans));
 
-            let p = Paragraph::new(Text::from(lines)).block(
-                self.styled_block()
-                    .title(title)
-                    .title_style(Style::default().fg(tr_tc))
-                    .border_style(Style::default().fg(tr_bc)),
-            );
-            f.render_widget(p, area);
+                let p = Paragraph::new(Text::from(lines)).block(
+                    self.styled_block()
+                        .title(title)
+                        .title_style(Style::default().fg(tr_tc))
+                        .border_style(Style::default().fg(tr_bc)),
+                );
+                f.render_widget(p, area);
+            }
         }
     }
 
@@ -343,6 +402,11 @@ impl App {
             InputMode::Login { .. } => self.draw_login_screen(f),
             InputMode::MovePicker { .. } | InputMode::CopyPicker { .. } => self.draw_picker(f),
             InputMode::DownloadView => self.draw_download_view(f),
+            InputMode::TrashView {
+                entries,
+                selected,
+                expanded: true,
+            } => self.draw_trash_view(f, entries, *selected, true),
             _ => self.draw_main(f),
         }
     }
@@ -775,12 +839,15 @@ impl App {
                 f.render_widget(p, area);
             }
             PreviewState::FileBasicInfo => {
+                let wrap_w = area.width.saturating_sub(2) as usize;
                 let mut lines = vec![Line::from("")];
                 if let Some(entry) = self.entries.get(self.selected) {
-                    lines.push(Line::from(vec![
-                        Span::styled("  Name:  ", Style::default().fg(Color::Cyan)),
-                        Span::styled(&entry.name, Style::default().fg(Color::White)),
-                    ]));
+                    lines.extend(wrap_labeled_field(
+                        "  Name:  ", &entry.name,
+                        Style::default().fg(Color::Cyan),
+                        Style::default().fg(Color::White),
+                        wrap_w,
+                    ));
                     if entry.kind == EntryKind::File {
                         lines.push(Line::from(vec![
                             Span::styled("  Size:  ", Style::default().fg(Color::Cyan)),
@@ -826,29 +893,56 @@ impl App {
                 use crate::config::ThumbnailRenderMode;
                 use ratatui_image::{picker::{Picker, ProtocolType}, StatefulImage};
 
-                // Calculate available space
-                let panel_width = area.width.saturating_sub(2); // borders
-                let panel_height = area.height.saturating_sub(2); // borders
-                let image_height = panel_height.saturating_sub(4).max(10); // reserve 4 lines for info
+                let panel_width = area.width.saturating_sub(2);
+                let panel_height = area.height.saturating_sub(2);
+                let wrap_w = panel_width.max(1) as usize;
+                let mut info_lines: Vec<Line> = vec![];
+                if let Some(entry) = self.entries.get(self.selected) {
+                    info_lines.extend(wrap_labeled_field(
+                        "  Name:  ", &entry.name,
+                        Style::default().fg(Color::Cyan),
+                        Style::default().fg(Color::White),
+                        wrap_w,
+                    ));
+                    if entry.kind == EntryKind::File {
+                        info_lines.push(Line::from(vec![
+                            Span::styled("  Size:  ", Style::default().fg(Color::Cyan)),
+                            Span::styled(
+                                format_size(entry.size),
+                                Style::default().fg(Color::White),
+                            ),
+                        ]));
+                    }
+                    if !entry.created_time.is_empty() {
+                        info_lines.push(Line::from(vec![
+                            Span::styled("  Time:  ", Style::default().fg(Color::Cyan)),
+                            Span::styled(&entry.created_time, Style::default().fg(Color::DarkGray)),
+                        ]));
+                    }
+                }
 
-                // Create image area (top part for image, bottom for info)
+                let info_visual_lines = info_lines.len() as u16;
+                let min_image_height = (panel_height / 2).max(4);
+                let info_height = info_visual_lines.min(panel_height.saturating_sub(min_image_height));
+                let image_height = panel_height.saturating_sub(info_height);
+
+                let inner_rect = ratatui::layout::Rect {
+                    x: area.x + 1,
+                    y: area.y + 1,
+                    width: panel_width,
+                    height: panel_height,
+                };
                 let chunks = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints([
                         Constraint::Length(image_height),
-                        Constraint::Min(0),
+                        Constraint::Length(info_height),
                     ])
-                    .split(ratatui::layout::Rect {
-                        x: area.x + 1,
-                        y: area.y + 1,
-                        width: panel_width,
-                        height: panel_height,
-                    });
+                    .split(inner_rect);
 
                 let image_area = chunks[0];
                 let info_area = chunks[1];
 
-                // Render image based on mode
                 let render_mode = self.config.thumbnail_mode.should_use_color();
 
                 match render_mode {
@@ -904,31 +998,7 @@ impl App {
                     ThumbnailRenderMode::Off => {}
                 }
 
-                // Render file info in bottom area
-                let mut lines = vec![];
-                if let Some(entry) = self.entries.get(self.selected) {
-                    lines.push(Line::from(vec![
-                        Span::styled("  Name:  ", Style::default().fg(Color::Cyan)),
-                        Span::styled(&entry.name, Style::default().fg(Color::White)),
-                    ]));
-                    if entry.kind == EntryKind::File {
-                        lines.push(Line::from(vec![
-                            Span::styled("  Size:  ", Style::default().fg(Color::Cyan)),
-                            Span::styled(
-                                format_size(entry.size),
-                                Style::default().fg(Color::White),
-                            ),
-                        ]));
-                    }
-                    if !entry.created_time.is_empty() {
-                        lines.push(Line::from(vec![
-                            Span::styled("  Time:  ", Style::default().fg(Color::Cyan)),
-                            Span::styled(&entry.created_time, Style::default().fg(Color::DarkGray)),
-                        ]));
-                    }
-                }
-
-                let info_p = Paragraph::new(Text::from(lines));
+                let info_p = Paragraph::new(Text::from(info_lines));
                 f.render_widget(info_p, info_area);
 
                 // Render border with title
@@ -967,11 +1037,14 @@ impl App {
                 f.render_widget(p, area);
             }
             PreviewState::FileDetailedInfo(info) => {
+                let wrap_w = area.width.saturating_sub(2) as usize;
                 let mut lines = vec![Line::from("")];
-                lines.push(Line::from(vec![
-                    Span::styled("  Name:  ", Style::default().fg(Color::Cyan)),
-                    Span::styled(&info.name, Style::default().fg(Color::White)),
-                ]));
+                lines.extend(wrap_labeled_field(
+                    "  Name:  ", &info.name,
+                    Style::default().fg(Color::Cyan),
+                    Style::default().fg(Color::White),
+                    wrap_w,
+                ));
                 if let Some(size) = &info.size {
                     let size_n: u64 = size.parse().unwrap_or(0);
                     lines.push(Line::from(vec![
@@ -983,35 +1056,32 @@ impl App {
                     ]));
                 }
                 if let Some(hash) = &info.hash {
-                    lines.push(Line::from(vec![
-                        Span::styled("  Hash:  ", Style::default().fg(Color::Cyan)),
-                        Span::styled(hash.as_str(), Style::default().fg(Color::DarkGray)),
-                    ]));
+                    lines.extend(wrap_labeled_field(
+                        "  Hash:  ", hash,
+                        Style::default().fg(Color::Cyan),
+                        Style::default().fg(Color::DarkGray),
+                        wrap_w,
+                    ));
                 }
                 if let Some(link) = &info.web_content_link {
-                    let display = if link.len() > 50 {
-                        format!("{}...", &link[..50])
-                    } else {
-                        link.clone()
-                    };
-                    lines.push(Line::from(vec![
-                        Span::styled("  Link:  ", Style::default().fg(Color::Cyan)),
-                        Span::styled(display, Style::default().fg(Color::Blue)),
-                    ]));
+                    lines.extend(wrap_labeled_field(
+                        "  Link:  ", link,
+                        Style::default().fg(Color::Cyan),
+                        Style::default().fg(Color::Blue),
+                        wrap_w,
+                    ));
                 }
 
-                let p = Paragraph::new(Text::from(lines))
-                    .block(
-                        self.styled_block()
-                            .title(format!(" \u{2139} {} ", truncate_name(&info.name, 25)))
-                            .title_style(
-                                Style::default()
-                                    .fg(Color::Cyan)
-                                    .add_modifier(Modifier::BOLD),
-                            )
-                            .border_style(Style::default().fg(Color::DarkGray)),
-                    )
-                    .wrap(Wrap { trim: false });
+                let p = Paragraph::new(Text::from(lines)).block(
+                    self.styled_block()
+                        .title(format!(" \u{2139} {} ", truncate_name(&info.name, 25)))
+                        .title_style(
+                            Style::default()
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD),
+                        )
+                        .border_style(Style::default().fg(Color::DarkGray)),
+                );
                 f.render_widget(p, area);
             }
         }
@@ -1756,45 +1826,27 @@ impl App {
                 ),
             ],
             _ => {
-                let mut views: Vec<(&str, &str)> = Vec::new();
+                let mut nav: Vec<(&str, &str)> = vec![
+                    ("j / \u{2193}", "Move down"),
+                    ("k / \u{2191}", "Move up"),
+                    ("Enter", "Open / Play"),
+                    ("Bksp", "Go to parent"),
+                    ("r", "Refresh"),
+                    ("S", "Cycle sort"),
+                    ("R", "Reverse sort"),
+                ];
                 if !self.config.show_preview {
-                    views.push(("Space", "File info"));
+                    nav.push(("Space", "File info"));
                 } else if !self.config.lazy_preview {
-                    views.push(("Space", "Load preview"));
+                    nav.push(("Space", "Load preview"));
                 }
-                views.push(("p", "Preview"));
-                views.push(("w", "Watch (streams)"));
-                views.extend_from_slice(&[
-                    ("l", "Toggle logs"),
-                    ("D", "Downloads"),
-                    ("A", "View cart"),
-                    ("o", "Cloud download"),
-                    ("O", "Offline tasks"),
-                    (",", "Settings"),
-                    ("h", "Toggle help"),
-                    ("q", "Quit"),
-                ]);
+                nav.push(("p", "Preview"));
+                nav.push(("w", "Watch (streams)"));
 
                 vec![
+                    ("Navigation", nav),
                     (
-                        "Navigation",
-                        vec![
-                            ("j / \u{2193}", "Move down"),
-                            ("k / \u{2191}", "Move up"),
-                            ("Enter", "Open / Play"),
-                            ("Bksp", "Go to parent"),
-                            ("r", "Refresh"),
-                        ],
-                    ),
-                    (
-                        "Sort",
-                        vec![
-                            ("S", "Cycle sort"),
-                            ("R", "Reverse sort"),
-                        ],
-                    ),
-                    (
-                        "File Operations",
+                        "Actions",
                         vec![
                             ("c", "Copy"),
                             ("m", "Move"),
@@ -1805,20 +1857,27 @@ impl App {
                             ("a", "Add to cart"),
                         ],
                     ),
-                    ("Views & More", views),
+                    (
+                        "Panels",
+                        vec![
+                            ("D", "Downloads"),
+                            ("A", "View cart"),
+                            ("o", "Cloud download"),
+                            ("O", "Offline tasks"),
+                            ("t", "Trash"),
+                            ("l", "Toggle logs"),
+                            (",", "Settings"),
+                            ("h", "Toggle help"),
+                            ("q", "Quit"),
+                        ],
+                    ),
                 ]
             }
         };
 
         let key_w: usize = 7;
 
-        // Group sections into visual columns.
-        // Each column is a Vec of (title, items) sections stacked vertically.
-        // Sections are assigned to columns by name-based grouping:
-        //   Column 0: "Navigation" + "Sort"
-        //   Column 1: "File Operations"
-        //   Column 2: "Views & More"
-        // For picker mode (2 sections), each section gets its own column.
+        // ≤3 sections: one column each. >3: first two share column 0.
         let columns: Vec<Vec<(&str, &Vec<(&str, &str)>)>> = if sections.len() <= 3 {
             // Simple: one section per column
             sections.iter().map(|(name, items)| vec![(*name, items)]).collect()
@@ -2315,10 +2374,16 @@ impl App {
             (Color::Cyan, Color::Cyan)
         };
 
+        let label = self.loading_label.as_deref().unwrap_or("Loading...");
+        let title = self
+            .loading_label
+            .as_ref()
+            .map(|l| format!(" {} ", l))
+            .unwrap_or_else(|| " \u{2139} Info ".to_string());
         let p = Paragraph::new(Text::from(vec![
             Line::from(""),
             Line::from(Span::styled(
-                format!("  {} Loading...", spinner),
+                format!("  {} {}", spinner, label),
                 Style::default().fg(Color::Cyan),
             )),
             Line::from(""),
@@ -2329,7 +2394,7 @@ impl App {
         ]))
         .block(
             self.styled_block()
-                .title(" \u{2139} Info ")
+                .title(title)
                 .title_style(Style::default().fg(in_tc).add_modifier(Modifier::BOLD))
                 .border_style(Style::default().fg(in_bc)),
         );
@@ -2342,12 +2407,15 @@ impl App {
         let area = centered_rect(65, 40, f.area());
         f.render_widget(Clear, area);
 
+        let wrap_w = area.width.saturating_sub(2) as usize;
         let mut lines = vec![Line::from("")];
 
-        lines.push(Line::from(vec![
-            Span::styled("  Name:  ", Style::default().fg(Color::Cyan)),
-            Span::styled(&info.name, Style::default().fg(Color::White)),
-        ]));
+        lines.extend(wrap_labeled_field(
+            "  Name:  ", &info.name,
+            Style::default().fg(Color::Cyan),
+            Style::default().fg(Color::White),
+            wrap_w,
+        ));
 
         if let Some(size) = &info.size {
             let size_n: u64 = size.parse().unwrap_or(0);
@@ -2361,22 +2429,21 @@ impl App {
         }
 
         if let Some(hash) = &info.hash {
-            lines.push(Line::from(vec![
-                Span::styled("  Hash:  ", Style::default().fg(Color::Cyan)),
-                Span::styled(hash.as_str(), Style::default().fg(Color::DarkGray)),
-            ]));
+            lines.extend(wrap_labeled_field(
+                "  Hash:  ", hash,
+                Style::default().fg(Color::Cyan),
+                Style::default().fg(Color::DarkGray),
+                wrap_w,
+            ));
         }
 
         if let Some(link) = &info.web_content_link {
-            let display = if link.len() > 60 {
-                format!("{}...", &link[..60])
-            } else {
-                link.clone()
-            };
-            lines.push(Line::from(vec![
-                Span::styled("  Link:  ", Style::default().fg(Color::Cyan)),
-                Span::styled(display, Style::default().fg(Color::Blue)),
-            ]));
+            lines.extend(wrap_labeled_field(
+                "  Link:  ", link,
+                Style::default().fg(Color::Cyan),
+                Style::default().fg(Color::Blue),
+                wrap_w,
+            ));
         }
 
         lines.push(Line::from(""));
@@ -2391,19 +2458,19 @@ impl App {
             (Color::Cyan, Color::Cyan)
         };
         let p = Paragraph::new(Text::from(lines)).block(
-            self.styled_block()
-                .title(format!(
-                    " \u{2139} Info: {} ",
-                    truncate_name(&info.name, 30)
-                ))
-                .title_style(
-                    Style::default()
-                        .fg(in_tc)
-                        .bg(Color::DarkGray)
-                        .add_modifier(Modifier::BOLD),
-                )
-                .border_style(Style::default().fg(in_bc)),
-        );
+                self.styled_block()
+                    .title(format!(
+                        " \u{2139} Info: {} ",
+                        truncate_name(&info.name, 30)
+                    ))
+                    .title_style(
+                        Style::default()
+                            .fg(in_tc)
+                            .bg(Color::DarkGray)
+                            .add_modifier(Modifier::BOLD),
+                    )
+                    .border_style(Style::default().fg(in_bc)),
+            );
         f.render_widget(p, area);
     }
 
@@ -2987,6 +3054,105 @@ impl App {
         );
         f.render_widget(p, area);
     }
+}
+
+/// Wrap a labeled field with hanging indent, CJK-aware.
+fn wrap_labeled_field<'a>(
+    label: &'a str,
+    value: &'a str,
+    label_style: Style,
+    value_style: Style,
+    total_width: usize,
+) -> Vec<Line<'a>> {
+    use unicode_width::UnicodeWidthChar;
+
+    let label_w: usize = label.chars().map(|c| UnicodeWidthChar::width(c).unwrap_or(0)).sum();
+    let first_line_budget = total_width.saturating_sub(label_w);
+    if first_line_budget == 0 {
+        return vec![Line::from(vec![
+            Span::styled(label, label_style),
+            Span::styled(value, value_style),
+        ])];
+    }
+
+    let cont_budget = total_width.saturating_sub(label_w);
+    let mut segments: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut current_w: usize = 0;
+    let mut first = true;
+    let mut last_break: Option<(usize, usize)> = None;
+
+    for ch in value.chars() {
+        let ch_w = UnicodeWidthChar::width(ch).unwrap_or(0);
+        let budget = if first { first_line_budget } else { cont_budget };
+
+        if current_w + ch_w > budget && !current.is_empty() {
+            if let Some((brk_byte, _)) = last_break {
+                if brk_byte < current.len() {
+                    let remainder = current[brk_byte..].to_string();
+                    current.truncate(brk_byte);
+                    segments.push(current.trim_end().to_string());
+                    current = remainder.trim_start().to_string();
+                    current_w = current.chars()
+                        .map(|c| UnicodeWidthChar::width(c).unwrap_or(0))
+                        .sum();
+                } else {
+                    segments.push(std::mem::take(&mut current));
+                    current_w = 0;
+                }
+            } else {
+                segments.push(std::mem::take(&mut current));
+                current_w = 0;
+            }
+            last_break = None;
+            if first {
+                first = false;
+            }
+            let new_budget = if first { first_line_budget } else { cont_budget };
+            if current_w + ch_w > new_budget && !current.is_empty() {
+                segments.push(std::mem::take(&mut current));
+                current_w = 0;
+                last_break = None;
+            }
+        }
+
+        // Word boundaries: after spaces, before CJK (width >= 2)
+        if ch == ' ' {
+            current.push(ch);
+            current_w += ch_w;
+            last_break = Some((current.len(), current_w));
+        } else if ch_w >= 2 {
+            last_break = Some((current.len(), current_w));
+            current.push(ch);
+            current_w += ch_w;
+        } else {
+            current.push(ch);
+            current_w += ch_w;
+        }
+    }
+    if !current.is_empty() {
+        segments.push(current);
+    }
+
+    let indent: String = " ".repeat(label_w);
+    let mut result = Vec::with_capacity(segments.len());
+    for (i, seg) in segments.into_iter().enumerate() {
+        if i == 0 {
+            result.push(Line::from(vec![
+                Span::styled(label, label_style),
+                Span::styled(seg, value_style),
+            ]));
+        } else {
+            result.push(Line::from(vec![
+                Span::raw(indent.clone()),
+                Span::styled(seg, value_style),
+            ]));
+        }
+    }
+    if result.is_empty() {
+        result.push(Line::from(Span::styled(label, label_style)));
+    }
+    result
 }
 
 fn truncate_name(name: &str, max_len: usize) -> String {
