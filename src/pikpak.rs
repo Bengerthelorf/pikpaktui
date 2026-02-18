@@ -246,26 +246,34 @@ impl PikPak {
         );
 
         let filters = r#"{"trashed":{"eq":false}}"#;
-        let mut rb = self.http.get(&url).bearer_auth(&token).query(&[
-            ("parent_id", parent_id),
-            ("limit", "500"),
-            ("filters", filters),
-            ("thumbnail_size", "SIZE_MEDIUM"),
-        ]);
-        rb = self.authed_headers(rb);
+        let mut all_entries: Vec<Entry> = Vec::new();
+        let mut page_token: Option<String> = None;
 
-        let response = rb.send().context("ls request failed")?;
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().unwrap_or_default();
-            return Err(anyhow!("ls failed ({}): {}", status, sanitize(&body)));
-        }
+        loop {
+            let mut rb = self.http.get(&url).bearer_auth(&token).query(&[
+                ("parent_id", parent_id),
+                ("limit", "500"),
+                ("filters", filters),
+                ("thumbnail_size", "SIZE_MEDIUM"),
+            ]);
+            if let Some(ref pt) = page_token {
+                rb = rb.query(&[("page_token", pt.as_str())]);
+            }
+            rb = self.authed_headers(rb);
 
-        let payload: DriveListResponse = response.json().context("invalid ls json")?;
-        let entries = payload
-            .files
-            .into_iter()
-            .map(|f| {
+            let response = rb.send().context("ls request failed")?;
+            let status = response.status();
+            if !status.is_success() {
+                let body = response.text().unwrap_or_default();
+                return Err(anyhow!("ls failed ({}): {}", status, sanitize(&body)));
+            }
+
+            let payload: DriveListResponse = response.json().context("invalid ls json")?;
+            let next = payload
+                .next_page_token
+                .filter(|t| !t.is_empty());
+
+            all_entries.extend(payload.files.into_iter().map(|f| {
                 let starred = f.is_starred();
                 Entry {
                     id: f.id,
@@ -280,9 +288,15 @@ impl PikPak {
                     starred,
                     thumbnail_link: f.thumbnail_link,
                 }
-            })
-            .collect();
-        Ok(entries)
+            }));
+
+            match next {
+                Some(t) => page_token = Some(t),
+                None => break,
+            }
+        }
+
+        Ok(all_entries)
     }
 
     pub fn ls_trash(&self, limit: u32) -> Result<Vec<Entry>> {
@@ -1510,6 +1524,8 @@ struct CaptchaInitResponse {
 struct DriveListResponse {
     #[serde(default)]
     files: Vec<DriveFile>,
+    #[serde(default)]
+    next_page_token: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -1873,5 +1889,37 @@ mod tests {
     fn md5_basic() {
         assert_eq!(md5_hex(""), "d41d8cd98f00b204e9800998ecf8427e");
         assert_eq!(md5_hex("abc"), "900150983cd24fb0d6963f7d28e17f72");
+    }
+
+    // --- Pagination: confirm DriveListResponse captures next_page_token ---
+
+    #[test]
+    fn drive_list_response_captures_next_page_token() {
+        let json = r#"{
+            "files": [
+                {"id":"abc","name":"foo.txt","kind":"drive#file"}
+            ],
+            "next_page_token": "page2token"
+        }"#;
+        let resp: DriveListResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.next_page_token, Some("page2token".to_string()));
+        assert_eq!(resp.files.len(), 1);
+    }
+
+    #[test]
+    fn drive_list_response_no_token_on_last_page() {
+        // When no next_page_token is present, field should be None
+        let json = r#"{"files": []}"#;
+        let resp: DriveListResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.next_page_token, None);
+    }
+
+    #[test]
+    fn drive_list_response_empty_token_treated_as_none() {
+        // PikPak sometimes returns "" instead of omitting the field
+        let json = r#"{"files": [], "next_page_token": ""}"#;
+        let resp: DriveListResponse = serde_json::from_str(json).unwrap();
+        // empty string → should normalise to None in pagination logic
+        assert!(resp.next_page_token.as_deref().unwrap_or("").is_empty());
     }
 }

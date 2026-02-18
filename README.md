@@ -35,6 +35,7 @@ A TUI and CLI client for [PikPak](https://mypikpak.com) cloud storage, written i
 - **Pure Rust** — Built with `ratatui` + `crossterm` + `reqwest` (rustls-tls), no OpenSSL or C dependencies
 - **Persistent sessions** — Login once, session auto-refreshes via token refresh
 - **Cross-platform** — Linux (x86_64 musl static), macOS Intel, macOS Apple Silicon
+- **Full pagination** — Directories with more than 500 files are fully loaded via automatic page iteration (no silent truncation)
 
 ## Install
 
