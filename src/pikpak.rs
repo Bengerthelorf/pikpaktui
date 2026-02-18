@@ -822,6 +822,69 @@ impl PikPak {
         Ok(entries)
     }
 
+    // --- Search ---
+
+    /// Search files by name keyword across the entire drive (not trashed).
+    pub fn search_files(&self, query: &str) -> Result<Vec<Entry>> {
+        let token = self.access_token()?;
+        let url = format!(
+            "{}/drive/v1/files",
+            self.drive_base_url.trim_end_matches('/')
+        );
+
+        let q = build_search_query(query);
+        let filters = r#"{"trashed":{"eq":false}}"#;
+        let mut all_entries: Vec<Entry> = Vec::new();
+        let mut page_token: Option<String> = None;
+
+        loop {
+            let mut rb = self.http.get(&url).bearer_auth(&token).query(&[
+                ("q", q.as_str()),
+                ("limit", "100"),
+                ("filters", filters),
+                ("thumbnail_size", "SIZE_MEDIUM"),
+            ]);
+            if let Some(ref pt) = page_token {
+                rb = rb.query(&[("page_token", pt.as_str())]);
+            }
+            rb = self.authed_headers(rb);
+
+            let response = rb.send().context("search request failed")?;
+            let status = response.status();
+            if !status.is_success() {
+                let body = response.text().unwrap_or_default();
+                return Err(anyhow!("search failed ({}): {}", status, sanitize(&body)));
+            }
+
+            let payload: DriveListResponse = response.json().context("invalid search json")?;
+            let next = payload.next_page_token.filter(|t| !t.is_empty());
+
+            all_entries.extend(payload.files.into_iter().map(|f| {
+                let starred = f.is_starred();
+                Entry {
+                    id: f.id,
+                    name: f.name,
+                    kind: if f.kind.contains("folder") {
+                        EntryKind::Folder
+                    } else {
+                        EntryKind::File
+                    },
+                    size: f.size.unwrap_or(0),
+                    created_time: f.created_time.unwrap_or_default(),
+                    starred,
+                    thumbnail_link: f.thumbnail_link,
+                }
+            }));
+
+            match next {
+                Some(t) => page_token = Some(t),
+                None => break,
+            }
+        }
+
+        Ok(all_entries)
+    }
+
     // --- Events ---
 
     /// Get recent file events (recently added files).
@@ -1870,6 +1933,13 @@ where
     deserializer.deserialize_any(U64Visitor)
 }
 
+/// Build a PikPak search query string for name-based search.
+/// PikPak uses Google Drive-style query language: `name contains 'keyword'`.
+fn build_search_query(keyword: &str) -> String {
+    let escaped = keyword.replace('\'', "\\'");
+    format!("name contains '{}'", escaped)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1889,6 +1959,33 @@ mod tests {
     fn md5_basic() {
         assert_eq!(md5_hex(""), "d41d8cd98f00b204e9800998ecf8427e");
         assert_eq!(md5_hex("abc"), "900150983cd24fb0d6963f7d28e17f72");
+    }
+
+    // --- Search query building ---
+
+    #[test]
+    fn search_query_format_basic() {
+        let q = build_search_query("avatar");
+        assert_eq!(q, "name contains 'avatar'");
+    }
+
+    #[test]
+    fn search_query_escapes_single_quotes() {
+        let q = build_search_query("don't");
+        assert_eq!(q, "name contains 'don\\'t'");
+    }
+
+    #[test]
+    fn search_results_deserialize() {
+        let json = r#"{
+            "files": [
+                {"id":"1","name":"Avatar.mkv","kind":"drive#file","size":"4000000000"}
+            ]
+        }"#;
+        let resp: DriveListResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.files.len(), 1);
+        assert_eq!(resp.files[0].name, "Avatar.mkv");
+        assert_eq!(resp.files[0].size, Some(4_000_000_000u64));
     }
 
     // --- Pagination: confirm DriveListResponse captures next_page_token ---
