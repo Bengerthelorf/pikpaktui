@@ -69,9 +69,9 @@ _pikpaktui() {
         'mv:Move a file or folder'
         'cp:Copy a file or folder'
         'rename:Rename a file or folder'
-        'rm:Remove to trash (-f permanent delete)'
-        'mkdir:Create a new folder'
-        'download:Download a file to local disk'
+        'rm:Remove to trash (-r folder, -f permanent)'
+        'mkdir:Create folder (-p recursive)'
+        'download:Download a file (-o output path)'
         'upload:Upload a local file to cloud'
         'share:Share file(s) as PikPak links'
         'offline:Cloud download a URL or magnet link'
@@ -118,21 +118,25 @@ _pikpaktui() {
             ;;
         rm)
             if [[ "${words[CURRENT]}" == -* ]]; then
-                compadd -- '-f'
+                compadd -- '-r' '-f' '-rf' '-fr'
             else
                 _pikpaktui_cloud_path
             fi
             ;;
         mkdir)
-            if (( CURRENT == 3 )); then
+            if [[ "${words[CURRENT]}" == -* ]]; then
+                compadd -- '-p'
+            else
                 _pikpaktui_cloud_path
             fi
             ;;
         download)
-            if (( CURRENT == 3 )); then
-                _pikpaktui_cloud_path
-            elif (( CURRENT == 4 )); then
+            if [[ "${words[CURRENT]}" == -* ]]; then
+                compadd -- '-o'
+            elif [[ "${words[CURRENT-1]}" == "-o" ]]; then
                 _files
+            else
+                _pikpaktui_cloud_path
             fi
             ;;
         upload)

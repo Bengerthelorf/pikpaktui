@@ -20,7 +20,7 @@ A TUI and CLI client for [PikPak](https://mypikpak.com) cloud storage, written i
 - **Cart & batch download** — Add files to cart, batch download with pause/resume/cancel, HTTP Range resume for interrupted transfers, download state persisted across sessions
 - **Download dashboard** — Collapsed popup or expanded full-screen view with braille-character network activity graph, per-file progress, speed, ETA
 - **Offline download** — Submit URLs/magnets for PikPak cloud download, view and manage tasks
-- **Trash view** — Browse trashed files in collapsed overlay or expanded full-screen, restore or permanently delete, with file info preview
+- **Trash view** — Browse trashed files in collapsed overlay or expanded full-screen, restore or permanently delete
 - **Sorting** — eza-style `--sort` support (name, size, created, type, extension, none) with `--reverse`; TUI keybindings `S`/`R` to cycle sort field and toggle order, persisted in config
 - **Interactive settings** — In-app settings editor (`,`), custom RGB colors per file category, per-terminal image protocol configuration, sort settings
 - **Mouse support** — Click to select, double-click to open, scroll wheel navigation
@@ -93,7 +93,9 @@ What gets completed:
 | `pikpaktui download /cloud<Tab> ./<Tab>` | Cloud path, then local path |
 | `pikpaktui upload ./<Tab> /<Tab>` | Local path, then cloud path |
 | `pikpaktui tasks <Tab>` | `list`, `retry`, `delete` subcommands |
-| `pikpaktui rm -<Tab>` | `-f` flag |
+| `pikpaktui rm -<Tab>` | `-r`, `-f`, `-rf`, `-fr` |
+| `pikpaktui mkdir -<Tab>` | `-p` flag |
+| `pikpaktui download -<Tab>` | `-o` flag |
 | `pikpaktui info /path<Tab>` | Cloud path completion |
 | `pikpaktui cat /path<Tab>` | Cloud path completion |
 | `pikpaktui play /path<Tab>` | Cloud path completion |
@@ -123,9 +125,11 @@ pikpaktui ls -s created "/My Pack"                    # Sort by creation time, n
 pikpaktui mv "/My Pack/file.txt" /Archive             # Move file
 pikpaktui cp "/My Pack/file.txt" /Backup              # Copy file
 pikpaktui rename "/My Pack/old.txt" new.txt           # Rename
-pikpaktui rm "/My Pack/file.txt"                      # Delete (to trash)
-pikpaktui rm -f "/My Pack/file.txt"                   # Delete permanently
+pikpaktui rm "/My Pack/file.txt"                      # Delete file (to trash)
+pikpaktui rm -r "/My Pack/folder"                     # Delete folder (to trash)
+pikpaktui rm -rf "/My Pack/folder"                    # Delete folder permanently
 pikpaktui mkdir "/My Pack" newfolder                  # Create folder
+pikpaktui mkdir -p "/My Pack/a/b/c"                   # Create nested folders recursively
 pikpaktui info "/My Pack/video.mp4"                   # Detailed file info (media metadata)
 pikpaktui cat "/My Pack/notes.txt"                    # Preview text file contents
 
@@ -142,6 +146,7 @@ pikpaktui untrash "file.txt"                          # Restore file from trash
 # Transfer
 pikpaktui download "/My Pack/file.txt"                # Download to current dir
 pikpaktui download "/My Pack/file.txt" /tmp/file.txt  # Download to specific path
+pikpaktui download -o output.mp4 "/My Pack/video.mp4" # Download with custom output name
 pikpaktui upload ./local-file.txt "/My Pack"          # Upload (dedup + resumable)
 pikpaktui share "/My Pack/file.txt"                   # Print PikPak share links
 pikpaktui share "/My Pack" -o links.txt               # Save folder share links to file
@@ -247,7 +252,6 @@ CLI mode requires login: it checks for a valid session first, then falls back to
 | `Enter` | Toggle collapsed / expanded |
 | `u` | Restore (untrash) |
 | `x` | Permanent delete |
-| `Space` | File info (expanded mode) |
 | `r` | Refresh |
 | `Esc` | Close (or collapse) |
 

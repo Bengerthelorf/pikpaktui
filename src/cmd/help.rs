@@ -52,8 +52,8 @@ pub fn run() -> Result<()> {
         ("mv <src> <dst>",           "Move a file or folder"),
         ("cp <src> <dst>",           "Copy a file or folder"),
         ("rename <path> <new_name>", "Rename a file or folder"),
-        ("rm [-f] <path>",           "Remove to trash (-f permanent delete)"),
-        ("mkdir <parent> <name>",    "Create a new folder"),
+        ("rm [-r] [-f] <path>",      "Remove to trash (-r folder, -f permanent)"),
+        ("mkdir [-p] <parent> <name>","Create folder (-p recursive)"),
         ("info <path>",             "Show detailed file/folder info"),
         ("cat <path>",              "Preview text file contents"),
     ];
@@ -71,7 +71,7 @@ pub fn run() -> Result<()> {
     // Transfer
     println!("  {MAGENTA}{BOLD}Transfer{RESET}");
     let transfer_cmds: &[(&str, &str)] = &[
-        ("download <path> [local]",  "Download a file to local disk"),
+        ("download [-o out] <path>", "Download a file (-o output path)"),
         ("upload <local> [remote]",  "Upload a local file to cloud"),
         ("share <path> [-o file]",   "Share file(s) as PikPak links"),
     ];
