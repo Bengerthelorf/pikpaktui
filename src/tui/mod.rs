@@ -102,7 +102,6 @@ enum OpResult {
     PlayPickerInfo(Result<(FileInfoResponse, Vec<PlayOption>)>),
     TrashList(Result<Vec<Entry>>),
     TrashOp(String),
-    TrashInfo(Result<FileInfoResponse>),
 }
 
 struct PickerState {
@@ -685,7 +684,7 @@ impl App {
                 }
                 OpResult::TrashList(Err(e)) => {
                     self.finish_loading();
-                    if matches!(self.input, InputMode::InfoLoading) {
+                    if matches!(self.input, InputMode::TrashView { .. }) {
                         self.input = InputMode::Normal;
                     }
                     self.push_log(format!("Failed to load trash: {e:#}"));
@@ -694,23 +693,6 @@ impl App {
                     self.finish_loading();
                     self.push_log(msg);
                     self.open_trash_view_preserve();
-                }
-                OpResult::TrashInfo(Ok(info)) => {
-                    self.finish_loading();
-                    if matches!(self.input, InputMode::InfoLoading) {
-                        self.input = InputMode::InfoView { info };
-                    }
-                }
-                OpResult::TrashInfo(Err(e)) => {
-                    self.finish_loading();
-                    if matches!(self.input, InputMode::InfoLoading) {
-                        self.input = InputMode::TrashView {
-                            entries: std::mem::take(&mut self.trash_entries),
-                            selected: self.trash_selected,
-                            expanded: self.trash_expanded,
-                        };
-                    }
-                    self.push_log(format!("Trash file info failed: {e:#}"));
                 }
             }
         }
@@ -901,8 +883,13 @@ impl App {
     }
 
     fn open_trash_view_preserve(&mut self) {
-        self.input = InputMode::InfoLoading;
+        self.input = InputMode::TrashView {
+            entries: self.trash_entries.clone(),
+            selected: self.trash_selected,
+            expanded: self.trash_expanded,
+        };
         self.loading = true;
+        self.loading_label = Some("Loading trash...".into());
         let client = Arc::clone(&self.client);
         let tx = self.result_tx.clone();
         std::thread::spawn(move || {

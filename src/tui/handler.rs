@@ -1603,7 +1603,11 @@ impl App {
         self.trash_entries.clear();
         self.trash_selected = 0;
         self.trash_expanded = false;
-        self.input = InputMode::InfoLoading;
+        self.input = InputMode::TrashView {
+            entries: vec![],
+            selected: 0,
+            expanded: false,
+        };
         self.loading = true;
         self.loading_label = Some("Loading trash...".into());
         let client = Arc::clone(&self.client);
@@ -1620,6 +1624,18 @@ impl App {
         selected: &mut usize,
         expanded: bool,
     ) {
+        // While loading, only allow Esc to cancel
+        if self.loading {
+            if matches!(code, KeyCode::Esc) {
+                self.finish_loading();
+            }
+            self.input = InputMode::TrashView {
+                entries: std::mem::take(entries),
+                selected: *selected,
+                expanded,
+            };
+            return;
+        }
         match code {
             KeyCode::Esc => {
                 if expanded {
@@ -1675,7 +1691,11 @@ impl App {
                     self.trash_entries = std::mem::take(entries);
                     self.trash_selected = *selected;
                     self.trash_expanded = expanded;
-                    self.input = InputMode::InfoLoading;
+                    self.input = InputMode::TrashView {
+                        entries: self.trash_entries.clone(),
+                        selected: *selected,
+                        expanded,
+                    };
                     self.loading = true;
                     self.loading_label = Some("Restoring...".into());
                     std::thread::spawn(move || {
@@ -1701,7 +1721,11 @@ impl App {
                     self.trash_entries = std::mem::take(entries);
                     self.trash_selected = *selected;
                     self.trash_expanded = expanded;
-                    self.input = InputMode::InfoLoading;
+                    self.input = InputMode::TrashView {
+                        entries: self.trash_entries.clone(),
+                        selected: *selected,
+                        expanded,
+                    };
                     self.loading = true;
                     self.loading_label = Some("Deleting...".into());
                     std::thread::spawn(move || {
@@ -1723,23 +1747,7 @@ impl App {
                 };
             }
             KeyCode::Char(' ') => {
-                if expanded {
-                    if let Some(entry) = entries.get(*selected) {
-                        let client = Arc::clone(&self.client);
-                        let tx = self.result_tx.clone();
-                        let eid = entry.id.clone();
-                        self.trash_entries = std::mem::take(entries);
-                        self.trash_selected = *selected;
-                        self.trash_expanded = expanded;
-                        self.input = InputMode::InfoLoading;
-                        self.loading = true;
-                        self.loading_label = Some("Loading file info...".into());
-                        std::thread::spawn(move || {
-                            let _ = tx.send(OpResult::TrashInfo(client.file_info(&eid)));
-                        });
-                        return;
-                    }
-                }
+                // file_info API does not work for trashed files (returns file_in_recycle_bin)
                 self.input = InputMode::TrashView {
                     entries: std::mem::take(entries),
                     selected: *selected,
@@ -1761,7 +1769,11 @@ impl App {
     }
 
     fn open_trash_view_preserve_expanded(&mut self) {
-        self.input = InputMode::InfoLoading;
+        self.input = InputMode::TrashView {
+            entries: self.trash_entries.clone(),
+            selected: self.trash_selected,
+            expanded: self.trash_expanded,
+        };
         self.loading = true;
         self.loading_label = Some("Loading trash...".into());
         let client = Arc::clone(&self.client);

@@ -406,7 +406,15 @@ impl App {
                 entries,
                 selected,
                 expanded: true,
-            } => self.draw_trash_view(f, entries, *selected, true),
+            } => {
+                if self.loading {
+                    // Show trash view as context background, with loading overlay on top
+                    self.draw_trash_view(f, entries, *selected, true);
+                    self.draw_info_loading_overlay(f);
+                } else {
+                    self.draw_trash_view(f, entries, *selected, true);
+                }
+            }
             _ => self.draw_main(f),
         }
     }
@@ -1205,7 +1213,6 @@ impl App {
                         ("j/k", "nav"),
                         ("u", "restore"),
                         ("x", "delete"),
-                        ("Space", "info"),
                         ("r", "refresh"),
                         ("Enter", "collapse"),
                         ("Esc", "close"),
@@ -1520,7 +1527,12 @@ impl App {
                 selected,
                 expanded,
             } => {
-                self.draw_trash_view(f, entries, *selected, *expanded);
+                if self.loading {
+                    // Non-expanded: loading overlay only, avoid stacking two popups
+                    self.draw_info_loading_overlay(f);
+                } else {
+                    self.draw_trash_view(f, entries, *selected, *expanded);
+                }
             }
             InputMode::InfoLoading => {
                 self.draw_info_loading_overlay(f);
