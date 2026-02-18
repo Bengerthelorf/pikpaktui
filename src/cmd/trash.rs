@@ -1,13 +1,23 @@
-use crate::pikpak::EntryKind;
 use anyhow::Result;
 
 pub fn run(args: &[String]) -> Result<()> {
     let client = super::cli_client()?;
+    let config = super::cli_config();
+    let nerd_font = config.cli_nerd_font;
 
-    let limit = args
-        .first()
-        .and_then(|s| s.parse::<u32>().ok())
-        .unwrap_or(100);
+    let mut long = false;
+    let mut limit = 100u32;
+
+    for arg in args {
+        match arg.as_str() {
+            "-l" | "--long" => long = true,
+            _ => {
+                if let Ok(n) = arg.parse::<u32>() {
+                    limit = n;
+                }
+            }
+        }
+    }
 
     let entries = client.ls_trash(limit)?;
 
@@ -16,17 +26,10 @@ pub fn run(args: &[String]) -> Result<()> {
         return Ok(());
     }
 
-    for e in &entries {
-        let icon = match e.kind {
-            EntryKind::Folder => "\u{1f4c1}",
-            EntryKind::File => "\u{1f4c4}",
-        };
-        let size = if e.kind == EntryKind::File {
-            super::format_size(e.size)
-        } else {
-            String::new()
-        };
-        println!("{} {:>10}  {}", icon, size, e.name);
+    if long {
+        super::print_entries_long(&entries, nerd_font);
+    } else {
+        super::print_entries_short(&entries, nerd_font);
     }
 
     Ok(())

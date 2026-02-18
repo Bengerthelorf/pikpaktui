@@ -1,9 +1,6 @@
 use anyhow::{Result, anyhow};
-use unicode_width::UnicodeWidthStr;
 
 use crate::config::SortField;
-use crate::pikpak::{self, EntryKind};
-use crate::theme;
 
 const USAGE: &str = "Usage: pikpaktui ls [-l|--long] [-s|--sort=<field>] [-r|--reverse] [path]\n\nSort fields: name, size, created, type, extension, none";
 
@@ -95,18 +92,6 @@ fn parse_args(args: &[String]) -> Result<LsArgs> {
     })
 }
 
-fn format_date(iso: &str) -> String {
-    // Input like "2026-01-15T12:30:45.000Z" -> "2026-01-15 12:30"
-    if iso.len() >= 16 {
-        let s = iso.replace('T', " ");
-        s[..16].to_string()
-    } else if iso.is_empty() {
-        "-".to_string()
-    } else {
-        iso.to_string()
-    }
-}
-
 pub fn run(args: &[String]) -> Result<()> {
     let parsed = parse_args(args)?;
     let config = super::cli_config();
@@ -122,91 +107,18 @@ pub fn run(args: &[String]) -> Result<()> {
     }
 
     if parsed.long {
-        print_long(&entries, nerd_font);
+        super::print_entries_long(&entries, nerd_font);
     } else {
-        print_short(&entries, nerd_font);
+        super::print_entries_short(&entries, nerd_font);
     }
 
     Ok(())
 }
 
-fn print_short(entries: &[pikpak::Entry], nerd_font: bool) {
-    let term_width = crossterm::terminal::size()
-        .map(|(w, _)| w as usize)
-        .unwrap_or(80);
-
-    // Calculate display width of each entry (icon + name)
-    let display_widths: Vec<usize> = entries
-        .iter()
-        .map(|e| {
-            let cat = theme::categorize(e);
-            let icon = theme::cli_icon(cat, nerd_font);
-            UnicodeWidthStr::width(icon) + UnicodeWidthStr::width(e.name.as_str())
-        })
-        .collect();
-
-    let max_width = display_widths.iter().copied().max().unwrap_or(1);
-    let col_width = max_width + 2; // 2 chars gap
-    let num_cols = (term_width / col_width).max(1);
-    let num_rows = (entries.len() + num_cols - 1) / num_cols;
-
-    // Column-major order: fill top-to-bottom, then left-to-right
-    for row in 0..num_rows {
-        for col in 0..num_cols {
-            let idx = col * num_rows + row;
-            if idx >= entries.len() {
-                break;
-            }
-
-            let e = &entries[idx];
-            let cat = theme::categorize(e);
-            let icon = theme::cli_icon(cat, nerd_font);
-            let display = format!("{}{}", icon, e.name);
-            let colored = theme::cli_colored(&display, cat);
-
-            let is_last_col = col + 1 == num_cols || (col + 1) * num_rows + row >= entries.len();
-            if is_last_col {
-                print!("{}", colored);
-            } else {
-                let padding = col_width.saturating_sub(display_widths[idx]);
-                print!("{}{}", colored, " ".repeat(padding));
-            }
-        }
-        println!();
-    }
-}
-
-fn print_long(entries: &[pikpak::Entry], nerd_font: bool) {
-    for e in entries {
-        let cat = theme::categorize(e);
-        let icon = theme::cli_icon(cat, nerd_font);
-
-        let size_str = if e.kind == EntryKind::Folder {
-            format!("{:>8}", "-")
-        } else {
-            format!("{:>8}", super::format_size(e.size))
-        };
-
-        let date = format_date(&e.created_time);
-        let name_display = format!("{}{}", icon, e.name);
-        let colored_name = theme::cli_colored(&name_display, cat);
-
-        // eza-style: dim id, bold green size, blue date
-        let colored_id = format!("\x1b[2m{}\x1b[0m", e.id);
-        let colored_size = format!("\x1b[1;32m{}\x1b[0m", size_str);
-        let padded_date = format!("{:16}", date);
-        let colored_date = format!("\x1b[34m{}\x1b[0m", padded_date);
-
-        println!(
-            "{}  {}  {}  {}",
-            colored_id, colored_size, colored_date, colored_name
-        );
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{LsArgs, format_date, parse_args};
+    use super::{LsArgs, parse_args};
+    use super::super::format_date;
     use crate::config::SortField;
 
     fn s(v: &[&str]) -> Vec<String> {

@@ -72,6 +72,93 @@ pub fn find_entry(client: &PikPak, parent_id: &str, name: &str) -> Result<pikpak
         .ok_or_else(|| anyhow!("'{}' not found", name))
 }
 
+/// eza-style grid output (column-major) for a list of entries.
+pub fn print_entries_short(entries: &[pikpak::Entry], nerd_font: bool) {
+    use crate::theme;
+    use unicode_width::UnicodeWidthStr;
+
+    let term_width = crossterm::terminal::size()
+        .map(|(w, _)| w as usize)
+        .unwrap_or(80);
+
+    let display_widths: Vec<usize> = entries
+        .iter()
+        .map(|e| {
+            let cat = theme::categorize(e);
+            let icon = theme::cli_icon(cat, nerd_font);
+            UnicodeWidthStr::width(icon) + UnicodeWidthStr::width(e.name.as_str())
+        })
+        .collect();
+
+    let max_width = display_widths.iter().copied().max().unwrap_or(1);
+    let col_width = max_width + 2;
+    let num_cols = (term_width / col_width).max(1);
+    let num_rows = (entries.len() + num_cols - 1) / num_cols;
+
+    for row in 0..num_rows {
+        for col in 0..num_cols {
+            let idx = col * num_rows + row;
+            if idx >= entries.len() {
+                break;
+            }
+            let e = &entries[idx];
+            let cat = theme::categorize(e);
+            let icon = theme::cli_icon(cat, nerd_font);
+            let display = format!("{}{}", icon, e.name);
+            let colored = theme::cli_colored(&display, cat);
+            let is_last_col = col + 1 == num_cols || (col + 1) * num_rows + row >= entries.len();
+            if is_last_col {
+                print!("{}", colored);
+            } else {
+                let padding = col_width.saturating_sub(display_widths[idx]);
+                print!("{}{}", colored, " ".repeat(padding));
+            }
+        }
+        println!();
+    }
+}
+
+/// eza-style long format output: id, size, date, icon+name.
+pub fn print_entries_long(entries: &[pikpak::Entry], nerd_font: bool) {
+    use crate::theme;
+
+    for e in entries {
+        let cat = theme::categorize(e);
+        let icon = theme::cli_icon(cat, nerd_font);
+
+        let size_str = if e.kind == pikpak::EntryKind::Folder {
+            format!("{:>8}", "-")
+        } else {
+            format!("{:>8}", format_size(e.size))
+        };
+
+        let date = format_date(&e.created_time);
+        let name_display = format!("{}{}", icon, e.name);
+        let colored_name = theme::cli_colored(&name_display, cat);
+
+        let colored_id = format!("\x1b[2m{}\x1b[0m", e.id);
+        let colored_size = format!("\x1b[1;32m{}\x1b[0m", size_str);
+        let padded_date = format!("{:16}", date);
+        let colored_date = format!("\x1b[34m{}\x1b[0m", padded_date);
+
+        println!(
+            "{}  {}  {}  {}",
+            colored_id, colored_size, colored_date, colored_name
+        );
+    }
+}
+
+pub fn format_date(iso: &str) -> String {
+    if iso.len() >= 16 {
+        let s = iso.replace('T', " ");
+        s[..16].to_string()
+    } else if iso.is_empty() {
+        "-".to_string()
+    } else {
+        iso.to_string()
+    }
+}
+
 pub fn format_size(bytes: u64) -> String {
     const KB: u64 = 1024;
     const MB: u64 = 1024 * KB;
