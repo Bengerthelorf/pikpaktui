@@ -1624,7 +1624,6 @@ impl App {
         selected: &mut usize,
         expanded: bool,
     ) {
-        // While loading, only allow Esc to cancel
         if self.loading {
             if matches!(code, KeyCode::Esc) {
                 self.finish_loading();
@@ -1747,7 +1746,6 @@ impl App {
                 };
             }
             KeyCode::Char(' ') => {
-                // file_info API does not work for trashed files (returns file_in_recycle_bin)
                 self.input = InputMode::TrashView {
                     entries: std::mem::take(entries),
                     selected: *selected,

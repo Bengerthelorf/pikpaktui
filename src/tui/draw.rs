@@ -408,7 +408,6 @@ impl App {
                 expanded: true,
             } => {
                 if self.loading {
-                    // Show trash view as context background, with loading overlay on top
                     self.draw_trash_view(f, entries, *selected, true);
                     self.draw_info_loading_overlay(f);
                 } else {
@@ -1528,7 +1527,6 @@ impl App {
                 expanded,
             } => {
                 if self.loading {
-                    // Non-expanded: loading overlay only, avoid stacking two popups
                     self.draw_info_loading_overlay(f);
                 } else {
                     self.draw_trash_view(f, entries, *selected, *expanded);
