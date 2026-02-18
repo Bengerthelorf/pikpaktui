@@ -102,6 +102,7 @@ enum OpResult {
     PlayPickerInfo(Result<(FileInfoResponse, Vec<PlayOption>)>),
     TrashList(Result<Vec<Entry>>),
     TrashOp(String),
+    InfoThumbnail(Result<image::DynamicImage>),
 }
 
 struct PickerState {
@@ -168,6 +169,7 @@ enum InputMode {
     InfoLoading,
     InfoView {
         info: FileInfoResponse,
+        image: Option<image::DynamicImage>,
     },
     InfoFolderView {
         name: String,
@@ -499,7 +501,19 @@ impl App {
                 OpResult::Info(Ok(info)) => {
                     self.finish_loading();
                     if matches!(self.input, InputMode::InfoLoading) {
-                        self.input = InputMode::InfoView { info };
+                        let thumb_url = info.thumbnail_link.clone();
+                        self.input = InputMode::InfoView { info, image: None };
+                        if let Some(url) = thumb_url {
+                            if !url.is_empty() {
+                                let client = Arc::clone(&self.client);
+                                let tx = self.result_tx.clone();
+                                std::thread::spawn(move || {
+                                    let _ = tx.send(OpResult::InfoThumbnail(
+                                        fetch_and_render_thumbnail(&url, &client),
+                                    ));
+                                });
+                            }
+                        }
                     }
                 }
                 OpResult::Info(Err(e)) => {
@@ -693,6 +707,14 @@ impl App {
                     self.finish_loading();
                     self.push_log(msg);
                     self.open_trash_view_preserve();
+                }
+                OpResult::InfoThumbnail(Ok(img)) => {
+                    if let InputMode::InfoView { ref mut image, .. } = self.input {
+                        *image = Some(img);
+                    }
+                }
+                OpResult::InfoThumbnail(Err(e)) => {
+                    self.push_log(format!("Info thumbnail failed: {e:#}"));
                 }
             }
         }

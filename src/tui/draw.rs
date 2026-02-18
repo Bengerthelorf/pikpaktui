@@ -415,14 +415,14 @@ impl App {
                     self.draw_trash_view(f, entries, *selected, true);
                 }
             }
-            InputMode::InfoView { info } if !self.trash_entries.is_empty() => {
+            InputMode::InfoView { info, image } if !self.trash_entries.is_empty() => {
                 self.draw_trash_view(
                     f,
                     &self.trash_entries,
                     self.trash_selected,
                     self.trash_expanded,
                 );
-                self.draw_info_overlay(f, info);
+                self.draw_info_overlay(f, info, image.as_ref());
             }
             _ => self.draw_main(f),
         }
@@ -1579,8 +1579,8 @@ impl App {
             InputMode::InfoLoading => {
                 self.draw_info_loading_overlay(f);
             }
-            InputMode::InfoView { info } => {
-                self.draw_info_overlay(f, info);
+            InputMode::InfoView { info, image } => {
+                self.draw_info_overlay(f, info, image.as_ref());
             }
             InputMode::InfoFolderView { name, entries } => {
                 self.draw_info_folder_overlay(f, name, entries);
@@ -2457,8 +2457,18 @@ impl App {
 
     // --- Info overlay (show_preview=false) ---
 
-    fn draw_info_overlay(&self, f: &mut Frame, info: &crate::pikpak::FileInfoResponse) {
-        let area = centered_rect(65, 40, f.area());
+    fn draw_info_overlay(
+        &self,
+        f: &mut Frame,
+        info: &crate::pikpak::FileInfoResponse,
+        image: Option<&image::DynamicImage>,
+    ) {
+        let has_thumb = info.thumbnail_link.as_ref().is_some_and(|u| !u.is_empty());
+        let area = if has_thumb {
+            centered_rect(65, 75, f.area())
+        } else {
+            centered_rect(65, 40, f.area())
+        };
         f.render_widget(Clear, area);
 
         let wrap_w = area.width.saturating_sub(2) as usize;
@@ -2531,15 +2541,6 @@ impl App {
             ));
         }
 
-        if let Some(thumb) = &info.thumbnail_link {
-            lines.extend(wrap_labeled_field(
-                "  Thumb: ", thumb,
-                Style::default().fg(Color::Cyan),
-                Style::default().fg(Color::Blue),
-                wrap_w,
-            ));
-        }
-
         if let Some(entry) = self.entries.get(self.selected) {
             let mut markers = Vec::new();
             if entry.starred {
@@ -2570,21 +2571,146 @@ impl App {
         } else {
             (Color::Cyan, Color::Cyan)
         };
-        let p = Paragraph::new(Text::from(lines)).block(
+
+        let title = format!(" \u{2139} Info: {} ", truncate_name(&info.name, 30));
+        let title_style = Style::default()
+            .fg(in_tc)
+            .bg(Color::DarkGray)
+            .add_modifier(Modifier::BOLD);
+        let border_style = Style::default().fg(in_bc);
+
+        if has_thumb {
+            use crate::config::ThumbnailRenderMode;
+            use ratatui_image::{picker::{Picker, ProtocolType}, StatefulImage};
+
+            let inner_w = area.width.saturating_sub(2);
+            let inner_h = area.height.saturating_sub(2);
+            let text_height = lines.len() as u16;
+            let render_mode = self.config.thumbnail_mode.should_use_color();
+
+            // For Auto mode: call from_query_stdio() ONCE and reuse for both
+            // height calculation and rendering (calling twice consumes the terminal response)
+            let auto_picker: Option<Picker> = if matches!(render_mode, ThumbnailRenderMode::Auto) {
+                Picker::from_query_stdio().ok().map(|mut p| {
+                    match self.config.current_image_protocol() {
+                        crate::config::ImageProtocol::Auto => {
+                            if p.protocol_type() == ProtocolType::Kitty {
+                                if std::env::var("TERM_PROGRAM")
+                                    .is_ok_and(|t| t.contains("iTerm"))
+                                {
+                                    p.set_protocol_type(ProtocolType::Iterm2);
+                                }
+                            }
+                        }
+                        crate::config::ImageProtocol::Kitty => p.set_protocol_type(ProtocolType::Kitty),
+                        crate::config::ImageProtocol::Iterm2 => p.set_protocol_type(ProtocolType::Iterm2),
+                        crate::config::ImageProtocol::Sixel => p.set_protocol_type(ProtocolType::Sixel),
+                    }
+                    p
+                })
+            } else {
+                None
+            };
+
+            let image_rows: u16 = if let Some(img) = image {
+                match render_mode {
+                    ThumbnailRenderMode::Auto => {
+                        let (cw, ch) = auto_picker.as_ref()
+                            .map(|p| { let f = p.font_size(); (f.0 as u32, f.1 as u32) })
+                            .unwrap_or((10, 20));
+                        if cw > 0 && ch > 0 && img.width() > 0 {
+                            let rows = (img.height() * inner_w as u32 * cw + img.width() * ch - 1)
+                                / (img.width() * ch);
+                            (rows as u16).min(inner_h.saturating_sub(text_height))
+                        } else {
+                            inner_h.saturating_sub(text_height)
+                        }
+                    }
+                    ThumbnailRenderMode::ColoredHalf | ThumbnailRenderMode::Grayscale => {
+                        if img.width() > 0 {
+                            let rows = img.height() * inner_w as u32 / (img.width() * 2);
+                            (rows as u16).max(1).min(inner_h.saturating_sub(text_height))
+                        } else {
+                            inner_h.saturating_sub(text_height)
+                        }
+                    }
+                    ThumbnailRenderMode::Off => 0,
+                }
+            } else {
+                1
+            };
+
+            let needed_h = image_rows + text_height + 2;
+            let final_area = if needed_h < area.height {
+                let y = area.y + (area.height - needed_h) / 2;
+                let r = ratatui::layout::Rect { x: area.x, y, width: area.width, height: needed_h };
+                f.render_widget(Clear, area);
+                f.render_widget(Clear, r);
+                r
+            } else {
+                area
+            };
+
+            let inner = ratatui::layout::Rect {
+                x: final_area.x + 1,
+                y: final_area.y + 1,
+                width: inner_w,
+                height: final_area.height.saturating_sub(2),
+            };
+
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(image_rows), Constraint::Min(0)])
+                .split(inner);
+
+            if let Some(img) = image {
+                match render_mode {
+                    ThumbnailRenderMode::Auto => {
+                        if let Some(picker) = auto_picker {
+                            let mut protocol = picker.new_resize_protocol(img.clone());
+                            f.render_stateful_widget(StatefulImage::default(), chunks[0], &mut protocol);
+                        }
+                    }
+                    ThumbnailRenderMode::ColoredHalf => {
+                        let colored_lines = render_image_to_colored_lines(img, inner_w as u32, image_rows as u32);
+                        f.render_widget(Paragraph::new(Text::from(colored_lines)), chunks[0]);
+                    }
+                    ThumbnailRenderMode::Grayscale => {
+                        let ascii_lines = render_image_to_grayscale_lines(img, inner_w as u32, image_rows as u32);
+                        f.render_widget(
+                            Paragraph::new(Text::from(ascii_lines)).style(Style::default().fg(Color::DarkGray)),
+                            chunks[0],
+                        );
+                    }
+                    ThumbnailRenderMode::Off => {}
+                }
+            } else {
+                let frame = SPINNER_FRAMES[self.spinner_idx];
+                f.render_widget(
+                    Paragraph::new(Line::from(Span::styled(
+                        format!("  {} Loading thumbnail...", frame),
+                        Style::default().fg(Color::DarkGray),
+                    ))),
+                    chunks[0],
+                );
+            }
+
+            f.render_widget(Paragraph::new(Text::from(lines)), chunks[1]);
+
+            let block = self.styled_block()
+                .title(title)
+                .title_style(title_style)
+                .border_style(border_style);
+            f.render_widget(block, final_area);
+        } else {
+            let p = Paragraph::new(Text::from(lines)).block(
                 self.styled_block()
-                    .title(format!(
-                        " \u{2139} Info: {} ",
-                        truncate_name(&info.name, 30)
-                    ))
-                    .title_style(
-                        Style::default()
-                            .fg(in_tc)
-                            .bg(Color::DarkGray)
-                            .add_modifier(Modifier::BOLD),
-                    )
-                    .border_style(Style::default().fg(in_bc)),
+                    .title(title)
+                    .title_style(title_style)
+                    .border_style(border_style),
             );
-        f.render_widget(p, area);
+            f.render_widget(p, area);
+        }
     }
 
     // --- Text preview overlay (show_preview=false) ---

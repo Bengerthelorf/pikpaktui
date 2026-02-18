@@ -1766,7 +1766,19 @@ impl App {
                         links: None,
                         medias: None,
                     };
-                    self.input = InputMode::InfoView { info };
+                    let thumb_url = info.thumbnail_link.clone();
+                    self.input = InputMode::InfoView { info, image: None };
+                    if let Some(url) = thumb_url {
+                        if !url.is_empty() {
+                            let client = Arc::clone(&self.client);
+                            let tx = self.result_tx.clone();
+                            std::thread::spawn(move || {
+                                let _ = tx.send(super::OpResult::InfoThumbnail(
+                                    super::fetch_and_render_thumbnail(&url, &client),
+                                ));
+                            });
+                        }
+                    }
                 } else {
                     self.input = InputMode::TrashView {
                         entries: std::mem::take(entries),
