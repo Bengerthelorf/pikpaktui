@@ -1587,6 +1587,8 @@ pub struct MediaInfo {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct FileInfoResponse {
+    #[serde(default)]
+    pub id: Option<String>,
     pub name: String,
     #[serde(default)]
     pub kind: Option<String>,
@@ -1600,6 +1602,8 @@ pub struct FileInfoResponse {
     pub created_time: Option<String>,
     #[serde(default)]
     pub web_content_link: Option<String>,
+    #[serde(default)]
+    pub thumbnail_link: Option<String>,
     #[serde(default)]
     pub links: Option<std::collections::HashMap<String, LinkInfo>>,
     #[serde(default)]

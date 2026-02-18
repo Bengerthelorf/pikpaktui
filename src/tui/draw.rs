@@ -211,6 +211,7 @@ impl App {
                 let hints = vec![
                     ("j/k", "nav"),
                     ("Enter", "expand"),
+                    ("Space", "info"),
                     ("u", "restore"),
                     ("x", "delete"),
                     ("r", "refresh"),
@@ -413,6 +414,15 @@ impl App {
                 } else {
                     self.draw_trash_view(f, entries, *selected, true);
                 }
+            }
+            InputMode::InfoView { info } if !self.trash_entries.is_empty() => {
+                self.draw_trash_view(
+                    f,
+                    &self.trash_entries,
+                    self.trash_selected,
+                    self.trash_expanded,
+                );
+                self.draw_info_overlay(f, info);
             }
             _ => self.draw_main(f),
         }
@@ -1242,6 +1252,7 @@ impl App {
                 if *expanded {
                     vec![
                         ("j/k", "nav"),
+                        ("Space", "info"),
                         ("u", "restore"),
                         ("x", "delete"),
                         ("r", "refresh"),
@@ -1252,6 +1263,7 @@ impl App {
                     vec![
                         ("j/k", "nav"),
                         ("Enter", "expand"),
+                        ("Space", "info"),
                         ("u", "restore"),
                         ("x", "delete"),
                         ("r", "refresh"),
@@ -2452,12 +2464,28 @@ impl App {
         let wrap_w = area.width.saturating_sub(2) as usize;
         let mut lines = vec![Line::from("")];
 
+        if let Some(id) = &info.id {
+            lines.extend(wrap_labeled_field(
+                "  ID:    ", id,
+                Style::default().fg(Color::Cyan),
+                Style::default().fg(Color::DarkGray),
+                wrap_w,
+            ));
+        }
+
         lines.extend(wrap_labeled_field(
             "  Name:  ", &info.name,
             Style::default().fg(Color::Cyan),
             Style::default().fg(Color::White),
             wrap_w,
         ));
+
+        if let Some(kind) = &info.kind {
+            lines.push(Line::from(vec![
+                Span::styled("  Type:  ", Style::default().fg(Color::Cyan)),
+                Span::styled(kind.as_str(), Style::default().fg(Color::White)),
+            ]));
+        }
 
         if let Some(size) = &info.size {
             let size_n: u64 = size.parse().unwrap_or(0);
@@ -2467,6 +2495,21 @@ impl App {
                     format!("{} ({})", format_size(size_n), size),
                     Style::default().fg(Color::White),
                 ),
+            ]));
+        }
+
+        if let Some(ct) = &info.created_time {
+            let date = crate::cmd::format_date(ct);
+            lines.push(Line::from(vec![
+                Span::styled("  Date:  ", Style::default().fg(Color::Cyan)),
+                Span::styled(date, Style::default().fg(Color::White)),
+            ]));
+        }
+
+        if let Some(mime) = &info.mime_type {
+            lines.push(Line::from(vec![
+                Span::styled("  MIME:  ", Style::default().fg(Color::Cyan)),
+                Span::styled(mime.as_str(), Style::default().fg(Color::White)),
             ]));
         }
 
@@ -2482,6 +2525,15 @@ impl App {
         if let Some(link) = &info.web_content_link {
             lines.extend(wrap_labeled_field(
                 "  Link:  ", link,
+                Style::default().fg(Color::Cyan),
+                Style::default().fg(Color::Blue),
+                wrap_w,
+            ));
+        }
+
+        if let Some(thumb) = &info.thumbnail_link {
+            lines.extend(wrap_labeled_field(
+                "  Thumb: ", thumb,
                 Style::default().fg(Color::Cyan),
                 Style::default().fg(Color::Blue),
                 wrap_w,

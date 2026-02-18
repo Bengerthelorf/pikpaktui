@@ -1746,11 +1746,34 @@ impl App {
                 };
             }
             KeyCode::Char(' ') => {
-                self.input = InputMode::TrashView {
-                    entries: std::mem::take(entries),
-                    selected: *selected,
-                    expanded,
-                };
+                if let Some(entry) = entries.get(*selected).cloned() {
+                    self.trash_entries = std::mem::take(entries);
+                    self.trash_selected = *selected;
+                    self.trash_expanded = expanded;
+                    let info = crate::pikpak::FileInfoResponse {
+                        id: Some(entry.id),
+                        name: entry.name,
+                        kind: Some(match entry.kind {
+                            crate::pikpak::EntryKind::Folder => "drive#folder".to_string(),
+                            crate::pikpak::EntryKind::File => "drive#file".to_string(),
+                        }),
+                        size: if entry.size > 0 { Some(entry.size.to_string()) } else { None },
+                        hash: None,
+                        mime_type: None,
+                        created_time: if entry.created_time.is_empty() { None } else { Some(entry.created_time) },
+                        web_content_link: None,
+                        thumbnail_link: entry.thumbnail_link,
+                        links: None,
+                        medias: None,
+                    };
+                    self.input = InputMode::InfoView { info };
+                } else {
+                    self.input = InputMode::TrashView {
+                        entries: std::mem::take(entries),
+                        selected: *selected,
+                        expanded,
+                    };
+                }
             }
             KeyCode::Char('r') => {
                 self.trash_expanded = expanded;
