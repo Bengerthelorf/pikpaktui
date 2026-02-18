@@ -89,8 +89,10 @@ What gets completed:
 | `pikpaktui ls /<Tab>` | Remote directory listing |
 | `pikpaktui ls -<Tab>` | `-l`, `--long`, `-s`, `--sort`, `-r`, `--reverse` |
 | `pikpaktui ls --sort <Tab>` | `name`, `size`, `created`, `type`, `extension`, `none` |
+| `pikpaktui mv -<Tab>` | `-t` flag |
 | `pikpaktui mv /src<Tab> /dst<Tab>` | Cloud paths for both arguments |
 | `pikpaktui download /cloud<Tab> ./<Tab>` | Cloud path, then local path |
+| `pikpaktui upload -<Tab>` | `-t` flag |
 | `pikpaktui upload ./<Tab> /<Tab>` | Local path, then cloud path |
 | `pikpaktui tasks <Tab>` | `list`, `retry`, `delete` subcommands |
 | `pikpaktui rm -<Tab>` | `-r`, `-f`, `-rf`, `-fr` |
@@ -123,9 +125,12 @@ pikpaktui ls -l "/My Pack"                            # Long format (id + size +
 pikpaktui ls --sort=size -r /                         # Sort by size, largest last
 pikpaktui ls -s created "/My Pack"                    # Sort by creation time, newest first
 pikpaktui mv "/My Pack/file.txt" /Archive             # Move file
+pikpaktui mv -t /Archive /a.txt /b.txt /c.txt        # Batch move to target
 pikpaktui cp "/My Pack/file.txt" /Backup              # Copy file
+pikpaktui cp -t /Backup /a.txt /b.txt                 # Batch copy to target
 pikpaktui rename "/My Pack/old.txt" new.txt           # Rename
 pikpaktui rm "/My Pack/file.txt"                      # Delete file (to trash)
+pikpaktui rm /a.txt /b.txt /c.txt                     # Batch delete (to trash)
 pikpaktui rm -r "/My Pack/folder"                     # Delete folder (to trash)
 pikpaktui rm -rf "/My Pack/folder"                    # Delete folder permanently
 pikpaktui mkdir "/My Pack" newfolder                  # Create folder
@@ -147,7 +152,9 @@ pikpaktui untrash "file.txt"                          # Restore file from trash
 pikpaktui download "/My Pack/file.txt"                # Download to current dir
 pikpaktui download "/My Pack/file.txt" /tmp/file.txt  # Download to specific path
 pikpaktui download -o output.mp4 "/My Pack/video.mp4" # Download with custom output name
+pikpaktui download -t ./videos/ /a.mp4 /b.mp4         # Batch download to directory
 pikpaktui upload ./local-file.txt "/My Pack"          # Upload (dedup + resumable)
+pikpaktui upload -t "/My Pack" ./a.txt ./b.txt        # Batch upload to target
 pikpaktui share "/My Pack/file.txt"                   # Print PikPak share links
 pikpaktui share "/My Pack" -o links.txt               # Save folder share links to file
 

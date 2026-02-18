@@ -49,10 +49,10 @@ pub fn run() -> Result<()> {
     println!("  {MAGENTA}{BOLD}File Management{RESET}");
     let file_cmds: &[(&str, &str)] = &[
         ("ls [-l] [-s field] [path]", "List files (sort: name,size,created,type,ext)"),
-        ("mv <src> <dst>",           "Move a file or folder"),
-        ("cp <src> <dst>",           "Copy a file or folder"),
+        ("mv [-t dst] <src> [dst]",  "Move file(s) (-t for batch)"),
+        ("cp [-t dst] <src> [dst]",  "Copy file(s) (-t for batch)"),
         ("rename <path> <new_name>", "Rename a file or folder"),
-        ("rm [-r] [-f] <path>",      "Remove to trash (-r folder, -f permanent)"),
+        ("rm [-r] [-f] <path...>",   "Remove to trash (-r folder, -f permanent)"),
         ("mkdir [-p] <parent> <name>","Create folder (-p recursive)"),
         ("info <path>",             "Show detailed file/folder info"),
         ("cat <path>",              "Preview text file contents"),
@@ -71,8 +71,8 @@ pub fn run() -> Result<()> {
     // Transfer
     println!("  {MAGENTA}{BOLD}Transfer{RESET}");
     let transfer_cmds: &[(&str, &str)] = &[
-        ("download [-o out] <path>", "Download a file (-o output path)"),
-        ("upload <local> [remote]",  "Upload a local file to cloud"),
+        ("download [-o out] <path>", "Download (-o output, -t dir for batch)"),
+        ("upload [-t remote] <local>","Upload (-t remote dir for batch)"),
         ("share <path> [-o file]",   "Share file(s) as PikPak links"),
     ];
     print_commands(transfer_cmds);

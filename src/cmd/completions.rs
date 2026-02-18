@@ -66,13 +66,13 @@ _pikpaktui() {
     local -a commands
     commands=(
         'ls:List files (colored grid; -l for long)'
-        'mv:Move a file or folder'
-        'cp:Copy a file or folder'
+        'mv:Move file(s) (-t for batch)'
+        'cp:Copy file(s) (-t for batch)'
         'rename:Rename a file or folder'
         'rm:Remove to trash (-r folder, -f permanent)'
         'mkdir:Create folder (-p recursive)'
         'download:Download a file (-o output path)'
-        'upload:Upload a local file to cloud'
+        'upload:Upload file(s) (-t for batch)'
         'share:Share file(s) as PikPak links'
         'offline:Cloud download a URL or magnet link'
         'tasks:Manage offline download tasks'
@@ -109,7 +109,13 @@ _pikpaktui() {
             fi
             ;;
         mv|cp)
-            _pikpaktui_cloud_path
+            if [[ "${words[CURRENT]}" == -* ]]; then
+                compadd -- '-t'
+            elif [[ "${words[CURRENT-1]}" == "-t" ]]; then
+                _pikpaktui_cloud_path
+            else
+                _pikpaktui_cloud_path
+            fi
             ;;
         rename)
             if (( CURRENT == 3 )); then
@@ -140,10 +146,12 @@ _pikpaktui() {
             fi
             ;;
         upload)
-            if (( CURRENT == 3 )); then
-                _files
-            elif (( CURRENT == 4 )); then
+            if [[ "${words[CURRENT]}" == -* ]]; then
+                compadd -- '-t'
+            elif [[ "${words[CURRENT-1]}" == "-t" ]]; then
                 _pikpaktui_cloud_path
+            else
+                _files
             fi
             ;;
         share)
