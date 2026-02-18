@@ -690,17 +690,15 @@ impl App {
                     EntryKind::Folder => String::new(),
                     EntryKind::File => format!("  {}", format_size(e.size)),
                 };
-                let star_marker = if e.starred { " \u{2605}" } else { "" };
+                let star_marker = if e.starred { "\u{2605} " } else { "" };
                 let cart_marker = if self.cart_ids.contains(&e.id) {
-                    " \u{2606}"
+                    "\u{2606} "
                 } else {
                     ""
                 };
                 ListItem::new(Line::from(vec![
                     Span::styled(ico, Style::default().fg(c)),
                     Span::styled(" ", Style::default()),
-                    Span::styled(&e.name, Style::default().fg(c)),
-                    Span::styled(size_str, Style::default().fg(Color::DarkGray)),
                     Span::styled(star_marker, Style::default().fg(Color::Yellow)),
                     Span::styled(
                         cart_marker,
@@ -708,6 +706,8 @@ impl App {
                             .fg(Color::Yellow)
                             .add_modifier(Modifier::DIM),
                     ),
+                    Span::styled(&e.name, Style::default().fg(c)),
+                    Span::styled(size_str, Style::default().fg(Color::DarkGray)),
                 ]))
             })
             .collect();
@@ -870,6 +870,22 @@ impl App {
                             Span::styled(&entry.created_time, Style::default().fg(Color::DarkGray)),
                         ]));
                     }
+                    let mut markers = Vec::new();
+                    if entry.starred {
+                        markers.push(Span::styled("\u{2605} Starred", Style::default().fg(Color::Yellow)));
+                    }
+                    if self.cart_ids.contains(&entry.id) {
+                        if !markers.is_empty() { markers.push(Span::raw("  ")); }
+                        markers.push(Span::styled(
+                            "\u{2606} In cart",
+                            Style::default().fg(Color::Yellow).add_modifier(Modifier::DIM),
+                        ));
+                    }
+                    if !markers.is_empty() {
+                        let mut line = vec![Span::styled("  ", Style::default())];
+                        line.extend(markers);
+                        lines.push(Line::from(line));
+                    }
                     lines.push(Line::from(""));
                     let hint = if entry.kind == EntryKind::File
                         && crate::theme::is_text_previewable(entry)
@@ -925,6 +941,22 @@ impl App {
                             Span::styled("  Time:  ", Style::default().fg(Color::Cyan)),
                             Span::styled(&entry.created_time, Style::default().fg(Color::DarkGray)),
                         ]));
+                    }
+                    let mut markers = Vec::new();
+                    if entry.starred {
+                        markers.push(Span::styled("\u{2605} Starred", Style::default().fg(Color::Yellow)));
+                    }
+                    if self.cart_ids.contains(&entry.id) {
+                        if !markers.is_empty() { markers.push(Span::raw("  ")); }
+                        markers.push(Span::styled(
+                            "\u{2606} In cart",
+                            Style::default().fg(Color::Yellow).add_modifier(Modifier::DIM),
+                        ));
+                    }
+                    if !markers.is_empty() {
+                        let mut line = vec![Span::styled("  ", Style::default())];
+                        line.extend(markers);
+                        info_lines.push(Line::from(line));
                     }
                 }
 
@@ -2454,6 +2486,25 @@ impl App {
                 Style::default().fg(Color::Blue),
                 wrap_w,
             ));
+        }
+
+        if let Some(entry) = self.entries.get(self.selected) {
+            let mut markers = Vec::new();
+            if entry.starred {
+                markers.push(Span::styled("\u{2605} Starred", Style::default().fg(Color::Yellow)));
+            }
+            if self.cart_ids.contains(&entry.id) {
+                if !markers.is_empty() { markers.push(Span::raw("  ")); }
+                markers.push(Span::styled(
+                    "\u{2606} In cart",
+                    Style::default().fg(Color::Yellow).add_modifier(Modifier::DIM),
+                ));
+            }
+            if !markers.is_empty() {
+                let mut line = vec![Span::styled("  ", Style::default())];
+                line.extend(markers);
+                lines.push(Line::from(line));
+            }
         }
 
         lines.push(Line::from(""));
