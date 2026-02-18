@@ -146,6 +146,7 @@ pikpaktui play "/My Pack/video.mp4" 2                 # Play by stream number
 
 # Trash
 pikpaktui trash                                       # List trashed files
+pikpaktui trash -l                                    # Long format (id, size, date)
 pikpaktui untrash "file.txt"                          # Restore file from trash
 
 # Transfer
@@ -169,6 +170,7 @@ pikpaktui tasks rm <task_id>                          # Delete task
 pikpaktui star "/My Pack/file.txt"                    # Star a file
 pikpaktui unstar "/My Pack/file.txt"                  # Unstar
 pikpaktui starred                                     # List starred files
+pikpaktui starred -l                                  # Long format (id, size, date)
 pikpaktui events                                      # Recent file events
 
 # Account
