@@ -1,6 +1,6 @@
 [package]
 name = "pikpaktui"
-version = "0.0.36"
+version = "0.0.37"
 edition = "2024"
 description = "A TUI and CLI client for PikPak cloud storage"
 license = "Apache-2.0"

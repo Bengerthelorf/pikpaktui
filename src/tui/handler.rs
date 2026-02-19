@@ -2064,7 +2064,7 @@ impl App {
                 if *selected > 0 {
                     *selected -= 1;
                 }
-            } else if *selected < 12 {
+            } else if *selected < 13 {
                 *selected += 1;
             }
             self.input = InputMode::Settings {
@@ -2085,14 +2085,14 @@ impl App {
                     let content_x = col.saturating_sub(area.x + 1) as usize;
 
                     let categories = vec![
-                        ("UI Settings", 4),
+                        ("UI Settings", 5),
                         ("Preview Settings", 5),
                         ("Sort Settings", 2),
                         ("Interface Settings", 2),
                         ("Playback Settings", 1),
                     ];
 
-                    let bool_items = vec![0, 3, 4, 5, 10, 12];
+                    let bool_items = vec![0, 3, 5, 6, 11, 13];
                     let mut current_line = 0;
                     let mut item_idx = 0;
                     let terminal_width = (area.width.saturating_sub(4)) as usize;
@@ -2108,10 +2108,10 @@ impl App {
                                         match item_idx {
                                             0 => draft.nerd_font = !draft.nerd_font,
                                             3 => draft.show_help_bar = !draft.show_help_bar,
-                                            4 => draft.show_preview = !draft.show_preview,
-                                            5 => draft.lazy_preview = !draft.lazy_preview,
-                                            10 => draft.sort_reverse = !draft.sort_reverse,
-                                            12 => draft.cli_nerd_font = !draft.cli_nerd_font,
+                                            5 => draft.show_preview = !draft.show_preview,
+                                            6 => draft.lazy_preview = !draft.lazy_preview,
+                                            11 => draft.sort_reverse = !draft.sort_reverse,
+                                            13 => draft.cli_nerd_font = !draft.cli_nerd_font,
                                             _ => {}
                                         }
                                         modified = true;
@@ -2607,6 +2607,26 @@ impl App {
                     }
                 }
                 4 => {
+                    // Quota Bar Style
+                    match code {
+                        KeyCode::Left => {
+                            draft.quota_bar_style = draft.quota_bar_style.prev();
+                            *modified = true;
+                        }
+                        KeyCode::Right => {
+                            draft.quota_bar_style = draft.quota_bar_style.next();
+                            *modified = true;
+                        }
+                        KeyCode::Enter => {
+                            *editing = false;
+                        }
+                        KeyCode::Esc => {
+                            *editing = false;
+                        }
+                        _ => {}
+                    }
+                }
+                5 => {
                     match code {
                         KeyCode::Char(' ')
                         | KeyCode::Enter
@@ -2622,7 +2642,7 @@ impl App {
                         _ => {}
                     }
                 }
-                5 => {
+                6 => {
                     match code {
                         KeyCode::Char(' ')
                         | KeyCode::Enter
@@ -2638,7 +2658,7 @@ impl App {
                         _ => {}
                     }
                 }
-                6 => {
+                7 => {
                     match code {
                         KeyCode::Char('+') | KeyCode::Up => {
                             draft.preview_max_size = (draft.preview_max_size + 1024).min(10485760);
@@ -2657,7 +2677,7 @@ impl App {
                         _ => {}
                     }
                 }
-                7 => {
+                8 => {
                     match code {
                         KeyCode::Left => {
                             draft.thumbnail_mode = draft.thumbnail_mode.prev();
@@ -2676,7 +2696,7 @@ impl App {
                         _ => {}
                     }
                 }
-                8 => {
+                9 => {
                     match code {
                         KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Left | KeyCode::Right => {
                             let current_terminal = draft.ensure_current_terminal();
@@ -2701,7 +2721,7 @@ impl App {
                         _ => {}
                     }
                 }
-                9 => {
+                10 => {
                     // Sort Field
                     match code {
                         KeyCode::Left => {
@@ -2721,7 +2741,7 @@ impl App {
                         _ => {}
                     }
                 }
-                10 => {
+                11 => {
                     // Reverse Order
                     match code {
                         KeyCode::Char(' ')
@@ -2738,7 +2758,7 @@ impl App {
                         _ => {}
                     }
                 }
-                11 => {
+                12 => {
                     // Move Mode
                     match code {
                         KeyCode::Left => {
@@ -2766,7 +2786,7 @@ impl App {
                         _ => {}
                     }
                 }
-                12 => {
+                13 => {
                     // CLI Nerd Font
                     match code {
                         KeyCode::Char(' ')
@@ -2783,7 +2803,7 @@ impl App {
                         _ => {}
                     }
                 }
-                13 => {
+                14 => {
                     // Player Command (text input)
                     match code {
                         KeyCode::Esc => {
@@ -2817,7 +2837,7 @@ impl App {
         } else {
             match code {
                 KeyCode::Down | KeyCode::Char('j') => {
-                    *selected = (*selected + 1).min(13);
+                    *selected = (*selected + 1).min(14);
                     None
                 }
                 KeyCode::Up | KeyCode::Char('k') => {
@@ -2825,7 +2845,7 @@ impl App {
                     None
                 }
                 KeyCode::Char(' ') | KeyCode::Enter => {
-                    if *selected == 8 {
+                    if *selected == 9 {
                         // Directly enter image protocol sub-menu
                         let current_terminal = draft.ensure_current_terminal();
                         let terminals: Vec<String> =

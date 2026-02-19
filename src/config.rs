@@ -64,6 +64,44 @@ fn home_config_dir() -> Option<PathBuf> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
+pub enum QuotaBarStyle {
+    Bar,
+    Percent,
+}
+
+impl Default for QuotaBarStyle {
+    fn default() -> Self {
+        Self::Bar
+    }
+}
+
+impl QuotaBarStyle {
+    pub fn all() -> &'static [Self] {
+        &[Self::Bar, Self::Percent]
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Bar => "bar",
+            Self::Percent => "percent",
+        }
+    }
+
+    pub fn next(&self) -> Self {
+        let all = Self::all();
+        let idx = all.iter().position(|s| s == self).unwrap();
+        all[(idx + 1) % all.len()]
+    }
+
+    pub fn prev(&self) -> Self {
+        let all = Self::all();
+        let idx = all.iter().position(|s| s == self).unwrap();
+        all[(idx + all.len() - 1) % all.len()]
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum BorderStyle {
     Rounded,
     Thick,
@@ -393,6 +431,8 @@ pub struct TuiConfig {
     #[serde(default = "default_true")]
     pub show_help_bar: bool,
     #[serde(default)]
+    pub quota_bar_style: QuotaBarStyle,
+    #[serde(default)]
     pub cli_nerd_font: bool,
     #[serde(default)]
     pub border_style: BorderStyle,
@@ -439,6 +479,7 @@ impl Default for TuiConfig {
             nerd_font: false,
             move_mode: "picker".to_string(),
             show_help_bar: true,
+            quota_bar_style: QuotaBarStyle::default(),
             cli_nerd_font: false,
             border_style: BorderStyle::default(),
             color_scheme: ColorScheme::default(),

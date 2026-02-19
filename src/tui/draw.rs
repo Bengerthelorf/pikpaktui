@@ -612,12 +612,10 @@ impl App {
             let mut help_spans = vec![Span::raw(" ")];
             help_spans.extend(Self::styled_help_spans(&pairs));
 
-            // Build quota spans with colour-coded progress bar
+            // Build quota spans — style determined by config
             let quota_info = match (self.quota_used, self.quota_limit) {
                 (Some(used), Some(limit)) if limit > 0 => {
                     let pct = (used as f64 / limit as f64).clamp(0.0, 1.0);
-                    const BAR_W: usize = 10;
-                    let filled = (pct * BAR_W as f64).round() as usize;
                     let bar_color = if pct >= 0.9 {
                         Color::Red
                     } else if pct >= 0.7 {
@@ -625,21 +623,44 @@ impl App {
                     } else {
                         Color::Cyan
                     };
-                    let used_str = format_size(used);
-                    let limit_str = format_size(limit);
-                    // width: " │ " + used + " / " + limit + "  " + BAR_W + " "
-                    let total_w = (3 + used_str.len() + 3 + limit_str.len() + 2 + BAR_W + 1) as u16;
-                    let spans: Vec<Span<'static>> = vec![
-                        Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
-                        Span::styled(used_str, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-                        Span::styled(" / ", Style::default().fg(Color::DarkGray)),
-                        Span::styled(limit_str, Style::default().fg(Color::DarkGray)),
-                        Span::styled("  ", Style::default()),
-                        Span::styled("▪".repeat(filled), Style::default().fg(bar_color)),
-                        Span::styled("▫".repeat(BAR_W - filled), Style::default().fg(Color::DarkGray)),
-                        Span::styled(" ", Style::default()),
-                    ];
-                    Some((spans, total_w))
+                    use crate::config::QuotaBarStyle;
+                    match self.config.quota_bar_style {
+                        QuotaBarStyle::Bar => {
+                            const BAR_W: usize = 10;
+                            let filled = (pct * BAR_W as f64).round() as usize;
+                            let used_str = format_size(used);
+                            let limit_str = format_size(limit);
+                            let total_w = (3 + used_str.len() + 3 + limit_str.len() + 2 + BAR_W + 1) as u16;
+                            let spans: Vec<Span<'static>> = vec![
+                                Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
+                                Span::styled(used_str, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                                Span::styled(" / ", Style::default().fg(Color::DarkGray)),
+                                Span::styled(limit_str, Style::default().fg(Color::DarkGray)),
+                                Span::styled("  ", Style::default()),
+                                Span::styled("▪".repeat(filled), Style::default().fg(bar_color)),
+                                Span::styled("▫".repeat(BAR_W - filled), Style::default().fg(Color::DarkGray)),
+                                Span::styled(" ", Style::default()),
+                            ];
+                            Some((spans, total_w))
+                        }
+                        QuotaBarStyle::Percent => {
+                            let pct_str = format!("{:.0}%", pct * 100.0);
+                            let used_str = format_size(used);
+                            let limit_str = format_size(limit);
+                            // " │ " + used + " / " + limit + " " + pct + " "
+                            let total_w = (3 + used_str.len() + 3 + limit_str.len() + 1 + pct_str.len() + 1) as u16;
+                            let spans: Vec<Span<'static>> = vec![
+                                Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
+                                Span::styled(used_str, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                                Span::styled(" / ", Style::default().fg(Color::DarkGray)),
+                                Span::styled(limit_str, Style::default().fg(Color::DarkGray)),
+                                Span::styled(" ", Style::default()),
+                                Span::styled(pct_str, Style::default().fg(bar_color).add_modifier(Modifier::BOLD)),
+                                Span::styled(" ", Style::default()),
+                            ];
+                            Some((spans, total_w))
+                        }
+                    }
                 }
                 (Some(used), None) => {
                     let used_str = format_size(used);
@@ -2951,6 +2972,11 @@ impl App {
                         "Show Help Bar".to_string(),
                         "Display keyboard shortcuts".to_string(),
                         if draft.show_help_bar { "[✓]" } else { "[ ]" }.to_string(),
+                    ),
+                    (
+                        "Quota Bar Style".to_string(),
+                        "Storage usage display style".to_string(),
+                        draft.quota_bar_style.as_str().to_string(),
                     ),
                 ],
             ),
