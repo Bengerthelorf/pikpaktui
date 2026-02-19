@@ -510,6 +510,42 @@ impl App {
                 );
                 Ok(false)
             }
+            InputMode::SearchInput { mut query } => {
+                match handle_text_input(&mut query, code) {
+                    Some(true) => {
+                        // Enter — submit search
+                        let q = query.trim().to_string();
+                        if !q.is_empty() {
+                            let client = Arc::clone(&self.client);
+                            let tx = self.result_tx.clone();
+                            self.loading = true;
+                            self.loading_label = Some(format!("Searching \"{}\"...", q));
+                            self.input = InputMode::InfoLoading;
+                            std::thread::spawn(move || {
+                                let _ =
+                                    tx.send(OpResult::Search(q.clone(), client.search_files(&q)));
+                            });
+                        }
+                        // if empty, fall back to Normal (mem::replace already set it)
+                    }
+                    Some(false) => {
+                        // ESC — return to Normal (mem::replace already set it)
+                    }
+                    None => {
+                        // typing — stay in SearchInput
+                        self.input = InputMode::SearchInput { query };
+                    }
+                }
+                Ok(false)
+            }
+            InputMode::SearchResults {
+                query,
+                mut entries,
+                mut selected,
+            } => {
+                self.handle_search_results_key(code, query, &mut entries, &mut selected);
+                Ok(false)
+            }
         }
     }
 
@@ -709,6 +745,11 @@ impl App {
                 self.config.sort_reverse = !self.config.sort_reverse;
                 self.resort_entries();
                 let _ = self.config.save();
+            }
+            KeyCode::Char('/') => {
+                self.input = InputMode::SearchInput {
+                    query: String::new(),
+                };
             }
             KeyCode::Char('w') => {
                 // Watch: open video stream/resolution picker
@@ -2805,6 +2846,70 @@ impl App {
                     Some(false)
                 }
                 _ => None,
+            }
+        }
+    }
+
+    fn handle_search_results_key(
+        &mut self,
+        code: KeyCode,
+        query: String,
+        entries: &mut Vec<Entry>,
+        selected: &mut usize,
+    ) {
+        match code {
+            KeyCode::Esc => {
+                // back to Normal
+            }
+            KeyCode::Char('/') => {
+                // new search
+                self.input = InputMode::SearchInput {
+                    query: String::new(),
+                };
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if !entries.is_empty() {
+                    *selected = (*selected + 1).min(entries.len() - 1);
+                }
+                self.input = InputMode::SearchResults {
+                    query,
+                    entries: std::mem::take(entries),
+                    selected: *selected,
+                };
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if *selected > 0 {
+                    *selected -= 1;
+                }
+                self.input = InputMode::SearchResults {
+                    query,
+                    entries: std::mem::take(entries),
+                    selected: *selected,
+                };
+            }
+            KeyCode::Char('a') => {
+                // Add selected file to download cart
+                if let Some(entry) = entries.get(*selected).cloned() {
+                    if entry.kind == EntryKind::File {
+                        if !self.cart_ids.contains(&entry.id) {
+                            self.cart_ids.insert(entry.id.clone());
+                            self.push_log(format!("Added '{}' to cart", entry.name));
+                            self.cart.push(entry);
+                        }
+                    }
+                }
+                self.input = InputMode::SearchResults {
+                    query,
+                    entries: std::mem::take(entries),
+                    selected: *selected,
+                };
+            }
+            _ => {
+                self.input = InputMode::SearchResults {
+                    query,
+                    entries: std::mem::take(entries),
+                    selected: *selected,
+                };
             }
         }
     }

@@ -249,7 +249,7 @@ mod tests {
     #[test]
     fn zsh_output_contains_all_commands() {
         let commands = [
-            "ls:", "mv:", "cp:", "rename:", "rm:", "mkdir:",
+            "ls:", "search:", "mv:", "cp:", "rename:", "rm:", "mkdir:",
             "download:", "upload:", "share:", "offline:", "tasks:",
             "star:", "unstar:", "starred:", "events:",
             "trash:", "untrash:", "info:", "cat:", "play:",

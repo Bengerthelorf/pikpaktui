@@ -825,6 +825,14 @@ impl PikPak {
     // --- Search ---
 
     /// Search files by name keyword across the entire drive (not trashed).
+    ///
+    /// PikPak's `/drive/v1/files` API does not support server-side name search:
+    ///   - `filters` JSON only allows: kind, phase, trashed, starred, created_time,
+    ///     modified_time, mime_type, id — NOT `name`.
+    ///   - The `q` parameter performs full-text content search, not filename search.
+    ///
+    /// Strategy: fetch all non-trashed files (parent_id=*, 500 per page) and
+    /// filter by filename containing the query string (case-insensitive).
     pub fn search_files(&self, query: &str) -> Result<Vec<Entry>> {
         let token = self.access_token()?;
         let url = format!(
@@ -832,15 +840,15 @@ impl PikPak {
             self.drive_base_url.trim_end_matches('/')
         );
 
-        let q = build_search_query(query);
         let filters = r#"{"trashed":{"eq":false}}"#;
+        let query_lower = query.to_lowercase();
         let mut all_entries: Vec<Entry> = Vec::new();
         let mut page_token: Option<String> = None;
 
         loop {
             let mut rb = self.http.get(&url).bearer_auth(&token).query(&[
-                ("q", q.as_str()),
-                ("limit", "100"),
+                ("parent_id", "*"),
+                ("limit", "500"),
                 ("filters", filters),
                 ("thumbnail_size", "SIZE_MEDIUM"),
             ]);
@@ -859,22 +867,24 @@ impl PikPak {
             let payload: DriveListResponse = response.json().context("invalid search json")?;
             let next = payload.next_page_token.filter(|t| !t.is_empty());
 
-            all_entries.extend(payload.files.into_iter().map(|f| {
-                let starred = f.is_starred();
-                Entry {
-                    id: f.id,
-                    name: f.name,
-                    kind: if f.kind.contains("folder") {
-                        EntryKind::Folder
-                    } else {
-                        EntryKind::File
-                    },
-                    size: f.size.unwrap_or(0),
-                    created_time: f.created_time.unwrap_or_default(),
-                    starred,
-                    thumbnail_link: f.thumbnail_link,
+            for f in payload.files {
+                if f.name.to_lowercase().contains(&query_lower) {
+                    let starred = f.is_starred();
+                    all_entries.push(Entry {
+                        id: f.id,
+                        name: f.name,
+                        kind: if f.kind.contains("folder") {
+                            EntryKind::Folder
+                        } else {
+                            EntryKind::File
+                        },
+                        size: f.size.unwrap_or(0),
+                        created_time: f.created_time.unwrap_or_default(),
+                        starred,
+                        thumbnail_link: f.thumbnail_link,
+                    });
                 }
-            }));
+            }
 
             match next {
                 Some(t) => page_token = Some(t),
@@ -1933,12 +1943,6 @@ where
     deserializer.deserialize_any(U64Visitor)
 }
 
-/// Build a PikPak search query string for name-based search.
-/// PikPak uses Google Drive-style query language: `name contains 'keyword'`.
-fn build_search_query(keyword: &str) -> String {
-    let escaped = keyword.replace('\'', "\\'");
-    format!("name contains '{}'", escaped)
-}
 
 #[cfg(test)]
 mod tests {
@@ -1959,20 +1963,6 @@ mod tests {
     fn md5_basic() {
         assert_eq!(md5_hex(""), "d41d8cd98f00b204e9800998ecf8427e");
         assert_eq!(md5_hex("abc"), "900150983cd24fb0d6963f7d28e17f72");
-    }
-
-    // --- Search query building ---
-
-    #[test]
-    fn search_query_format_basic() {
-        let q = build_search_query("avatar");
-        assert_eq!(q, "name contains 'avatar'");
-    }
-
-    #[test]
-    fn search_query_escapes_single_quotes() {
-        let q = build_search_query("don't");
-        assert_eq!(q, "name contains 'don\\'t'");
     }
 
     #[test]

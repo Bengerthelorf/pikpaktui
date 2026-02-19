@@ -21,12 +21,13 @@ A TUI and CLI client for [PikPak](https://mypikpak.com) cloud storage, written i
 - **Download dashboard** — Collapsed popup or expanded full-screen view with braille-character network activity graph, per-file progress, speed, ETA
 - **Offline download** — Submit URLs/magnets for PikPak cloud download, view and manage tasks
 - **Trash view** — Browse trashed files in collapsed overlay or expanded full-screen, restore or permanently delete
+- **Search** — Press `/` to search files by name across the entire drive; results shown in a navigable overlay with cart integration
 - **Sorting** — eza-style `--sort` support (name, size, created, type, extension, none) with `--reverse`; TUI keybindings `S`/`R` to cycle sort field and toggle order, persisted in config
 - **Interactive settings** — In-app settings editor (`,`), custom RGB colors per file category, per-terminal image protocol configuration, sort settings
 - **Mouse support** — Click to select, double-click to open, scroll wheel navigation
 
 ### CLI
-- **25 subcommands** — `ls`, `mv`, `cp`, `rename`, `rm`, `mkdir`, `info`, `cat`, `play`, `download`, `upload`, `share`, `offline`, `tasks`, `star`, `unstar`, `starred`, `events`, `trash`, `untrash`, `quota`, `vip`, `completions`, `help`, `version`
+- **26 subcommands** — `ls`, `search`, `mv`, `cp`, `rename`, `rm`, `mkdir`, `info`, `cat`, `play`, `download`, `upload`, `share`, `offline`, `tasks`, `star`, `unstar`, `starred`, `events`, `trash`, `untrash`, `quota`, `vip`, `completions`, `help`, `version`
 - **Colored output** — `ls` with multi-column grid layout (eza-style), `--sort`/`--reverse` flags, Nerd Font icons support
 - **Resumable transfer** — Upload: dedup-aware instant upload on hash match, multipart resumable with 10 MB chunks via OSS. Download: HTTP Range resume for interrupted transfers
 - **Shell completions** — Zsh completion with dynamic cloud path completion (like `scp`)
