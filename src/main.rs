@@ -48,7 +48,6 @@ fn entry() -> Result<()> {
         "events" => cmd::events::run(&args[1..]),
         "trash" => cmd::trash::run(&args[1..]),
         "untrash" => cmd::untrash::run(&args[1..]),
-        "search" => cmd::search::run(&args[1..]),
         "info" => cmd::info::run(&args[1..]),
         "cat" => cmd::cat::run(&args[1..]),
         "play" => cmd::play::run(&args[1..]),

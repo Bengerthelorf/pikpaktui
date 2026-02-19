@@ -1241,13 +1241,6 @@ impl App {
                 ("Esc", "back"),
             ],
             InputMode::OfflineInput { .. } => vec![("Enter", "submit"), ("Esc", "cancel")],
-            InputMode::SearchInput { .. } => vec![("Enter", "search"), ("Esc", "cancel")],
-            InputMode::SearchResults { .. } => vec![
-                ("j/k", "nav"),
-                ("a", "add to cart"),
-                ("/", "new search"),
-                ("Esc", "close"),
-            ],
             InputMode::OfflineTasksView { .. } => vec![
                 ("j/k", "nav"),
                 ("r", "refresh"),
@@ -1638,16 +1631,6 @@ impl App {
             }
             InputMode::PlayerInput { value, .. } => {
                 self.draw_player_input_overlay(f, value);
-            }
-            InputMode::SearchInput { query } => {
-                self.draw_search_input_overlay(f, query, cur);
-            }
-            InputMode::SearchResults {
-                query,
-                entries,
-                selected,
-            } => {
-                self.draw_search_results_overlay(f, query, entries, *selected);
             }
         }
     }
@@ -2431,149 +2414,6 @@ impl App {
             f.render_widget(p, area);
         }
     }
-
-    // --- Search overlays ---
-
-    fn draw_search_input_overlay(&self, f: &mut Frame, query: &str, cur: &str) {
-        let area = centered_rect(70, 25, f.area());
-        f.render_widget(Clear, area);
-
-        let hints = vec![("Enter", "search"), ("Esc", "cancel")];
-        let mut hint_spans = vec![Span::raw("  ")];
-        hint_spans.extend(Self::styled_help_spans(&hints));
-
-        let (bc, tc) = if self.is_vibrant() {
-            (Color::LightMagenta, Color::LightMagenta)
-        } else {
-            (Color::Magenta, Color::Yellow)
-        };
-
-        let p = Paragraph::new(Text::from(vec![
-            Line::from(""),
-            Line::from(Span::styled(
-                "  Search files by name across the drive:",
-                Style::default().fg(Color::White),
-            )),
-            Line::from(""),
-            Line::from(vec![
-                Span::styled("  / ", Style::default().fg(Color::Magenta)),
-                Span::styled(
-                    format!("{}{}", query, cur),
-                    Style::default().fg(Color::Yellow),
-                ),
-            ]),
-            Line::from(""),
-            Line::from(hint_spans),
-        ]))
-        .block(
-            self.styled_block()
-                .title(" Search ")
-                .title_style(Style::default().fg(tc))
-                .border_style(Style::default().fg(bc)),
-        );
-        f.render_widget(p, area);
-    }
-
-    fn draw_search_results_overlay(
-        &self,
-        f: &mut Frame,
-        query: &str,
-        entries: &[Entry],
-        selected: usize,
-    ) {
-        use crate::theme;
-
-        let max_visible = 15usize;
-        let visible = entries.len().min(max_visible);
-        let total_lines = 2 + visible.max(1) + 2;
-        let pct = ((total_lines as u16 * 100) / f.area().height.max(1))
-            .max(30)
-            .min(80);
-        let area = centered_rect(80, pct, f.area());
-        f.render_widget(Clear, area);
-
-        let title = format!(" Search: \"{}\" ({} result(s)) ", query, entries.len());
-        let (bc, tc) = if self.is_vibrant() {
-            (Color::LightMagenta, Color::LightMagenta)
-        } else {
-            (Color::Magenta, Color::Yellow)
-        };
-
-        let nerd = self.config.nerd_font;
-        let entry_offset = selected.saturating_sub(max_visible - 1);
-
-        let mut lines = vec![Line::from("")];
-
-        if entries.is_empty() {
-            lines.push(Line::from(Span::styled(
-                "  No results found.",
-                Style::default().fg(Color::DarkGray),
-            )));
-        } else {
-            for (i, entry) in entries
-                .iter()
-                .enumerate()
-                .skip(entry_offset)
-                .take(max_visible)
-            {
-                let is_sel = i == selected;
-                let cat = theme::categorize(entry);
-                let icon = theme::cli_icon(cat, nerd);
-                let color = self.file_color(cat);
-                let in_cart = self.cart_ids.contains(&entry.id);
-
-                let mut spans = vec![Span::styled(
-                    if is_sel { "  > " } else { "    " },
-                    Style::default().fg(if is_sel {
-                        Color::Yellow
-                    } else {
-                        Color::DarkGray
-                    }),
-                )];
-                spans.push(Span::styled(
-                    format!("{}{}", icon, entry.name),
-                    if is_sel {
-                        Style::default().fg(color).add_modifier(ratatui::style::Modifier::BOLD)
-                    } else {
-                        Style::default().fg(color)
-                    },
-                ));
-                if in_cart {
-                    spans.push(Span::styled(" ★", Style::default().fg(Color::Yellow)));
-                }
-                if entry.size > 0 {
-                    spans.push(Span::styled(
-                        format!("  {}", crate::cmd::format_size(entry.size)),
-                        Style::default().fg(Color::DarkGray),
-                    ));
-                }
-                lines.push(Line::from(spans));
-            }
-
-            let remaining = entries.len().saturating_sub(entry_offset + max_visible);
-            if remaining > 0 {
-                lines.push(Line::from(Span::styled(
-                    format!("   ... and {} more", remaining),
-                    Style::default().fg(Color::DarkGray),
-                )));
-            }
-        }
-
-        lines.push(Line::from(""));
-        let hints = self.help_pairs();
-        let mut hint_spans = vec![Span::raw("  ")];
-        hint_spans.extend(Self::styled_help_spans(&hints));
-        lines.push(Line::from(hint_spans));
-
-        let p = Paragraph::new(Text::from(lines)).block(
-            self.styled_block()
-                .title(title)
-                .title_style(Style::default().fg(tc))
-                .border_style(Style::default().fg(bc)),
-        );
-        f.render_widget(p, area);
-    }
-
     // --- Info loading overlay (show_preview=false) ---
 
     fn draw_info_loading_overlay(&self, f: &mut Frame) {

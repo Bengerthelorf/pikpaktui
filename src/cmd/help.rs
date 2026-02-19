@@ -49,7 +49,6 @@ pub fn run() -> Result<()> {
     println!("  {MAGENTA}{BOLD}File Management{RESET}");
     let file_cmds: &[(&str, &str)] = &[
         ("ls [-l] [-s field] [path]", "List files (sort: name,size,created,type,ext)"),
-        ("search [-l] <keyword>",     "Search files by name across the drive"),
         ("mv [-t dst] <src> [dst]",  "Move file(s) (-t for batch)"),
         ("cp [-t dst] <src> [dst]",  "Copy file(s) (-t for batch)"),
         ("rename <path> <new_name>", "Rename a file or folder"),

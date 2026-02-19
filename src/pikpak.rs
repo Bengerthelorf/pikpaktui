@@ -877,79 +877,6 @@ impl PikPak {
         Ok(entries)
     }
 
-    // --- Search ---
-
-    /// Search files by name keyword across the entire drive (not trashed).
-    ///
-    /// PikPak's `/drive/v1/files` API does not support server-side name search:
-    ///   - `filters` JSON only allows: kind, phase, trashed, starred, created_time,
-    ///     modified_time, mime_type, id — NOT `name`.
-    ///   - The `q` parameter performs full-text content search, not filename search.
-    ///
-    /// Strategy: fetch all non-trashed files (parent_id=*, 500 per page) and
-    /// filter by filename containing the query string (case-insensitive).
-    pub fn search_files(&self, query: &str) -> Result<Vec<Entry>> {
-        let token = self.access_token()?;
-        let url = format!(
-            "{}/drive/v1/files",
-            self.drive_base_url.trim_end_matches('/')
-        );
-
-        let filters = r#"{"trashed":{"eq":false}}"#;
-        let query_lower = query.to_lowercase();
-        let mut all_entries: Vec<Entry> = Vec::new();
-        let mut page_token: Option<String> = None;
-
-        loop {
-            let mut rb = self.http.get(&url).bearer_auth(&token).query(&[
-                ("parent_id", "*"),
-                ("limit", "500"),
-                ("filters", filters),
-                ("thumbnail_size", "SIZE_MEDIUM"),
-            ]);
-            if let Some(ref pt) = page_token {
-                rb = rb.query(&[("page_token", pt.as_str())]);
-            }
-            rb = self.authed_headers(rb);
-
-            let response = rb.send().context("search request failed")?;
-            let status = response.status();
-            if !status.is_success() {
-                let body = response.text().unwrap_or_default();
-                return Err(anyhow!("search failed ({}): {}", status, sanitize(&body)));
-            }
-
-            let payload: DriveListResponse = response.json().context("invalid search json")?;
-            let next = payload.next_page_token.filter(|t| !t.is_empty());
-
-            for f in payload.files {
-                if f.name.to_lowercase().contains(&query_lower) {
-                    let starred = f.is_starred();
-                    all_entries.push(Entry {
-                        id: f.id,
-                        name: f.name,
-                        kind: if f.kind.contains("folder") {
-                            EntryKind::Folder
-                        } else {
-                            EntryKind::File
-                        },
-                        size: f.size.unwrap_or(0),
-                        created_time: f.created_time.unwrap_or_default(),
-                        starred,
-                        thumbnail_link: f.thumbnail_link,
-                    });
-                }
-            }
-
-            match next {
-                Some(t) => page_token = Some(t),
-                None => break,
-            }
-        }
-
-        Ok(all_entries)
-    }
-
     // --- Events ---
 
     /// Get recent file events (recently added files).
@@ -2051,19 +1978,6 @@ mod tests {
             expires_at_unix: now_unix() + 600,
         };
         assert!(!valid.is_expired(now_unix() + 300));
-    }
-
-    #[test]
-    fn search_results_deserialize() {
-        let json = r#"{
-            "files": [
-                {"id":"1","name":"Avatar.mkv","kind":"drive#file","size":"4000000000"}
-            ]
-        }"#;
-        let resp: DriveListResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(resp.files.len(), 1);
-        assert_eq!(resp.files[0].name, "Avatar.mkv");
-        assert_eq!(resp.files[0].size, Some(4_000_000_000u64));
     }
 
     // --- Pagination: confirm DriveListResponse captures next_page_token ---

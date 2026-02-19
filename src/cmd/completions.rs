@@ -66,7 +66,6 @@ _pikpaktui() {
     local -a commands
     commands=(
         'ls:List files (colored grid; -l for long)'
-        'search:Search files by name across the drive'
         'mv:Move file(s) (-t for batch)'
         'cp:Copy file(s) (-t for batch)'
         'rename:Rename a file or folder'
@@ -184,11 +183,6 @@ _pikpaktui() {
                 _describe -t subcmds 'tasks subcommand' subcmds
             fi
             ;;
-        search)
-            if [[ "${words[CURRENT]}" == -* ]]; then
-                compadd -- '-l' '--long'
-            fi
-            ;;
         star|unstar|info|cat|play)
             _pikpaktui_cloud_path
             ;;
@@ -249,7 +243,7 @@ mod tests {
     #[test]
     fn zsh_output_contains_all_commands() {
         let commands = [
-            "ls:", "search:", "mv:", "cp:", "rename:", "rm:", "mkdir:",
+            "ls:", "mv:", "cp:", "rename:", "rm:", "mkdir:",
             "download:", "upload:", "share:", "offline:", "tasks:",
             "star:", "unstar:", "starred:", "events:",
             "trash:", "untrash:", "info:", "cat:", "play:",

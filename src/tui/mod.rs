@@ -103,7 +103,6 @@ enum OpResult {
     TrashList(Result<Vec<Entry>>),
     TrashOp(String),
     InfoThumbnail(Result<image::DynamicImage>),
-    Search(String, Result<Vec<Entry>>),
 }
 
 struct PickerState {
@@ -198,15 +197,6 @@ enum InputMode {
         entries: Vec<Entry>,
         selected: usize,
         expanded: bool,
-    },
-    // Search
-    SearchInput {
-        query: String,
-    },
-    SearchResults {
-        query: String,
-        entries: Vec<Entry>,
-        selected: usize,
     },
     ConfirmQuit,
     Settings {
@@ -725,34 +715,6 @@ impl App {
                 }
                 OpResult::InfoThumbnail(Err(e)) => {
                     self.push_log(format!("Info thumbnail failed: {e:#}"));
-                }
-                OpResult::Search(query, Ok(mut entries)) => {
-                    self.finish_loading();
-                    crate::config::sort_entries(
-                        &mut entries,
-                        self.config.sort_field,
-                        self.config.sort_reverse,
-                    );
-                    if entries.is_empty() {
-                        self.push_log(format!("Search \"{}\" → no results", query));
-                        self.input = InputMode::Normal;
-                    } else {
-                        self.push_log(format!(
-                            "Search \"{}\" → {} result(s)",
-                            query,
-                            entries.len()
-                        ));
-                        self.input = InputMode::SearchResults {
-                            query,
-                            entries,
-                            selected: 0,
-                        };
-                    }
-                }
-                OpResult::Search(_, Err(e)) => {
-                    self.finish_loading();
-                    self.push_log(format!("Search failed: {e:#}"));
-                    self.input = InputMode::Normal;
                 }
             }
         }
