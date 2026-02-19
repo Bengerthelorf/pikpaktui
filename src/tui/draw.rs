@@ -612,49 +612,57 @@ impl App {
             let mut help_spans = vec![Span::raw(" ")];
             help_spans.extend(Self::styled_help_spans(&pairs));
 
-            // Build quota string if data is available
-            let quota_span_opt = match (self.quota_used, self.quota_limit) {
+            // Build quota spans with colour-coded progress bar
+            let quota_info = match (self.quota_used, self.quota_limit) {
                 (Some(used), Some(limit)) if limit > 0 => {
                     let pct = (used as f64 / limit as f64).clamp(0.0, 1.0);
-                    let bar_width: usize = 8;
-                    let filled = (pct * bar_width as f64).round() as usize;
-                    let empty = bar_width - filled;
-                    let bar_str: String = "█".repeat(filled) + &"░".repeat(empty);
-                    let quota_str = format!(
-                        " {} / {} [{}] ",
-                        format_size(used),
-                        format_size(limit),
-                        bar_str
-                    );
-                    let quota_width = quota_str.chars().count() as u16;
-                    Some((quota_str, quota_width))
+                    const BAR_W: usize = 10;
+                    let filled = (pct * BAR_W as f64).round() as usize;
+                    let bar_color = if pct >= 0.9 {
+                        Color::Red
+                    } else if pct >= 0.7 {
+                        Color::Yellow
+                    } else {
+                        Color::Cyan
+                    };
+                    let used_str = format_size(used);
+                    let limit_str = format_size(limit);
+                    // width: " │ " + used + " / " + limit + "  " + BAR_W + " "
+                    let total_w = (3 + used_str.len() + 3 + limit_str.len() + 2 + BAR_W + 1) as u16;
+                    let spans: Vec<Span<'static>> = vec![
+                        Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
+                        Span::styled(used_str, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                        Span::styled(" / ", Style::default().fg(Color::DarkGray)),
+                        Span::styled(limit_str, Style::default().fg(Color::DarkGray)),
+                        Span::styled("  ", Style::default()),
+                        Span::styled("▪".repeat(filled), Style::default().fg(bar_color)),
+                        Span::styled("▫".repeat(BAR_W - filled), Style::default().fg(Color::DarkGray)),
+                        Span::styled(" ", Style::default()),
+                    ];
+                    Some((spans, total_w))
                 }
                 (Some(used), None) => {
-                    let quota_str = format!(" {} used ", format_size(used));
-                    let quota_width = quota_str.chars().count() as u16;
-                    Some((quota_str, quota_width))
+                    let used_str = format_size(used);
+                    let total_w = (3 + used_str.len() + 6) as u16;
+                    let spans: Vec<Span<'static>> = vec![
+                        Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
+                        Span::styled(used_str, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                        Span::styled(" used ", Style::default().fg(Color::DarkGray)),
+                    ];
+                    Some((spans, total_w))
                 }
                 _ => None,
             };
 
-            if let Some((quota_str, quota_width)) = quota_span_opt {
-                // Split bar_area: help left, quota right
-                let quota_width = quota_width.min(bar_area.width.saturating_sub(4));
-                let help_width = bar_area.width.saturating_sub(quota_width);
+            if let Some((quota_spans, quota_w)) = quota_info {
+                let quota_w = quota_w.min(bar_area.width.saturating_sub(4));
+                let help_w = bar_area.width.saturating_sub(quota_w);
                 let chunks = Layout::default()
                     .direction(Direction::Horizontal)
-                    .constraints([
-                        Constraint::Length(help_width),
-                        Constraint::Length(quota_width),
-                    ])
+                    .constraints([Constraint::Length(help_w), Constraint::Length(quota_w)])
                     .split(bar_area);
                 f.render_widget(Paragraph::new(Line::from(help_spans)), chunks[0]);
-                f.render_widget(
-                    Paragraph::new(Line::from(vec![
-                        Span::styled(quota_str, Style::default().fg(Color::DarkGray)),
-                    ])),
-                    chunks[1],
-                );
+                f.render_widget(Paragraph::new(Line::from(quota_spans)), chunks[1]);
             } else {
                 f.render_widget(Paragraph::new(Line::from(help_spans)), bar_area);
             }
