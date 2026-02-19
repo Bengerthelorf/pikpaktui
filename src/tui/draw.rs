@@ -607,11 +607,57 @@ impl App {
 
         // Help bar
         if self.config.show_help_bar {
+            let bar_area = outer[1];
             let pairs = self.help_pairs();
-            let mut spans = vec![Span::raw(" ")];
-            spans.extend(Self::styled_help_spans(&pairs));
-            let bar = Paragraph::new(Line::from(spans));
-            f.render_widget(bar, outer[1]);
+            let mut help_spans = vec![Span::raw(" ")];
+            help_spans.extend(Self::styled_help_spans(&pairs));
+
+            // Build quota string if data is available
+            let quota_span_opt = match (self.quota_used, self.quota_limit) {
+                (Some(used), Some(limit)) if limit > 0 => {
+                    let pct = (used as f64 / limit as f64).clamp(0.0, 1.0);
+                    let bar_width: usize = 8;
+                    let filled = (pct * bar_width as f64).round() as usize;
+                    let empty = bar_width - filled;
+                    let bar_str: String = "█".repeat(filled) + &"░".repeat(empty);
+                    let quota_str = format!(
+                        " {} / {} [{}] ",
+                        format_size(used),
+                        format_size(limit),
+                        bar_str
+                    );
+                    let quota_width = quota_str.chars().count() as u16;
+                    Some((quota_str, quota_width))
+                }
+                (Some(used), None) => {
+                    let quota_str = format!(" {} used ", format_size(used));
+                    let quota_width = quota_str.chars().count() as u16;
+                    Some((quota_str, quota_width))
+                }
+                _ => None,
+            };
+
+            if let Some((quota_str, quota_width)) = quota_span_opt {
+                // Split bar_area: help left, quota right
+                let quota_width = quota_width.min(bar_area.width.saturating_sub(4));
+                let help_width = bar_area.width.saturating_sub(quota_width);
+                let chunks = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([
+                        Constraint::Length(help_width),
+                        Constraint::Length(quota_width),
+                    ])
+                    .split(bar_area);
+                f.render_widget(Paragraph::new(Line::from(help_spans)), chunks[0]);
+                f.render_widget(
+                    Paragraph::new(Line::from(vec![
+                        Span::styled(quota_str, Style::default().fg(Color::DarkGray)),
+                    ])),
+                    chunks[1],
+                );
+            } else {
+                f.render_widget(Paragraph::new(Line::from(help_spans)), bar_area);
+            }
         }
 
         self.draw_overlay(f);

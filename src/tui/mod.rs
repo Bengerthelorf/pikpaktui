@@ -104,6 +104,7 @@ enum OpResult {
     TrashOp(String),
     InfoThumbnail(Result<image::DynamicImage>),
     GotoPath(Result<(String, Vec<(String, String)>)>),
+    Quota(Result<crate::pikpak::QuotaInfo>),
 }
 
 struct PickerState {
@@ -283,6 +284,9 @@ struct App {
     trash_selected: usize,
     trash_expanded: bool,
     loading_label: Option<String>,
+    // Quota display
+    quota_used: Option<u64>,
+    quota_limit: Option<u64>,
 }
 
 impl App {
@@ -338,8 +342,11 @@ impl App {
             trash_selected: 0,
             trash_expanded: false,
             loading_label: None,
+            quota_used: None,
+            quota_limit: None,
         };
         app.refresh();
+        app.fetch_quota();
         app
     }
 
@@ -410,6 +417,8 @@ impl App {
             trash_selected: 0,
             trash_expanded: false,
             loading_label: None,
+            quota_used: None,
+            quota_limit: None,
         }
     }
 
@@ -742,6 +751,15 @@ impl App {
                     self.finish_loading();
                     self.push_log(format!("Go to path failed: {e:#}"));
                 }
+                OpResult::Quota(Ok(info)) => {
+                    if let Some(detail) = info.quota {
+                        self.quota_used = detail.usage.as_deref().and_then(|s| s.parse().ok());
+                        self.quota_limit = detail.limit.as_deref().and_then(|s| s.parse().ok());
+                    }
+                }
+                OpResult::Quota(Err(e)) => {
+                    self.push_log(format!("Quota fetch failed: {e:#}"));
+                }
             }
         }
 
@@ -823,6 +841,14 @@ impl App {
         }
     }
 
+    fn fetch_quota(&mut self) {
+        let client = Arc::clone(&self.client);
+        let tx = self.result_tx.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(OpResult::Quota(client.quota()));
+        });
+    }
+
     fn refresh(&mut self) {
         self.loading = true;
         let client = Arc::clone(&self.client);
@@ -832,6 +858,7 @@ impl App {
             let _ = tx.send(OpResult::Ls(client.ls(&fid)));
         });
         self.refresh_parent();
+        self.fetch_quota();
     }
 
     fn refresh_parent(&mut self) {
