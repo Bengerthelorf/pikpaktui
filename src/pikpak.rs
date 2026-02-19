@@ -354,6 +354,34 @@ impl PikPak {
         Ok(all_entries)
     }
 
+    /// Resolve a cloud path like `/My Files/Movies` to a folder ID and breadcrumb.
+    ///
+    /// Returns `(final_folder_id, breadcrumb)` where breadcrumb is a vec of
+    /// `(parent_id, folder_name)` pairs — the same format used by the TUI App.
+    pub fn resolve_path_nav(&self, path: &str) -> Result<(String, Vec<(String, String)>)> {
+        use anyhow::anyhow;
+        let components: Vec<&str> = path
+            .trim_matches('/')
+            .split('/')
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        let mut current_id = String::new(); // root
+        let mut breadcrumb: Vec<(String, String)> = Vec::new();
+
+        for name in components {
+            let entries = self.ls(&current_id)?;
+            let child = entries
+                .into_iter()
+                .find(|e| e.name == name && e.kind == crate::pikpak::EntryKind::Folder)
+                .ok_or_else(|| anyhow!("folder not found: {name}"))?;
+            breadcrumb.push((current_id, name.to_string()));
+            current_id = child.id;
+        }
+
+        Ok((current_id, breadcrumb))
+    }
+
     pub fn ls_trash(&self, limit: u32) -> Result<Vec<Entry>> {
         let token = self.access_token()?;
         let url = format!(

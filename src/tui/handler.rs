@@ -118,7 +118,7 @@ impl App {
                 }
                 Ok(false)
             }
-            InputMode::Normal => self.handle_normal_key(code),
+            InputMode::Normal => self.handle_normal_key(code, modifiers),
             InputMode::Rename { mut value } => {
                 if let Some(done) = handle_text_input(&mut value, code) {
                     if done {
@@ -157,6 +157,27 @@ impl App {
                     }
                     _ => {
                         self.input = InputMode::ConfirmQuit;
+                    }
+                }
+                Ok(false)
+            }
+            InputMode::GotoPath { mut query } => {
+                match handle_text_input(&mut query, code) {
+                    Some(true) => {
+                        // Enter — resolve path in background
+                        let q = query.trim().to_string();
+                        if !q.is_empty() {
+                            self.loading = true;
+                            let client = Arc::clone(&self.client);
+                            let tx = self.result_tx.clone();
+                            std::thread::spawn(move || {
+                                let _ = tx.send(OpResult::GotoPath(client.resolve_path_nav(&q)));
+                            });
+                        }
+                    }
+                    Some(false) => { /* ESC — Normal already set by mem::replace */ }
+                    None => {
+                        self.input = InputMode::GotoPath { query };
                     }
                 }
                 Ok(false)
@@ -513,7 +534,7 @@ impl App {
         }
     }
 
-    fn handle_normal_key(&mut self, code: KeyCode) -> Result<bool> {
+    fn handle_normal_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> Result<bool> {
         match code {
             KeyCode::Char('q') => {
                 if self.download_state.has_active() {
@@ -644,7 +665,13 @@ impl App {
                 }
             }
             KeyCode::Char('d') => {
-                if self.current_entry().is_some() {
+                if modifiers.contains(KeyModifiers::CONTROL) {
+                    if !self.entries.is_empty() {
+                        let half = (self.list_area_height.get() / 2).max(1) as usize;
+                        self.selected = (self.selected + half).min(self.entries.len() - 1);
+                        self.on_cursor_move();
+                    }
+                } else if self.current_entry().is_some() {
                     self.input = InputMode::ConfirmDelete;
                 }
             }
@@ -824,6 +851,31 @@ impl App {
                         }
                     }
                 }
+            }
+            // --- Navigation enhancements ---
+            KeyCode::Char('g') => {
+                if !self.entries.is_empty() {
+                    self.selected = 0;
+                    self.on_cursor_move();
+                }
+            }
+            KeyCode::Char('G') => {
+                if !self.entries.is_empty() {
+                    self.selected = self.entries.len() - 1;
+                    self.on_cursor_move();
+                }
+            }
+            KeyCode::Char('u') if modifiers.contains(KeyModifiers::CONTROL) => {
+                if !self.entries.is_empty() {
+                    let half = (self.list_area_height.get() / 2).max(1) as usize;
+                    self.selected = self.selected.saturating_sub(half);
+                    self.on_cursor_move();
+                }
+            }
+            KeyCode::Char(':') => {
+                self.input = InputMode::GotoPath {
+                    query: String::new(),
+                };
             }
             _ => {}
         }
@@ -2101,7 +2153,7 @@ impl App {
                 self.selected = clicked_idx;
                 self.on_cursor_move();
                 if double {
-                    let _ = self.handle_normal_key(KeyCode::Enter);
+                    let _ = self.handle_normal_key(KeyCode::Enter, KeyModifiers::NONE);
                 }
             }
         } else if self.is_in_rect(col, row, parent_area) {
@@ -2113,13 +2165,13 @@ impl App {
                 self.parent_selected = clicked_idx;
                 if double {
                     // Navigate back to parent, then enter the clicked folder
-                    let _ = self.handle_normal_key(KeyCode::Backspace);
+                    let _ = self.handle_normal_key(KeyCode::Backspace, KeyModifiers::NONE);
                     let is_folder = self
                         .entries
                         .get(self.selected)
                         .is_some_and(|e| e.kind == EntryKind::Folder);
                     if is_folder {
-                        let _ = self.handle_normal_key(KeyCode::Enter);
+                        let _ = self.handle_normal_key(KeyCode::Enter, KeyModifiers::NONE);
                     }
                 }
             }
@@ -2132,9 +2184,9 @@ impl App {
             let has_entry = self.selected < self.entries.len();
             if has_entry {
                 if is_folder {
-                    let _ = self.handle_normal_key(KeyCode::Enter);
+                    let _ = self.handle_normal_key(KeyCode::Enter, KeyModifiers::NONE);
                 } else {
-                    let _ = self.handle_normal_key(KeyCode::Char(' '));
+                    let _ = self.handle_normal_key(KeyCode::Char(' '), KeyModifiers::NONE);
                 }
             }
         }

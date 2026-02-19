@@ -743,6 +743,7 @@ impl App {
             .highlight_symbol("\u{203a} ");
         f.render_stateful_widget(list, area, &mut state);
         self.scroll_offset.set(state.offset());
+        self.list_area_height.set(area.height);
     }
 
     fn draw_preview_pane(&self, f: &mut Frame, area: ratatui::layout::Rect) {
@@ -1188,9 +1189,11 @@ impl App {
         match &self.input {
             InputMode::Normal => {
                 vec![
-                    ("j/k", "nav"),
+                    ("j/k/g/G", "nav"),
+                    ("Ctrl+U/D", "half page"),
                     ("Enter", "open"),
                     ("Bksp", "back"),
+                    (":", "goto"),
                     ("r", "refresh"),
                     ("h", "help"),
                     ("q", "quit"),
@@ -1212,6 +1215,9 @@ impl App {
             ],
             InputMode::Rename { .. } | InputMode::Mkdir { .. } => {
                 vec![("Enter", "confirm"), ("Esc", "cancel")]
+            }
+            InputMode::GotoPath { .. } => {
+                vec![("Enter", "go"), ("Esc", "cancel")]
             }
             InputMode::ConfirmQuit => {
                 vec![("y", "quit"), ("n/Esc", "cancel")]
@@ -1418,6 +1424,41 @@ impl App {
                         .title(" New Folder ")
                         .title_style(Style::default().fg(mk_tc))
                         .border_style(Style::default().fg(mk_bc)),
+                );
+                f.render_widget(p, area);
+            }
+            InputMode::GotoPath { query } => {
+                let area = centered_rect(70, 20, f.area());
+                f.render_widget(Clear, area);
+                let (bc, tc) = if self.is_vibrant() {
+                    (Color::LightCyan, Color::LightCyan)
+                } else {
+                    (Color::Cyan, Color::Cyan)
+                };
+                let goto_hints = vec![("Enter", "go"), ("Esc", "cancel")];
+                let mut hint_spans = vec![Span::raw("  ")];
+                hint_spans.extend(Self::styled_help_spans(&goto_hints));
+                let p = Paragraph::new(Text::from(vec![
+                    Line::from(""),
+                    Line::from(vec![
+                        Span::styled("  Path: ", Style::default().fg(Color::Cyan)),
+                        Span::styled(
+                            format!("{}{}", query, cur),
+                            Style::default().fg(Color::Yellow),
+                        ),
+                    ]),
+                    Line::from(Span::styled(
+                        "  e.g. /My Files/Movies",
+                        Style::default().fg(Color::DarkGray),
+                    )),
+                    Line::from(""),
+                    Line::from(hint_spans),
+                ]))
+                .block(
+                    self.styled_block()
+                        .title(" Go to Path ")
+                        .title_style(Style::default().fg(tc))
+                        .border_style(Style::default().fg(bc)),
                 );
                 f.render_widget(p, area);
             }

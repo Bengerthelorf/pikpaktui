@@ -103,6 +103,7 @@ enum OpResult {
     TrashList(Result<Vec<Entry>>),
     TrashOp(String),
     InfoThumbnail(Result<image::DynamicImage>),
+    GotoPath(Result<(String, Vec<(String, String)>)>),
 }
 
 struct PickerState {
@@ -199,6 +200,9 @@ enum InputMode {
         expanded: bool,
     },
     ConfirmQuit,
+    GotoPath {
+        query: String,
+    },
     Settings {
         selected: usize,
         editing: bool,
@@ -263,6 +267,7 @@ struct App {
     preview_pane_area: Cell<ratatui::layout::Rect>,
     scroll_offset: Cell<usize>,
     parent_scroll_offset: Cell<usize>,
+    list_area_height: Cell<u16>,
     // Double-click detection
     last_click_time: Instant,
     last_click_pos: (u16, u16),
@@ -322,6 +327,7 @@ impl App {
             preview_pane_area: Cell::new(ratatui::layout::Rect::default()),
             scroll_offset: Cell::new(0),
             parent_scroll_offset: Cell::new(0),
+            list_area_height: Cell::new(0),
             last_click_time: Instant::now(),
             last_click_pos: (0, 0),
             preview_scroll: 0,
@@ -393,6 +399,7 @@ impl App {
             preview_pane_area: Cell::new(ratatui::layout::Rect::default()),
             scroll_offset: Cell::new(0),
             parent_scroll_offset: Cell::new(0),
+            list_area_height: Cell::new(0),
             last_click_time: Instant::now(),
             last_click_pos: (0, 0),
             preview_scroll: 0,
@@ -715,6 +722,25 @@ impl App {
                 }
                 OpResult::InfoThumbnail(Err(e)) => {
                     self.push_log(format!("Info thumbnail failed: {e:#}"));
+                }
+                OpResult::GotoPath(Ok((folder_id, new_breadcrumb))) => {
+                    self.finish_loading();
+                    self.breadcrumb = new_breadcrumb;
+                    self.current_folder_id = folder_id.clone();
+                    self.selected = 0;
+                    self.parent_entries.clear();
+                    self.parent_selected = 0;
+                    self.clear_preview();
+                    self.loading = true;
+                    let client = Arc::clone(&self.client);
+                    let tx = self.result_tx.clone();
+                    std::thread::spawn(move || {
+                        let _ = tx.send(OpResult::Ls(client.ls(&folder_id)));
+                    });
+                }
+                OpResult::GotoPath(Err(e)) => {
+                    self.finish_loading();
+                    self.push_log(format!("Go to path failed: {e:#}"));
                 }
             }
         }
