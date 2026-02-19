@@ -219,7 +219,62 @@ impl PikPak {
         let session = self
             .load_session()?
             .ok_or_else(|| anyhow!("not logged in, please login first"))?;
+
+        // Refresh proactively if the token expires within 5 minutes.
+        if session.is_expired(now_unix() + 300) {
+            match self.refresh_session(&session.refresh_token) {
+                Ok(new_token) => return Ok(new_token),
+                Err(e) => {
+                    return Err(anyhow!(
+                        "session expired and token refresh failed: {e:#}\nPlease log in again."
+                    ));
+                }
+            }
+        }
+
         Ok(session.access_token)
+    }
+
+    /// Use the refresh_token to obtain a new access_token without requiring
+    /// the user's password. Saves the updated session to disk and returns
+    /// the new access_token.
+    fn refresh_session(&self, refresh_token: &str) -> Result<String> {
+        let url = format!(
+            "{}/v1/auth/token",
+            self.auth_base_url.trim_end_matches('/')
+        );
+
+        let payload = serde_json::json!({
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+            "client_id": self.client_id,
+            "client_secret": self.client_secret,
+        });
+
+        let response = self
+            .http
+            .post(&url)
+            .json(&payload)
+            .send()
+            .context("token refresh request failed")?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().unwrap_or_default();
+            return Err(anyhow!("token refresh failed ({}): {}", status, sanitize(&body)));
+        }
+
+        let refreshed: SigninResponse = response.json().context("invalid token refresh json")?;
+        let expires_in = i64::try_from(refreshed.expires_in).context("expires_in overflow")?;
+
+        let token = SessionToken {
+            access_token: refreshed.access_token.clone(),
+            refresh_token: refreshed.refresh_token,
+            expires_at_unix: now_unix().saturating_add(expires_in),
+        };
+        self.save_session(&token)?;
+
+        Ok(refreshed.access_token)
     }
 
     fn authed_headers(
@@ -1963,6 +2018,39 @@ mod tests {
     fn md5_basic() {
         assert_eq!(md5_hex(""), "d41d8cd98f00b204e9800998ecf8427e");
         assert_eq!(md5_hex("abc"), "900150983cd24fb0d6963f7d28e17f72");
+    }
+
+    #[test]
+    fn token_refresh_response_deserializes() {
+        // The refresh endpoint returns the same shape as signin.
+        let json = r#"{
+            "access_token": "new_access",
+            "refresh_token": "new_refresh",
+            "expires_in": 7200
+        }"#;
+        let resp: SigninResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.access_token, "new_access");
+        assert_eq!(resp.refresh_token, "new_refresh");
+        assert_eq!(resp.expires_in, 7200);
+    }
+
+    #[test]
+    fn access_token_triggers_refresh_when_expired() {
+        // Verify that is_expired returns true when expires_at_unix is in the past.
+        let expired = SessionToken {
+            access_token: "old".into(),
+            refresh_token: "r".into(),
+            expires_at_unix: now_unix() - 1,
+        };
+        assert!(expired.is_expired(now_unix()));
+
+        // And false when still valid with the 5-min buffer.
+        let valid = SessionToken {
+            access_token: "good".into(),
+            refresh_token: "r".into(),
+            expires_at_unix: now_unix() + 600,
+        };
+        assert!(!valid.is_expired(now_unix() + 300));
     }
 
     #[test]
