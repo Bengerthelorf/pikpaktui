@@ -1,8 +1,9 @@
 use anyhow::{Result, anyhow};
 
 use crate::config::SortField;
+use crate::pikpak::{EntryKind, PikPak}; // EntryKind used in print_tree folder recursion
 
-const USAGE: &str = "Usage: pikpaktui ls [-l|--long] [-s|--sort=<field>] [-r|--reverse] [path]\n\nSort fields: name, size, created, type, extension, none";
+const USAGE: &str = "Usage: pikpaktui ls [-l|--long] [-s|--sort=<field>] [-r|--reverse] [--tree] [--depth=N] [path]\n\nSort fields: name, size, created, type, extension, none";
 
 #[derive(Debug, PartialEq, Eq)]
 struct LsArgs {
@@ -10,6 +11,8 @@ struct LsArgs {
     long: bool,
     sort_field: SortField,
     reverse: bool,
+    tree: bool,
+    max_depth: Option<usize>,
 }
 
 fn parse_sort_field(s: &str) -> Result<SortField> {
@@ -29,8 +32,11 @@ fn parse_args(args: &[String]) -> Result<LsArgs> {
     let mut long = false;
     let mut sort_field = SortField::default();
     let mut reverse = false;
+    let mut tree = false;
+    let mut max_depth: Option<usize> = None;
     let mut options_done = false;
     let mut expect_sort = false;
+    let mut expect_depth = false;
 
     for arg in args {
         if expect_sort {
@@ -38,33 +44,31 @@ fn parse_args(args: &[String]) -> Result<LsArgs> {
             expect_sort = false;
             continue;
         }
+        if expect_depth {
+            max_depth = Some(arg.parse::<usize>().map_err(|_| anyhow!("--depth requires a positive integer"))?);
+            expect_depth = false;
+            continue;
+        }
 
         if !options_done {
             match arg.as_str() {
-                "-l" | "--long" => {
-                    long = true;
-                    continue;
-                }
-                "-r" | "--reverse" => {
-                    reverse = true;
-                    continue;
-                }
-                "-s" | "--sort" => {
-                    expect_sort = true;
-                    continue;
-                }
-                "--" => {
-                    options_done = true;
-                    continue;
-                }
+                "-l" | "--long" => { long = true; continue; }
+                "-r" | "--reverse" => { reverse = true; continue; }
+                "--tree" => { tree = true; continue; }
+                "-s" | "--sort" => { expect_sort = true; continue; }
+                "--depth" => { expect_depth = true; continue; }
+                "--" => { options_done = true; continue; }
                 _ if arg.starts_with("--sort=") => {
-                    let val = &arg["--sort=".len()..];
-                    sort_field = parse_sort_field(val)?;
+                    sort_field = parse_sort_field(&arg["--sort=".len()..])?;
                     continue;
                 }
                 _ if arg.starts_with("-s=") => {
-                    let val = &arg["-s=".len()..];
-                    sort_field = parse_sort_field(val)?;
+                    sort_field = parse_sort_field(&arg["-s=".len()..])?;
+                    continue;
+                }
+                _ if arg.starts_with("--depth=") => {
+                    let val = &arg["--depth=".len()..];
+                    max_depth = Some(val.parse::<usize>().map_err(|_| anyhow!("--depth requires a positive integer"))?);
                     continue;
                 }
                 _ if arg.starts_with('-') => {
@@ -83,13 +87,70 @@ fn parse_args(args: &[String]) -> Result<LsArgs> {
     if expect_sort {
         return Err(anyhow!("--sort requires a value\n{USAGE}"));
     }
+    if expect_depth {
+        return Err(anyhow!("--depth requires a value\n{USAGE}"));
+    }
+    // --depth implies --tree
+    if max_depth.is_some() {
+        tree = true;
+    }
 
     Ok(LsArgs {
         path: path.unwrap_or_else(|| "/".to_string()),
         long,
         sort_field,
         reverse,
+        tree,
+        max_depth,
     })
+}
+
+fn print_tree(
+    client: &PikPak,
+    folder_id: &str,
+    prefix: &str,
+    sort_field: SortField,
+    reverse: bool,
+    long: bool,
+    nerd_font: bool,
+    depth: usize,
+    max_depth: Option<usize>,
+) -> Result<()> {
+    use crate::theme;
+
+    if max_depth.is_some_and(|d| depth > d) {
+        return Ok(());
+    }
+
+    let mut entries = client.ls(folder_id)?;
+    crate::config::sort_entries(&mut entries, sort_field, reverse);
+
+    let count = entries.len();
+    for (i, entry) in entries.iter().enumerate() {
+        let is_last = i + 1 == count;
+        let connector = if is_last { "└── " } else { "├── " };
+        let cat = theme::categorize(entry);
+        let icon = theme::cli_icon(cat, nerd_font);
+        let name_display = format!("{}{}", icon, entry.name);
+        let colored_name = theme::cli_colored(&name_display, cat);
+
+        if long {
+            println!("{}{}{}{}", super::long_entry_prefix(entry), prefix, connector, colored_name);
+        } else {
+            println!("{}{}{}", prefix, connector, colored_name);
+        }
+
+        if entry.kind == EntryKind::Folder {
+            let child_prefix = if is_last {
+                format!("{}    ", prefix)
+            } else {
+                format!("{}│   ", prefix)
+            };
+            print_tree(client, &entry.id, &child_prefix, sort_field, reverse, long, nerd_font, depth + 1, max_depth)?;
+        }
+    }
+
+    Ok(())
 }
 
 pub fn run(args: &[String]) -> Result<()> {
@@ -97,8 +158,18 @@ pub fn run(args: &[String]) -> Result<()> {
     let config = super::cli_config();
     let nerd_font = config.cli_nerd_font;
     let client = super::cli_client()?;
-    let parent_id = client.resolve_path(&parsed.path)?;
-    let mut entries = client.ls(&parent_id)?;
+    let folder_id = client.resolve_path(&parsed.path)?;
+
+    if parsed.tree {
+        // Print root label
+        let root_label = parsed.path.trim_end_matches('/');
+        let root_label = if root_label.is_empty() { "/" } else { root_label };
+        println!("{}", root_label);
+        print_tree(&client, &folder_id, "", parsed.sort_field, parsed.reverse, parsed.long, nerd_font, 1, parsed.max_depth)?;
+        return Ok(());
+    }
+
+    let mut entries = client.ls(&folder_id)?;
     crate::config::sort_entries(&mut entries, parsed.sort_field, parsed.reverse);
 
     if entries.is_empty() {
@@ -134,6 +205,8 @@ mod tests {
                 long: false,
                 sort_field: SortField::Name,
                 reverse: false,
+                tree: false,
+                max_depth: None,
             }
         );
     }
@@ -147,6 +220,8 @@ mod tests {
                 long: true,
                 sort_field: SortField::Name,
                 reverse: false,
+                tree: false,
+                max_depth: None,
             }
         );
         assert_eq!(
@@ -156,6 +231,8 @@ mod tests {
                 long: true,
                 sort_field: SortField::Name,
                 reverse: false,
+                tree: false,
+                max_depth: None,
             }
         );
     }
@@ -169,6 +246,8 @@ mod tests {
                 long: false,
                 sort_field: SortField::Size,
                 reverse: false,
+                tree: false,
+                max_depth: None,
             }
         );
         assert_eq!(
@@ -178,6 +257,8 @@ mod tests {
                 long: false,
                 sort_field: SortField::Created,
                 reverse: false,
+                tree: false,
+                max_depth: None,
             }
         );
         assert_eq!(
@@ -187,6 +268,8 @@ mod tests {
                 long: false,
                 sort_field: SortField::Extension,
                 reverse: false,
+                tree: false,
+                max_depth: None,
             }
         );
     }
@@ -200,6 +283,8 @@ mod tests {
                 long: false,
                 sort_field: SortField::Size,
                 reverse: true,
+                tree: false,
+                max_depth: None,
             }
         );
         assert_eq!(
@@ -209,6 +294,57 @@ mod tests {
                 long: false,
                 sort_field: SortField::Name,
                 reverse: true,
+                tree: false,
+                max_depth: None,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_tree_flag() {
+        assert_eq!(
+            parse_args(&s(&["--tree", "/Movies"])).unwrap(),
+            LsArgs {
+                path: "/Movies".to_string(),
+                long: false,
+                sort_field: SortField::Name,
+                reverse: false,
+                tree: true,
+                max_depth: None,
+            }
+        );
+        assert_eq!(
+            parse_args(&s(&["--depth=2", "/Movies"])).unwrap(),
+            LsArgs {
+                path: "/Movies".to_string(),
+                long: false,
+                sort_field: SortField::Name,
+                reverse: false,
+                tree: true,
+                max_depth: Some(2),
+            }
+        );
+        assert_eq!(
+            parse_args(&s(&["--depth", "3"])).unwrap(),
+            LsArgs {
+                path: "/".to_string(),
+                long: false,
+                sort_field: SortField::Name,
+                reverse: false,
+                tree: true,
+                max_depth: Some(3),
+            }
+        );
+        // --tree and --long can be combined
+        assert_eq!(
+            parse_args(&s(&["--tree", "-l"])).unwrap(),
+            LsArgs {
+                path: "/".to_string(),
+                long: true,
+                sort_field: SortField::Name,
+                reverse: false,
+                tree: true,
+                max_depth: None,
             }
         );
     }

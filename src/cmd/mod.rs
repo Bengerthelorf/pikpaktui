@@ -118,6 +118,21 @@ pub fn print_entries_short(entries: &[pikpak::Entry], nerd_font: bool) {
     }
 }
 
+/// Returns the colored `id  size  date  ` prefix used in long-format output.
+/// Shared between `print_entries_long` and tree long mode.
+pub fn long_entry_prefix(e: &pikpak::Entry) -> String {
+    let size_str = if e.kind == pikpak::EntryKind::Folder {
+        format!("{:>9}", "-")
+    } else {
+        format!("{:>9}", format_size(e.size))
+    };
+    let date = format_date(&e.created_time);
+    let colored_id = format!("\x1b[2m{}\x1b[0m", e.id);
+    let colored_size = format!("\x1b[1;32m{}\x1b[0m", size_str);
+    let colored_date = format!("\x1b[34m{:16}\x1b[0m", date);
+    format!("{}  {}  {}  ", colored_id, colored_size, colored_date)
+}
+
 /// eza-style long format output: id, size, date, icon+name.
 pub fn print_entries_long(entries: &[pikpak::Entry], nerd_font: bool) {
     use crate::theme;
@@ -125,26 +140,9 @@ pub fn print_entries_long(entries: &[pikpak::Entry], nerd_font: bool) {
     for e in entries {
         let cat = theme::categorize(e);
         let icon = theme::cli_icon(cat, nerd_font);
-
-        let size_str = if e.kind == pikpak::EntryKind::Folder {
-            format!("{:>8}", "-")
-        } else {
-            format!("{:>8}", format_size(e.size))
-        };
-
-        let date = format_date(&e.created_time);
         let name_display = format!("{}{}", icon, e.name);
         let colored_name = theme::cli_colored(&name_display, cat);
-
-        let colored_id = format!("\x1b[2m{}\x1b[0m", e.id);
-        let colored_size = format!("\x1b[1;32m{}\x1b[0m", size_str);
-        let padded_date = format!("{:16}", date);
-        let colored_date = format!("\x1b[34m{}\x1b[0m", padded_date);
-
-        println!(
-            "{}  {}  {}  {}",
-            colored_id, colored_size, colored_date, colored_name
-        );
+        println!("{}{}", long_entry_prefix(e), colored_name);
     }
 }
 

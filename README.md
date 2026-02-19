@@ -89,7 +89,7 @@ What gets completed:
 |---------|------------|
 | `pikpaktui <Tab>` | Subcommands with descriptions |
 | `pikpaktui ls /<Tab>` | Remote directory listing |
-| `pikpaktui ls -<Tab>` | `-l`, `--long`, `-s`, `--sort`, `-r`, `--reverse` |
+| `pikpaktui ls -<Tab>` | `-l`, `--long`, `-s`, `--sort`, `-r`, `--reverse`, `--tree`, `--depth` |
 | `pikpaktui ls --sort <Tab>` | `name`, `size`, `created`, `type`, `extension`, `none` |
 | `pikpaktui mv -<Tab>` | `-t` flag |
 | `pikpaktui mv /src<Tab> /dst<Tab>` | Cloud paths for both arguments |
@@ -126,6 +126,9 @@ pikpaktui ls /                                        # Colored multi-column gri
 pikpaktui ls -l "/My Pack"                            # Long format (id + size + date + name)
 pikpaktui ls --sort=size -r /                         # Sort by size, largest last
 pikpaktui ls -s created "/My Pack"                    # Sort by creation time, newest first
+pikpaktui ls --tree /                                 # Recursive tree view
+pikpaktui ls --tree --depth=2 "/My Pack"              # Tree limited to 2 levels deep
+pikpaktui ls --tree -l /Movies                        # Tree with size and date columns
 pikpaktui mv "/My Pack/file.txt" /Archive             # Move file
 pikpaktui mv -t /Archive /a.txt /b.txt /c.txt        # Batch move to target
 pikpaktui cp "/My Pack/file.txt" /Backup              # Copy file
