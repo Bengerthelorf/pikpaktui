@@ -6,7 +6,7 @@ use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph};
 use std::collections::VecDeque;
 
 use super::download::TaskStatus;
-use super::{App, format_size, centered_rect, SPINNER_FRAMES};
+use super::{App, format_size, truncate_name, centered_rect, SPINNER_FRAMES};
 
 /// Download view mode: collapsed (centered popup) or expanded (full screen)
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -663,16 +663,6 @@ impl App {
                 .border_style(Style::default().fg(Color::DarkGray)),
         );
         f.render_widget(p, area);
-    }
-}
-
-fn truncate_name(name: &str, max_len: usize) -> String {
-    let char_count = name.chars().count();
-    if char_count <= max_len {
-        name.to_string()
-    } else {
-        let truncated: String = name.chars().take(max_len.saturating_sub(3)).collect();
-        format!("{}...", truncated)
     }
 }
 

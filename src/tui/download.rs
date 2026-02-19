@@ -357,15 +357,14 @@ pub fn load_download_state() -> Vec<DownloadTask> {
                 "done" => TaskStatus::Done,
                 _ => TaskStatus::Paused,
             };
-            let is_paused = status == TaskStatus::Paused;
             DownloadTask {
                 file_id: p.file_id,
                 name: p.name,
                 total_size: p.total_size,
                 downloaded: p.downloaded,
                 dest_path: PathBuf::from(p.dest_path),
+                pause_flag: Arc::new(AtomicBool::new(status == TaskStatus::Paused)),
                 status,
-                pause_flag: Arc::new(AtomicBool::new(is_paused)),
                 cancel_flag: Arc::new(AtomicBool::new(false)),
                 speed: 0.0,
             }

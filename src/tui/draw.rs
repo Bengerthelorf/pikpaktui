@@ -12,7 +12,7 @@ use crate::theme;
 
 use super::completion::PathInput;
 use super::local_completion::LocalPathInput;
-use super::{App, InputMode, LoginField, PreviewState, SPINNER_FRAMES, centered_rect, format_size};
+use super::{App, InputMode, LoginField, PreviewState, SPINNER_FRAMES, centered_rect, format_size, truncate_name};
 
 impl App {
     /// Returns `true` when a popup overlay is active that may cover the preview pane.
@@ -3391,16 +3391,6 @@ fn wrap_labeled_field<'a>(
         result.push(Line::from(Span::styled(label, label_style)));
     }
     result
-}
-
-fn truncate_name(name: &str, max_len: usize) -> String {
-    let char_count: usize = name.chars().count();
-    if char_count <= max_len {
-        name.to_string()
-    } else {
-        let truncated: String = name.chars().take(max_len.saturating_sub(3)).collect();
-        format!("{}...", truncated)
-    }
 }
 
 /// Build a large ⚠ warning triangle using block characters.

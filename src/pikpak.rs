@@ -1646,14 +1646,8 @@ pub struct MediaInfo {
     pub link: Option<MediaLink>,
     #[serde(default)]
     pub video: Option<MediaVideo>,
-    #[allow(dead_code)]
-    #[serde(default)]
-    pub is_default: Option<bool>,
     #[serde(default)]
     pub is_origin: Option<bool>,
-    #[allow(dead_code)]
-    #[serde(default)]
-    pub category: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

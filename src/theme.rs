@@ -80,7 +80,8 @@ pub fn color_for_scheme(category: FileCategory, scheme: ColorScheme) -> Color {
             FileCategory::Code => Color::Yellow,
             FileCategory::Default => Color::White,
         },
-        ColorScheme::Vibrant => match category {
+        // Custom falls back to Vibrant (actual custom colors handled by TuiConfig::get_color())
+        ColorScheme::Vibrant | ColorScheme::Custom => match category {
             FileCategory::Folder => Color::LightBlue,
             FileCategory::Archive => Color::LightRed,
             FileCategory::Image => Color::LightMagenta,
@@ -89,20 +90,6 @@ pub fn color_for_scheme(category: FileCategory, scheme: ColorScheme) -> Color {
             FileCategory::Document => Color::LightGreen,
             FileCategory::Code => Color::LightYellow,
             FileCategory::Default => Color::White,
-        },
-        ColorScheme::Custom => {
-            // Custom colors should be handled by TuiConfig::get_color()
-            // This is a fallback to Vibrant
-            match category {
-                FileCategory::Folder => Color::LightBlue,
-                FileCategory::Archive => Color::LightRed,
-                FileCategory::Image => Color::LightMagenta,
-                FileCategory::Video => Color::LightCyan,
-                FileCategory::Audio => Color::Cyan,
-                FileCategory::Document => Color::LightGreen,
-                FileCategory::Code => Color::LightYellow,
-                FileCategory::Default => Color::White,
-            }
         }
     }
 }
