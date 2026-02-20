@@ -1388,10 +1388,10 @@ impl App {
                 self.restore_upload_input(input);
             }
             KeyCode::Enter => {
-                // Apply selected candidate first
+                // Apply selected candidate first; always stay in overlay after applying
+                // so the user can review the completed path and press Enter again to upload.
                 let applied = input.confirm_selected();
-                if applied && input.value.ends_with('/') {
-                    // Entered a directory; stay in overlay for further navigation
+                if applied {
                     self.restore_upload_input(input);
                 } else {
                     let local_path = std::path::PathBuf::from(input.value.trim());
