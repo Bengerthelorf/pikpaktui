@@ -1262,22 +1262,42 @@ impl App {
         match code {
             KeyCode::Esc => {
                 if !input.candidates.is_empty() {
-                    input.candidates.clear();
-                    input.candidate_idx = None;
-                    input.completion_base.clear();
+                    input.clear_candidates();
                     self.restore_download_input(input);
                 } else {
                     self.input = InputMode::CartView;
                 }
             }
+            // Tab: open candidates (if not open) or move forward
             KeyCode::Tab => {
-                input.tab_complete();
+                if input.candidates.is_empty() {
+                    input.open_candidates();
+                } else {
+                    input.navigate_next();
+                }
+                self.restore_download_input(input);
+            }
+            // Shift+Tab: open candidates (if not open) then move backward
+            KeyCode::BackTab => {
+                if input.candidates.is_empty() {
+                    input.open_candidates();
+                }
+                input.navigate_prev();
+                self.restore_download_input(input);
+            }
+            KeyCode::Up => {
+                input.navigate_prev();
+                self.restore_download_input(input);
+            }
+            KeyCode::Down => {
+                input.navigate_next();
                 self.restore_download_input(input);
             }
             KeyCode::Enter => {
-                if !input.candidates.is_empty() {
-                    input.candidates.clear();
-                    input.candidate_idx = None;
+                // Apply selected candidate; if one was applied, stay in overlay
+                // to let user navigate deeper or press Enter again to confirm.
+                let applied = input.confirm_selected();
+                if applied {
                     self.restore_download_input(input);
                 } else {
                     let dest = input.value.trim().to_string();
@@ -1292,16 +1312,16 @@ impl App {
             }
             KeyCode::Backspace => {
                 input.value.pop();
-                input.candidates.clear();
-                input.candidate_idx = None;
-                input.completion_base.clear();
+                if !input.candidates.is_empty() {
+                    input.open_candidates(); // re-filter with shorter prefix
+                }
                 self.restore_download_input(input);
             }
             KeyCode::Char(c) => {
                 input.value.push(c);
-                input.candidates.clear();
-                input.candidate_idx = None;
-                input.completion_base.clear();
+                if !input.candidates.is_empty() {
+                    input.open_candidates(); // re-filter with new character
+                }
                 self.restore_download_input(input);
             }
             _ => {
@@ -1336,22 +1356,42 @@ impl App {
         match code {
             KeyCode::Esc => {
                 if !input.candidates.is_empty() {
-                    input.candidates.clear();
-                    input.candidate_idx = None;
-                    input.completion_base.clear();
+                    input.clear_candidates();
                     self.restore_upload_input(input);
                 } else {
                     self.input = InputMode::Normal;
                 }
             }
+            // Tab: open candidates (if not open) or move forward
             KeyCode::Tab => {
-                input.tab_complete();
+                if input.candidates.is_empty() {
+                    input.open_candidates();
+                } else {
+                    input.navigate_next();
+                }
+                self.restore_upload_input(input);
+            }
+            // Shift+Tab: open candidates (if not open) then move backward
+            KeyCode::BackTab => {
+                if input.candidates.is_empty() {
+                    input.open_candidates();
+                }
+                input.navigate_prev();
+                self.restore_upload_input(input);
+            }
+            KeyCode::Up => {
+                input.navigate_prev();
+                self.restore_upload_input(input);
+            }
+            KeyCode::Down => {
+                input.navigate_next();
                 self.restore_upload_input(input);
             }
             KeyCode::Enter => {
-                if !input.candidates.is_empty() {
-                    input.candidates.clear();
-                    input.candidate_idx = None;
+                // Apply selected candidate first
+                let applied = input.confirm_selected();
+                if applied && input.value.ends_with('/') {
+                    // Entered a directory; stay in overlay for further navigation
                     self.restore_upload_input(input);
                 } else {
                     let local_path = std::path::PathBuf::from(input.value.trim());
@@ -1385,16 +1425,16 @@ impl App {
             }
             KeyCode::Backspace => {
                 input.value.pop();
-                input.candidates.clear();
-                input.candidate_idx = None;
-                input.completion_base.clear();
+                if !input.candidates.is_empty() {
+                    input.open_candidates(); // re-filter with shorter prefix
+                }
                 self.restore_upload_input(input);
             }
             KeyCode::Char(c) => {
                 input.value.push(c);
-                input.candidates.clear();
-                input.candidate_idx = None;
-                input.completion_base.clear();
+                if !input.candidates.is_empty() {
+                    input.open_candidates(); // re-filter with new character
+                }
                 self.restore_upload_input(input);
             }
             _ => {

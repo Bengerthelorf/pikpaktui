@@ -53,27 +53,14 @@ impl LocalPathInput {
         }
     }
 
-    pub fn tab_complete(&mut self) {
-        // Cycle through existing candidates
-        if !self.candidates.is_empty() {
-            let idx = match self.candidate_idx {
-                Some(i) => (i + 1) % self.candidates.len(),
-                None => 0,
-            };
-            self.candidate_idx = Some(idx);
-            let base = self.completion_base.clone();
-            let (name, is_dir) = &self.candidates[idx];
-            let suffix = if *is_dir { "/" } else { "" };
-            self.value = join_path(&base, &format!("{}{}", name, suffix));
-            return;
-        }
-
-        // Parse input into directory part + prefix
+    /// Compute candidates from the current value without changing it.
+    /// Resets selection to the first candidate.
+    pub fn open_candidates(&mut self) {
         let (dir_part, prefix) = split_local_path(&self.value);
-
-        // List directory entries
         let dir_path = if dir_part.is_empty() { "." } else { &dir_part };
         let Ok(read_dir) = std::fs::read_dir(dir_path) else {
+            self.candidates.clear();
+            self.candidate_idx = None;
             return;
         };
 
@@ -81,46 +68,71 @@ impl LocalPathInput {
         let mut matches: Vec<(String, bool)> = Vec::new();
 
         for entry in read_dir.flatten() {
-            let Ok(ft) = entry.file_type() else {
-                continue;
-            };
+            let Ok(ft) = entry.file_type() else { continue };
             let is_dir = ft.is_dir();
             if !is_dir && !self.include_files {
                 continue;
             }
             let name = entry.file_name().to_string_lossy().to_string();
             if name.starts_with('.') && !prefix.starts_with('.') {
-                continue; // skip hidden unless user typed a dot
+                continue;
             }
-            if name.to_lowercase().starts_with(&prefix_lower) {
+            if fuzzy_match_lower(&name.to_lowercase(), &prefix_lower) {
                 matches.push((name, is_dir));
             }
         }
 
-        matches.sort_by(|a, b| {
-            // Dirs first, then alphabetical
-            b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0))
-        });
+        matches.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
 
-        if matches.is_empty() {
+        self.completion_base = dir_part;
+        self.candidates = matches;
+        self.candidate_idx = if self.candidates.is_empty() { None } else { Some(0) };
+    }
+
+    /// Move selection forward (Tab / Down). Wraps around.
+    pub fn navigate_next(&mut self) {
+        if self.candidates.is_empty() {
             return;
         }
+        let n = self.candidates.len();
+        self.candidate_idx = Some(match self.candidate_idx {
+            Some(i) => (i + 1) % n,
+            None => 0,
+        });
+    }
 
-        self.completion_base = dir_part.clone();
-
-        if matches.len() == 1 {
-            let (name, is_dir) = &matches[0];
-            let suffix = if *is_dir { "/" } else { "" };
-            self.value = join_path(&dir_part, &format!("{}{}", name, suffix));
-            self.candidates.clear();
-            self.candidate_idx = None;
-        } else {
-            self.candidate_idx = Some(0);
-            let (first_name, first_is_dir) = &matches[0];
-            let suffix = if *first_is_dir { "/" } else { "" };
-            self.value = join_path(&dir_part, &format!("{}{}", first_name, suffix));
-            self.candidates = matches;
+    /// Move selection backward (Shift+Tab / Up). Wraps around.
+    pub fn navigate_prev(&mut self) {
+        if self.candidates.is_empty() {
+            return;
         }
+        let n = self.candidates.len();
+        self.candidate_idx = Some(match self.candidate_idx {
+            Some(0) | None => n - 1,
+            Some(i) => i - 1,
+        });
+    }
+
+    /// Apply the selected candidate to `value`. Returns true if a candidate was applied.
+    pub fn confirm_selected(&mut self) -> bool {
+        if let Some(idx) = self.candidate_idx {
+            if let Some((name, is_dir)) = self.candidates.get(idx) {
+                let suffix = if *is_dir { "/" } else { "" };
+                self.value = join_path(&self.completion_base, &format!("{}{}", name, suffix));
+                self.candidates.clear();
+                self.candidate_idx = None;
+                self.completion_base.clear();
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Clear the candidate list without changing value.
+    pub fn clear_candidates(&mut self) {
+        self.candidates.clear();
+        self.candidate_idx = None;
+        self.completion_base.clear();
     }
 }
 
@@ -158,4 +170,27 @@ fn split_local_path(input: &str) -> (String, String) {
         }
         None => (String::new(), input.to_string()),
     }
+}
+
+/// Case-insensitive subsequence fuzzy match.
+/// Returns true if every character of `pattern` appears in `name` in order.
+/// E.g., "dwn" matches "Downloads".
+fn fuzzy_match_lower(name: &str, pattern: &str) -> bool {
+    if pattern.is_empty() {
+        return true;
+    }
+    let mut pchars = pattern.chars();
+    let mut pc = match pchars.next() {
+        Some(c) => c,
+        None => return true,
+    };
+    for nc in name.chars() {
+        if nc == pc {
+            match pchars.next() {
+                Some(next) => pc = next,
+                None => return true,
+            }
+        }
+    }
+    false
 }
