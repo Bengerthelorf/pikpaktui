@@ -61,7 +61,8 @@ impl LocalPathInput {
         };
 
         let prefix_lower = prefix.to_lowercase();
-        let mut matches: Vec<(String, bool)> = Vec::new();
+        // (name, is_dir, match_start_pos) — score used for sorting only
+        let mut matches: Vec<(String, bool, usize)> = Vec::new();
 
         for entry in read_dir.flatten() {
             let Ok(ft) = entry.file_type() else { continue };
@@ -73,15 +74,19 @@ impl LocalPathInput {
             if name.starts_with('.') && !prefix.starts_with('.') {
                 continue;
             }
-            if fuzzy_match_lower(&name.to_lowercase(), &prefix_lower) {
-                matches.push((name, is_dir));
+            if let Some(score) = fuzzy_score_lower(&name.to_lowercase(), &prefix_lower) {
+                matches.push((name, is_dir, score));
             }
         }
 
-        matches.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        matches.sort_by(|a, b| {
+            b.1.cmp(&a.1)                    // dirs first
+                .then_with(|| a.2.cmp(&b.2)) // earlier match position = better
+                .then_with(|| a.0.cmp(&b.0)) // alphabetical tiebreak
+        });
 
         self.completion_base = dir_part;
-        self.candidates = matches;
+        self.candidates = matches.into_iter().map(|(n, d, _)| (n, d)).collect();
         self.candidate_idx = if self.candidates.is_empty() { None } else { Some(0) };
     }
 
@@ -163,23 +168,25 @@ fn split_local_path(input: &str) -> (String, String) {
     }
 }
 
-/// Case-insensitive subsequence match ("dwn" matches "Downloads").
-fn fuzzy_match_lower(name: &str, pattern: &str) -> bool {
+/// Case-insensitive subsequence match. Returns the index of the first matched character,
+/// or None if no match. Lower index = better quality (e.g. prefix match returns 0).
+fn fuzzy_score_lower(name: &str, pattern: &str) -> Option<usize> {
     if pattern.is_empty() {
-        return true;
+        return Some(0);
     }
     let mut pchars = pattern.chars();
-    let mut pc = match pchars.next() {
-        Some(c) => c,
-        None => return true,
-    };
-    for nc in name.chars() {
+    let mut pc = pchars.next().unwrap();
+    let mut first_pos = None;
+    for (i, nc) in name.chars().enumerate() {
         if nc == pc {
+            if first_pos.is_none() {
+                first_pos = Some(i);
+            }
             match pchars.next() {
                 Some(next) => pc = next,
-                None => return true,
+                None => return first_pos,
             }
         }
     }
-    false
+    None
 }
