@@ -2,9 +2,13 @@ use std::path::Path;
 
 pub(super) struct LocalPathInput {
     pub value: String,
-    pub candidates: Vec<String>,
+    /// (name, is_dir)
+    pub candidates: Vec<(String, bool)>,
     pub candidate_idx: Option<usize>,
     pub completion_base: String,
+    /// When true, files are included in tab completion (for upload).
+    /// When false, only directories are completed (for download destination).
+    pub include_files: bool,
 }
 
 impl LocalPathInput {
@@ -25,6 +29,27 @@ impl LocalPathInput {
             candidates: Vec::new(),
             candidate_idx: None,
             completion_base: String::new(),
+            include_files: false,
+        }
+    }
+
+    pub fn new_for_upload() -> Self {
+        let default = dirs::home_dir()
+            .map(|p| {
+                let mut s = p.to_string_lossy().to_string();
+                if !s.ends_with('/') {
+                    s.push('/');
+                }
+                s
+            })
+            .unwrap_or_default();
+
+        Self {
+            value: default,
+            candidates: Vec::new(),
+            candidate_idx: None,
+            completion_base: String::new(),
+            include_files: true,
         }
     }
 
@@ -36,15 +61,10 @@ impl LocalPathInput {
                 None => 0,
             };
             self.candidate_idx = Some(idx);
-            let base = &self.completion_base;
-            let selected = &self.candidates[idx];
-            self.value = if base.is_empty() {
-                format!("{}/", selected)
-            } else if base.ends_with('/') {
-                format!("{}{}/", base, selected)
-            } else {
-                format!("{}/{}/", base, selected)
-            };
+            let base = self.completion_base.clone();
+            let (name, is_dir) = &self.candidates[idx];
+            let suffix = if *is_dir { "/" } else { "" };
+            self.value = join_path(&base, &format!("{}{}", name, suffix));
             return;
         }
 
@@ -58,13 +78,14 @@ impl LocalPathInput {
         };
 
         let prefix_lower = prefix.to_lowercase();
-        let mut matches: Vec<String> = Vec::new();
+        let mut matches: Vec<(String, bool)> = Vec::new();
 
         for entry in read_dir.flatten() {
             let Ok(ft) = entry.file_type() else {
                 continue;
             };
-            if !ft.is_dir() {
+            let is_dir = ft.is_dir();
+            if !is_dir && !self.include_files {
                 continue;
             }
             let name = entry.file_name().to_string_lossy().to_string();
@@ -72,11 +93,14 @@ impl LocalPathInput {
                 continue; // skip hidden unless user typed a dot
             }
             if name.to_lowercase().starts_with(&prefix_lower) {
-                matches.push(name);
+                matches.push((name, is_dir));
             }
         }
 
-        matches.sort();
+        matches.sort_by(|a, b| {
+            // Dirs first, then alphabetical
+            b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0))
+        });
 
         if matches.is_empty() {
             return;
@@ -85,28 +109,29 @@ impl LocalPathInput {
         self.completion_base = dir_part.clone();
 
         if matches.len() == 1 {
-            let name = &matches[0];
-            self.value = if dir_part.is_empty() {
-                format!("{}/", name)
-            } else if dir_part.ends_with('/') {
-                format!("{}{}/", dir_part, name)
-            } else {
-                format!("{}/{}/", dir_part, name)
-            };
+            let (name, is_dir) = &matches[0];
+            let suffix = if *is_dir { "/" } else { "" };
+            self.value = join_path(&dir_part, &format!("{}{}", name, suffix));
             self.candidates.clear();
             self.candidate_idx = None;
         } else {
-            self.candidates = matches;
             self.candidate_idx = Some(0);
-            let first = &self.candidates[0];
-            self.value = if dir_part.is_empty() {
-                format!("{}/", first)
-            } else if dir_part.ends_with('/') {
-                format!("{}{}/", dir_part, first)
-            } else {
-                format!("{}/{}/", dir_part, first)
-            };
+            let (first_name, first_is_dir) = &matches[0];
+            let suffix = if *first_is_dir { "/" } else { "" };
+            self.value = join_path(&dir_part, &format!("{}{}", first_name, suffix));
+            self.candidates = matches;
         }
+    }
+}
+
+/// Join a base directory path with a name.
+fn join_path(base: &str, name: &str) -> String {
+    if base.is_empty() {
+        name.to_string()
+    } else if base.ends_with('/') {
+        format!("{}{}", base, name)
+    } else {
+        format!("{}/{}", base, name)
     }
 }
 

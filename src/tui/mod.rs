@@ -105,6 +105,7 @@ enum OpResult {
     InfoThumbnail(Result<image::DynamicImage>),
     GotoPath(Result<(String, Vec<(String, String)>)>),
     Quota(Result<crate::pikpak::QuotaInfo>),
+    Upload(Result<String>),
 }
 
 struct PickerState {
@@ -155,6 +156,9 @@ enum InputMode {
     // Cart & Downloads
     CartView,
     DownloadInput {
+        input: LocalPathInput,
+    },
+    UploadInput {
         input: LocalPathInput,
     },
     DownloadView,
@@ -759,6 +763,15 @@ impl App {
                 }
                 OpResult::Quota(Err(e)) => {
                     self.push_log(format!("Quota fetch failed: {e:#}"));
+                }
+                OpResult::Upload(Ok(msg)) => {
+                    self.finish_loading();
+                    self.push_log(msg);
+                    self.refresh();
+                }
+                OpResult::Upload(Err(e)) => {
+                    self.finish_loading();
+                    self.push_log(format!("Upload failed: {e:#}"));
                 }
             }
         }

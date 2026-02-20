@@ -257,6 +257,10 @@ impl App {
                 self.handle_download_input_key(code, &mut input);
                 Ok(false)
             }
+            InputMode::UploadInput { mut input } => {
+                self.handle_upload_input_key(code, &mut input);
+                Ok(false)
+            }
             InputMode::DownloadView => {
                 self.handle_download_view_key(code);
                 Ok(false)
@@ -711,6 +715,19 @@ impl App {
                     self.spawn_star_toggle(entry);
                 }
             }
+            KeyCode::Char('u') => {
+                if modifiers.contains(KeyModifiers::CONTROL) {
+                    if !self.entries.is_empty() {
+                        let half = (self.list_area_height.get() / 2).max(1) as usize;
+                        self.selected = self.selected.saturating_sub(half);
+                        self.on_cursor_move();
+                    }
+                } else {
+                    self.input = InputMode::UploadInput {
+                        input: LocalPathInput::new_for_upload(),
+                    };
+                }
+            }
             KeyCode::Char('o') => {
                 // Offline download URL input
                 self.input = InputMode::OfflineInput {
@@ -862,13 +879,6 @@ impl App {
             KeyCode::Char('G') => {
                 if !self.entries.is_empty() {
                     self.selected = self.entries.len() - 1;
-                    self.on_cursor_move();
-                }
-            }
-            KeyCode::Char('u') if modifiers.contains(KeyModifiers::CONTROL) => {
-                if !self.entries.is_empty() {
-                    let half = (self.list_area_height.get() / 2).max(1) as usize;
-                    self.selected = self.selected.saturating_sub(half);
                     self.on_cursor_move();
                 }
             }
@@ -1306,8 +1316,91 @@ impl App {
             candidates: std::mem::take(&mut input.candidates),
             candidate_idx: input.candidate_idx,
             completion_base: std::mem::take(&mut input.completion_base),
+            include_files: input.include_files,
         };
         self.input = InputMode::DownloadInput { input: owned };
+    }
+
+    fn restore_upload_input(&mut self, input: &mut LocalPathInput) {
+        let owned = LocalPathInput {
+            value: std::mem::take(&mut input.value),
+            candidates: std::mem::take(&mut input.candidates),
+            candidate_idx: input.candidate_idx,
+            completion_base: std::mem::take(&mut input.completion_base),
+            include_files: input.include_files,
+        };
+        self.input = InputMode::UploadInput { input: owned };
+    }
+
+    fn handle_upload_input_key(&mut self, code: KeyCode, input: &mut LocalPathInput) {
+        match code {
+            KeyCode::Esc => {
+                if !input.candidates.is_empty() {
+                    input.candidates.clear();
+                    input.candidate_idx = None;
+                    input.completion_base.clear();
+                    self.restore_upload_input(input);
+                } else {
+                    self.input = InputMode::Normal;
+                }
+            }
+            KeyCode::Tab => {
+                input.tab_complete();
+                self.restore_upload_input(input);
+            }
+            KeyCode::Enter => {
+                if !input.candidates.is_empty() {
+                    input.candidates.clear();
+                    input.candidate_idx = None;
+                    self.restore_upload_input(input);
+                } else {
+                    let local_path = std::path::PathBuf::from(input.value.trim());
+                    if !local_path.exists() {
+                        self.push_log(format!("File not found: {}", local_path.display()));
+                        self.restore_upload_input(input);
+                    } else if !local_path.is_file() {
+                        self.push_log(format!("Not a file: {}", local_path.display()));
+                        self.restore_upload_input(input);
+                    } else {
+                        let folder_id = self.current_folder_id.clone();
+                        let client = Arc::clone(&self.client);
+                        let tx = self.result_tx.clone();
+                        let name = local_path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                        self.loading = true;
+                        self.loading_label = Some(format!("Uploading {}…", name));
+                        self.input = InputMode::Normal;
+                        std::thread::spawn(move || {
+                            let result = client.upload_file(Some(&folder_id), &local_path)
+                                .map(|(name, dedup)| {
+                                    if dedup {
+                                        format!("Uploaded '{}' (instant, dedup)", name)
+                                    } else {
+                                        format!("Uploaded '{}'", name)
+                                    }
+                                });
+                            let _ = tx.send(OpResult::Upload(result));
+                        });
+                    }
+                }
+            }
+            KeyCode::Backspace => {
+                input.value.pop();
+                input.candidates.clear();
+                input.candidate_idx = None;
+                input.completion_base.clear();
+                self.restore_upload_input(input);
+            }
+            KeyCode::Char(c) => {
+                input.value.push(c);
+                input.candidates.clear();
+                input.candidate_idx = None;
+                input.completion_base.clear();
+                self.restore_upload_input(input);
+            }
+            _ => {
+                self.restore_upload_input(input);
+            }
+        }
     }
 
     fn start_cart_download(&mut self, dest_dir: &str) {

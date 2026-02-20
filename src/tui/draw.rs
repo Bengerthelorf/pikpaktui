@@ -1269,6 +1269,7 @@ impl App {
                     ("Enter", "open"),
                     ("Bksp", "back"),
                     (":", "goto"),
+                    ("u", "upload"),
                     ("r", "refresh"),
                     ("h", "help"),
                     ("q", "quit"),
@@ -1310,7 +1311,7 @@ impl App {
                 ("Enter", "download"),
                 ("Esc", "close"),
             ],
-            InputMode::DownloadInput { .. } => {
+            InputMode::DownloadInput { .. } | InputMode::UploadInput { .. } => {
                 vec![("Tab", "complete"), ("Enter", "confirm"), ("Esc", "cancel")]
             }
             InputMode::DownloadView => vec![
@@ -1674,6 +1675,9 @@ impl App {
             }
             InputMode::DownloadInput { input } => {
                 self.draw_download_input_overlay(f, input, cur);
+            }
+            InputMode::UploadInput { input } => {
+                self.draw_upload_input_overlay(f, input, cur);
             }
             InputMode::OfflineInput { value } => {
                 self.draw_offline_input_overlay(f, value, cur);
@@ -2319,9 +2323,25 @@ impl App {
 
         if !input.candidates.is_empty() {
             lines.push(Line::from(""));
-            for (i, name) in input.candidates.iter().enumerate().take(8) {
+            let total = input.candidates.len();
+            const MAX_VIS: usize = 8;
+            let sel = input.candidate_idx.unwrap_or(0);
+            // Slide window so selected item is always visible; reserve 1 row for
+            // "above" indicator when the window has scrolled past the start.
+            let has_above_row = sel >= MAX_VIS;
+            let item_slots = if has_above_row { MAX_VIS - 1 } else { MAX_VIS };
+            let window_start = if sel + 1 <= item_slots { 0 } else { sel + 1 - item_slots };
+            let window_end = (window_start + item_slots).min(total);
+            if has_above_row {
+                lines.push(Line::from(Span::styled(
+                    format!("    ↑ {} more above", window_start),
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
+            for i in window_start..window_end {
+                let (name, is_dir) = &input.candidates[i];
                 let is_sel = input.candidate_idx == Some(i);
-                let prefix = if is_sel { "  > " } else { "    " };
+                let row_prefix = if is_sel { "  > " } else { "    " };
                 let style = if is_sel {
                     Style::default()
                         .fg(Color::Yellow)
@@ -2329,14 +2349,15 @@ impl App {
                 } else {
                     Style::default().fg(Color::Blue)
                 };
+                let suffix = if *is_dir { "/" } else { "" };
                 lines.push(Line::from(Span::styled(
-                    format!("{}{}/", prefix, name),
+                    format!("{}{}{}", row_prefix, name, suffix),
                     style,
                 )));
             }
-            if input.candidates.len() > 8 {
+            if window_end < total {
                 lines.push(Line::from(Span::styled(
-                    format!("    ... and {} more", input.candidates.len() - 8),
+                    format!("    ... and {} more", total - window_end),
                     Style::default().fg(Color::DarkGray),
                 )));
             }
@@ -2359,6 +2380,90 @@ impl App {
                 .title(format!(" Download {} files ", cart_count))
                 .title_style(Style::default().fg(dl_tc))
                 .border_style(Style::default().fg(dl_bc)),
+        );
+        f.render_widget(p, area);
+    }
+
+    // --- Upload input overlay ---
+
+    fn draw_upload_input_overlay(&self, f: &mut Frame, input: &LocalPathInput, cur: &str) {
+        let candidate_lines = input.candidates.len().min(8);
+        let base_height = 7;
+        let total_lines = base_height + if candidate_lines > 0 { candidate_lines + 1 } else { 0 };
+        let pct = ((total_lines as u16 * 100) / f.area().height.max(1)).max(20).min(60);
+        let area = centered_rect(70, pct, f.area());
+        f.render_widget(Clear, area);
+
+        let dest = self.current_path_display();
+        let mut lines = vec![
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  Upload to: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(dest, Style::default().fg(Color::White)),
+            ]),
+            Line::from(vec![
+                Span::styled("  File:      ", Style::default().fg(Color::Cyan)),
+                Span::styled(
+                    format!("{}{}", input.value, cur),
+                    Style::default().fg(Color::Yellow),
+                ),
+            ]),
+        ];
+
+        if !input.candidates.is_empty() {
+            lines.push(Line::from(""));
+            let total = input.candidates.len();
+            const MAX_VIS: usize = 8;
+            let sel = input.candidate_idx.unwrap_or(0);
+            let has_above_row = sel >= MAX_VIS;
+            let item_slots = if has_above_row { MAX_VIS - 1 } else { MAX_VIS };
+            let window_start = if sel + 1 <= item_slots { 0 } else { sel + 1 - item_slots };
+            let window_end = (window_start + item_slots).min(total);
+            if has_above_row {
+                lines.push(Line::from(Span::styled(
+                    format!("    ↑ {} more above", window_start),
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
+            for i in window_start..window_end {
+                let (name, is_dir) = &input.candidates[i];
+                let is_sel = input.candidate_idx == Some(i);
+                let row_prefix = if is_sel { "  > " } else { "    " };
+                let style = if is_sel {
+                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::Blue)
+                };
+                let suffix = if *is_dir { "/" } else { "" };
+                lines.push(Line::from(Span::styled(
+                    format!("{}{}{}", row_prefix, name, suffix),
+                    style,
+                )));
+            }
+            if window_end < total {
+                lines.push(Line::from(Span::styled(
+                    format!("    ... and {} more", total - window_end),
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
+        }
+
+        lines.push(Line::from(""));
+        let hints = vec![("Tab", "complete"), ("Enter", "upload"), ("Esc", "cancel")];
+        let mut hint_spans = vec![Span::raw("  ")];
+        hint_spans.extend(Self::styled_help_spans(&hints));
+        lines.push(Line::from(hint_spans));
+
+        let (ul_bc, ul_tc) = if self.is_vibrant() {
+            (Color::LightYellow, Color::LightYellow)
+        } else {
+            (Color::Yellow, Color::Yellow)
+        };
+        let p = Paragraph::new(Text::from(lines)).block(
+            self.styled_block()
+                .title(" Upload File ")
+                .title_style(Style::default().fg(ul_tc).add_modifier(Modifier::BOLD))
+                .border_style(Style::default().fg(ul_bc)),
         );
         f.render_widget(p, area);
     }
