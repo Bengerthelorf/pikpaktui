@@ -61,8 +61,8 @@ impl LocalPathInput {
         };
 
         let prefix_lower = prefix.to_lowercase();
-        // (name, is_dir, match_start_pos) — score used for sorting only
-        let mut matches: Vec<(String, bool, usize)> = Vec::new();
+        // (name, is_dir, score) — score used for sorting only
+        let mut matches: Vec<(String, bool, i32)> = Vec::new();
 
         for entry in read_dir.flatten() {
             let Ok(ft) = entry.file_type() else { continue };
@@ -80,8 +80,8 @@ impl LocalPathInput {
         }
 
         matches.sort_by(|a, b| {
-            b.1.cmp(&a.1)                    // dirs first
-                .then_with(|| a.2.cmp(&b.2)) // earlier match position = better
+            b.2.cmp(&a.2)                    // higher score = better
+                .then_with(|| b.1.cmp(&a.1)) // dirs before files within same score
                 .then_with(|| a.0.cmp(&b.0)) // alphabetical tiebreak
         });
 
@@ -168,25 +168,50 @@ fn split_local_path(input: &str) -> (String, String) {
     }
 }
 
-/// Case-insensitive subsequence match. Returns the index of the first matched character,
-/// or None if no match. Lower index = better quality (e.g. prefix match returns 0).
-fn fuzzy_score_lower(name: &str, pattern: &str) -> Option<usize> {
+/// Fuzzy match score (both inputs pre-lowercased). Returns None if no subsequence match.
+/// Higher score = better quality. Inspired by fzf's scoring model:
+///   +15  consecutive matched characters
+///   +10  match at word boundary (start, or after - _ . space)
+///   -pos distance penalty (how far into the string the match starts)
+fn fuzzy_score_lower(name: &str, pattern: &str) -> Option<i32> {
     if pattern.is_empty() {
         return Some(0);
     }
-    let mut pchars = pattern.chars();
-    let mut pc = pchars.next().unwrap();
-    let mut first_pos = None;
-    for (i, nc) in name.chars().enumerate() {
-        if nc == pc {
-            if first_pos.is_none() {
-                first_pos = Some(i);
-            }
-            match pchars.next() {
-                Some(next) => pc = next,
-                None => return first_pos,
+    let nc: Vec<char> = name.chars().collect();
+    let pc: Vec<char> = pattern.chars().collect();
+    if pc.len() > nc.len() {
+        return None;
+    }
+
+    // Greedy forward pass to collect match positions
+    let mut positions: Vec<usize> = Vec::with_capacity(pc.len());
+    let mut pi = 0;
+    for (i, &c) in nc.iter().enumerate() {
+        if c == pc[pi] {
+            positions.push(i);
+            pi += 1;
+            if pi == pc.len() {
+                break;
             }
         }
     }
-    None
+    if pi < pc.len() {
+        return None;
+    }
+
+    let mut score = 0i32;
+    let mut prev_pos: Option<usize> = None;
+    for &pos in &positions {
+        score -= pos as i32;
+        if prev_pos == Some(pos.wrapping_sub(1)) {
+            score += 15; // consecutive run
+        }
+        let at_boundary = pos == 0
+            || matches!(nc[pos - 1], '-' | '_' | ' ' | '.' | '(' | '[');
+        if at_boundary {
+            score += 10; // word boundary
+        }
+        prev_pos = Some(pos);
+    }
+    Some(score)
 }
