@@ -2326,8 +2326,7 @@ impl App {
             let total = input.candidates.len();
             const MAX_VIS: usize = 8;
             let sel = input.candidate_idx.unwrap_or(0);
-            // Slide window so selected item is always visible; reserve 1 row for
-            // "above" indicator when the window has scrolled past the start.
+            // Sliding window: keep selected item visible, reserving 1 row for the "above" indicator.
             let has_above_row = sel >= MAX_VIS;
             let item_slots = if has_above_row { MAX_VIS - 1 } else { MAX_VIS };
             let window_start = if sel + 1 <= item_slots { 0 } else { sel + 1 - item_slots };

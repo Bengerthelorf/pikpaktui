@@ -1268,7 +1268,6 @@ impl App {
                     self.input = InputMode::CartView;
                 }
             }
-            // Tab: open candidates (if not open) or move forward
             KeyCode::Tab => {
                 if input.candidates.is_empty() {
                     input.open_candidates();
@@ -1277,7 +1276,6 @@ impl App {
                 }
                 self.restore_download_input(input);
             }
-            // Shift+Tab: open candidates (if not open) then move backward
             KeyCode::BackTab => {
                 if input.candidates.is_empty() {
                     input.open_candidates();
@@ -1294,8 +1292,6 @@ impl App {
                 self.restore_download_input(input);
             }
             KeyCode::Enter => {
-                // Apply selected candidate; if one was applied, stay in overlay
-                // to let user navigate deeper or press Enter again to confirm.
                 let applied = input.confirm_selected();
                 if applied {
                     self.restore_download_input(input);
@@ -1313,14 +1309,14 @@ impl App {
             KeyCode::Backspace => {
                 input.value.pop();
                 if !input.candidates.is_empty() {
-                    input.open_candidates(); // re-filter with shorter prefix
+                    input.open_candidates();
                 }
                 self.restore_download_input(input);
             }
             KeyCode::Char(c) => {
                 input.value.push(c);
                 if !input.candidates.is_empty() {
-                    input.open_candidates(); // re-filter with new character
+                    input.open_candidates();
                 }
                 self.restore_download_input(input);
             }
@@ -1362,7 +1358,6 @@ impl App {
                     self.input = InputMode::Normal;
                 }
             }
-            // Tab: open candidates (if not open) or move forward
             KeyCode::Tab => {
                 if input.candidates.is_empty() {
                     input.open_candidates();
@@ -1371,7 +1366,6 @@ impl App {
                 }
                 self.restore_upload_input(input);
             }
-            // Shift+Tab: open candidates (if not open) then move backward
             KeyCode::BackTab => {
                 if input.candidates.is_empty() {
                     input.open_candidates();
@@ -1388,8 +1382,6 @@ impl App {
                 self.restore_upload_input(input);
             }
             KeyCode::Enter => {
-                // Apply selected candidate first; always stay in overlay after applying
-                // so the user can review the completed path and press Enter again to upload.
                 let applied = input.confirm_selected();
                 if applied {
                     self.restore_upload_input(input);
@@ -1426,14 +1418,14 @@ impl App {
             KeyCode::Backspace => {
                 input.value.pop();
                 if !input.candidates.is_empty() {
-                    input.open_candidates(); // re-filter with shorter prefix
+                    input.open_candidates();
                 }
                 self.restore_upload_input(input);
             }
             KeyCode::Char(c) => {
                 input.value.push(c);
                 if !input.candidates.is_empty() {
-                    input.open_candidates(); // re-filter with new character
+                    input.open_candidates();
                 }
                 self.restore_upload_input(input);
             }

@@ -2,13 +2,10 @@ use std::path::Path;
 
 pub(super) struct LocalPathInput {
     pub value: String,
-    /// (name, is_dir)
-    pub candidates: Vec<(String, bool)>,
+    pub candidates: Vec<(String, bool)>, // (name, is_dir)
     pub candidate_idx: Option<usize>,
     pub completion_base: String,
-    /// When true, files are included in tab completion (for upload).
-    /// When false, only directories are completed (for download destination).
-    pub include_files: bool,
+    pub include_files: bool, // false = dirs only (download dest), true = files too (upload)
 }
 
 impl LocalPathInput {
@@ -53,8 +50,7 @@ impl LocalPathInput {
         }
     }
 
-    /// Compute candidates from the current value without changing it.
-    /// Resets selection to the first candidate.
+    /// Populate candidates from the current value (does not modify value).
     pub fn open_candidates(&mut self) {
         let (dir_part, prefix) = split_local_path(&self.value);
         let dir_path = if dir_part.is_empty() { "." } else { &dir_part };
@@ -89,7 +85,6 @@ impl LocalPathInput {
         self.candidate_idx = if self.candidates.is_empty() { None } else { Some(0) };
     }
 
-    /// Move selection forward (Tab / Down). Wraps around.
     pub fn navigate_next(&mut self) {
         if self.candidates.is_empty() {
             return;
@@ -101,7 +96,6 @@ impl LocalPathInput {
         });
     }
 
-    /// Move selection backward (Shift+Tab / Up). Wraps around.
     pub fn navigate_prev(&mut self) {
         if self.candidates.is_empty() {
             return;
@@ -113,7 +107,7 @@ impl LocalPathInput {
         });
     }
 
-    /// Apply the selected candidate to `value`. Returns true if a candidate was applied.
+    /// Write the selected candidate into value. Returns true if applied.
     pub fn confirm_selected(&mut self) -> bool {
         if let Some(idx) = self.candidate_idx {
             if let Some((name, is_dir)) = self.candidates.get(idx) {
@@ -128,7 +122,6 @@ impl LocalPathInput {
         false
     }
 
-    /// Clear the candidate list without changing value.
     pub fn clear_candidates(&mut self) {
         self.candidates.clear();
         self.candidate_idx = None;
@@ -136,7 +129,6 @@ impl LocalPathInput {
     }
 }
 
-/// Join a base directory path with a name.
 fn join_path(base: &str, name: &str) -> String {
     if base.is_empty() {
         name.to_string()
@@ -147,10 +139,9 @@ fn join_path(base: &str, name: &str) -> String {
     }
 }
 
-/// Split a local path into (directory, prefix).
+/// Split into (directory, prefix).
 /// "/Users/foo/Down" -> ("/Users/foo", "Down")
 /// "/Users/foo/"     -> ("/Users/foo/", "")
-/// "sub"             -> ("", "sub")
 fn split_local_path(input: &str) -> (String, String) {
     if input.is_empty() {
         return (String::new(), String::new());
@@ -172,9 +163,7 @@ fn split_local_path(input: &str) -> (String, String) {
     }
 }
 
-/// Case-insensitive subsequence fuzzy match.
-/// Returns true if every character of `pattern` appears in `name` in order.
-/// E.g., "dwn" matches "Downloads".
+/// Case-insensitive subsequence match ("dwn" matches "Downloads").
 fn fuzzy_match_lower(name: &str, pattern: &str) -> bool {
     if pattern.is_empty() {
         return true;
