@@ -1185,6 +1185,45 @@ impl PikPak {
         Ok((file_name, false))
     }
 
+    /// Upload a local directory recursively. Creates the folder on PikPak then
+    /// uploads all files, mirroring the subdirectory structure.
+    /// Returns `(files_ok, files_failed)`.
+    pub fn upload_dir(&self, parent_id: &str, local_dir: &Path) -> Result<(usize, usize)> {
+        let name = local_dir
+            .file_name()
+            .ok_or_else(|| anyhow!("directory has no name"))?
+            .to_string_lossy();
+        let folder = self.mkdir(parent_id, &name)?;
+        self.upload_dir_inner(&folder.id, local_dir)
+    }
+
+    fn upload_dir_inner(&self, parent_id: &str, local_dir: &Path) -> Result<(usize, usize)> {
+        let mut ok = 0usize;
+        let mut failed = 0usize;
+        let entries = std::fs::read_dir(local_dir)
+            .with_context(|| format!("cannot read dir: {}", local_dir.display()))?;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                let name = path.file_name().unwrap_or_default().to_string_lossy();
+                match self.mkdir(parent_id, &name) {
+                    Ok(sub) => {
+                        let (sub_ok, sub_fail) = self.upload_dir_inner(&sub.id, &path)?;
+                        ok += sub_ok;
+                        failed += sub_fail;
+                    }
+                    Err(_) => failed += 1,
+                }
+            } else if path.is_file() {
+                match self.upload_file(Some(parent_id), &path) {
+                    Ok(_) => ok += 1,
+                    Err(_) => failed += 1,
+                }
+            }
+        }
+        Ok((ok, failed))
+    }
+
     fn oss_initiate_multipart(&self, oss: &OssArgs) -> Result<String> {
         let date = httpdate_now();
         let auth = oss_hmac_auth(

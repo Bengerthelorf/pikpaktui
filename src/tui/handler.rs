@@ -1390,10 +1390,25 @@ impl App {
                     if !local_path.exists() {
                         self.push_log(format!("File not found: {}", local_path.display()));
                         self.restore_upload_input(input);
-                    } else if !local_path.is_file() {
-                        self.push_log(format!("Not a file: {}", local_path.display()));
-                        self.restore_upload_input(input);
-                    } else {
+                    } else if local_path.is_dir() {
+                        let folder_id = self.current_folder_id.clone();
+                        let client = Arc::clone(&self.client);
+                        let tx = self.result_tx.clone();
+                        let name = local_path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                        self.loading = true;
+                        self.loading_label = Some(format!("Uploading folder {}…", name));
+                        self.input = InputMode::Normal;
+                        std::thread::spawn(move || {
+                            let result = client.upload_dir(&folder_id, &local_path).map(|(ok, failed)| {
+                                if failed == 0 {
+                                    format!("Uploaded folder '{}' ({} files)", name, ok)
+                                } else {
+                                    format!("Uploaded folder '{}' ({} ok, {} failed)", name, ok, failed)
+                                }
+                            });
+                            let _ = tx.send(OpResult::Upload(result));
+                        });
+                    } else if local_path.is_file() {
                         let folder_id = self.current_folder_id.clone();
                         let client = Arc::clone(&self.client);
                         let tx = self.result_tx.clone();
@@ -1412,6 +1427,9 @@ impl App {
                                 });
                             let _ = tx.send(OpResult::Upload(result));
                         });
+                    } else {
+                        self.push_log(format!("Not a file or directory: {}", local_path.display()));
+                        self.restore_upload_input(input);
                     }
                 }
             }
