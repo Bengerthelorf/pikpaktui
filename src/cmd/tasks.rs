@@ -8,10 +8,18 @@ pub fn run(args: &[String]) -> Result<()> {
 
     match sub {
         "list" | "ls" => {
-            let limit = args
-                .get(1)
-                .and_then(|s| s.parse::<u32>().ok())
-                .unwrap_or(50);
+            let mut limit = 50u32;
+            let mut json = false;
+            for a in &args[1..] {
+                match a.as_str() {
+                    "-J" | "--json" => json = true,
+                    _ => {
+                        if let Ok(n) = a.parse::<u32>() {
+                            limit = n;
+                        }
+                    }
+                }
+            }
 
             let phases = &[
                 "PHASE_TYPE_RUNNING",
@@ -20,6 +28,12 @@ pub fn run(args: &[String]) -> Result<()> {
                 "PHASE_TYPE_ERROR",
             ];
             let resp = client.offline_list(limit, phases)?;
+
+            if json {
+                let out = serde_json::to_string_pretty(&resp.tasks).unwrap_or_else(|_| "[]".into());
+                println!("{}", out);
+                return Ok(());
+            }
 
             if resp.tasks.is_empty() {
                 println!("No offline tasks");

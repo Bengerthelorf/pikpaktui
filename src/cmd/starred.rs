@@ -6,11 +6,13 @@ pub fn run(args: &[String]) -> Result<()> {
     let nerd_font = config.cli_nerd_font;
 
     let mut long = false;
+    let mut json = false;
     let mut limit = 100u32;
 
     for arg in args {
         match arg.as_str() {
             "-l" | "--long" => long = true,
+            "-J" | "--json" => json = true,
             _ => {
                 if let Ok(n) = arg.parse::<u32>() {
                     limit = n;
@@ -20,6 +22,11 @@ pub fn run(args: &[String]) -> Result<()> {
     }
 
     let entries = client.starred_list(limit)?;
+
+    if json {
+        super::print_entries_json(&entries);
+        return Ok(());
+    }
 
     if entries.is_empty() {
         println!("No starred items");

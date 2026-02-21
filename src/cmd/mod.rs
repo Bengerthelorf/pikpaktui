@@ -146,6 +146,11 @@ pub fn print_entries_long(entries: &[pikpak::Entry], nerd_font: bool) {
     }
 }
 
+pub fn print_entries_json(entries: &[pikpak::Entry]) {
+    let json = serde_json::to_string_pretty(entries).unwrap_or_else(|_| "[]".into());
+    println!("{}", json);
+}
+
 pub fn format_date(iso: &str) -> String {
     if iso.len() >= 16 {
         let s = iso.replace('T', " ");

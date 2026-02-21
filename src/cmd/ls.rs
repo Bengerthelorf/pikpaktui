@@ -3,12 +3,13 @@ use anyhow::{Result, anyhow};
 use crate::config::SortField;
 use crate::pikpak::{EntryKind, PikPak}; // EntryKind used in print_tree folder recursion
 
-const USAGE: &str = "Usage: pikpaktui ls [-l|--long] [-s|--sort=<field>] [-r|--reverse] [--tree] [--depth=N] [path]\n\nSort fields: name, size, created, type, extension, none";
+const USAGE: &str = "Usage: pikpaktui ls [-l|--long] [-J|--json] [-s|--sort=<field>] [-r|--reverse] [--tree] [--depth=N] [path]\n\nSort fields: name, size, created, type, extension, none";
 
 #[derive(Debug, PartialEq, Eq)]
 struct LsArgs {
     path: String,
     long: bool,
+    json: bool,
     sort_field: SortField,
     reverse: bool,
     tree: bool,
@@ -30,6 +31,7 @@ fn parse_sort_field(s: &str) -> Result<SortField> {
 fn parse_args(args: &[String]) -> Result<LsArgs> {
     let mut path: Option<String> = None;
     let mut long = false;
+    let mut json = false;
     let mut sort_field = SortField::default();
     let mut reverse = false;
     let mut tree = false;
@@ -53,6 +55,7 @@ fn parse_args(args: &[String]) -> Result<LsArgs> {
         if !options_done {
             match arg.as_str() {
                 "-l" | "--long" => { long = true; continue; }
+                "-J" | "--json" => { json = true; continue; }
                 "-r" | "--reverse" => { reverse = true; continue; }
                 "--tree" => { tree = true; continue; }
                 "-s" | "--sort" => { expect_sort = true; continue; }
@@ -98,6 +101,7 @@ fn parse_args(args: &[String]) -> Result<LsArgs> {
     Ok(LsArgs {
         path: path.unwrap_or_else(|| "/".to_string()),
         long,
+        json,
         sort_field,
         reverse,
         tree,
@@ -172,6 +176,11 @@ pub fn run(args: &[String]) -> Result<()> {
     let mut entries = client.ls(&folder_id)?;
     crate::config::sort_entries(&mut entries, parsed.sort_field, parsed.reverse);
 
+    if parsed.json {
+        super::print_entries_json(&entries);
+        return Ok(());
+    }
+
     if entries.is_empty() {
         println!("(empty)");
         return Ok(());
@@ -203,6 +212,7 @@ mod tests {
             LsArgs {
                 path: "/".to_string(),
                 long: false,
+                json: false,
                 sort_field: SortField::Name,
                 reverse: false,
                 tree: false,
@@ -218,6 +228,7 @@ mod tests {
             LsArgs {
                 path: "/foo".to_string(),
                 long: true,
+                json: false,
                 sort_field: SortField::Name,
                 reverse: false,
                 tree: false,
@@ -229,6 +240,7 @@ mod tests {
             LsArgs {
                 path: "/foo".to_string(),
                 long: true,
+                json: false,
                 sort_field: SortField::Name,
                 reverse: false,
                 tree: false,
@@ -244,6 +256,7 @@ mod tests {
             LsArgs {
                 path: "/".to_string(),
                 long: false,
+                json: false,
                 sort_field: SortField::Size,
                 reverse: false,
                 tree: false,
@@ -255,6 +268,7 @@ mod tests {
             LsArgs {
                 path: "/".to_string(),
                 long: false,
+                json: false,
                 sort_field: SortField::Created,
                 reverse: false,
                 tree: false,
@@ -266,6 +280,7 @@ mod tests {
             LsArgs {
                 path: "/".to_string(),
                 long: false,
+                json: false,
                 sort_field: SortField::Extension,
                 reverse: false,
                 tree: false,
@@ -281,6 +296,7 @@ mod tests {
             LsArgs {
                 path: "/".to_string(),
                 long: false,
+                json: false,
                 sort_field: SortField::Size,
                 reverse: true,
                 tree: false,
@@ -292,6 +308,7 @@ mod tests {
             LsArgs {
                 path: "/".to_string(),
                 long: false,
+                json: false,
                 sort_field: SortField::Name,
                 reverse: true,
                 tree: false,
@@ -307,6 +324,7 @@ mod tests {
             LsArgs {
                 path: "/Movies".to_string(),
                 long: false,
+                json: false,
                 sort_field: SortField::Name,
                 reverse: false,
                 tree: true,
@@ -318,6 +336,7 @@ mod tests {
             LsArgs {
                 path: "/Movies".to_string(),
                 long: false,
+                json: false,
                 sort_field: SortField::Name,
                 reverse: false,
                 tree: true,
@@ -329,6 +348,7 @@ mod tests {
             LsArgs {
                 path: "/".to_string(),
                 long: false,
+                json: false,
                 sort_field: SortField::Name,
                 reverse: false,
                 tree: true,
@@ -341,6 +361,7 @@ mod tests {
             LsArgs {
                 path: "/".to_string(),
                 long: true,
+                json: false,
                 sort_field: SortField::Name,
                 reverse: false,
                 tree: true,

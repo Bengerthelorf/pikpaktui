@@ -29,6 +29,7 @@ A TUI and CLI client for [PikPak](https://mypikpak.com) cloud storage, written i
 ### CLI
 - **26 subcommands** — `ls`, `search`, `mv`, `cp`, `rename`, `rm`, `mkdir`, `info`, `cat`, `play`, `download`, `upload`, `share`, `offline`, `tasks`, `star`, `unstar`, `starred`, `events`, `trash`, `untrash`, `quota`, `vip`, `completions`, `help`, `version`
 - **Colored output** — `ls` with multi-column grid layout (eza-style), `--sort`/`--reverse` flags, Nerd Font icons support
+- **JSON output** — `-J`/`--json` flag on `ls`, `info`, `tasks`, `starred`, `trash`, `events` for machine-readable output; pipe to `jq` for scripting
 - **Resumable transfer** — Upload: dedup-aware instant upload on hash match, multipart resumable with 10 MB chunks via OSS. Download: HTTP Range resume for interrupted transfers
 - **Shell completions** — Zsh completion with dynamic cloud path completion (like `scp`)
 
@@ -89,7 +90,7 @@ What gets completed:
 |---------|------------|
 | `pikpaktui <Tab>` | Subcommands with descriptions |
 | `pikpaktui ls /<Tab>` | Remote directory listing |
-| `pikpaktui ls -<Tab>` | `-l`, `--long`, `-s`, `--sort`, `-r`, `--reverse`, `--tree`, `--depth` |
+| `pikpaktui ls -<Tab>` | `-l`, `--long`, `-J`, `--json`, `-s`, `--sort`, `-r`, `--reverse`, `--tree`, `--depth` |
 | `pikpaktui ls --sort <Tab>` | `name`, `size`, `created`, `type`, `extension`, `none` |
 | `pikpaktui mv -<Tab>` | `-t` flag |
 | `pikpaktui mv /src<Tab> /dst<Tab>` | Cloud paths for both arguments |
@@ -129,6 +130,8 @@ pikpaktui ls -s created "/My Pack"                    # Sort by creation time, n
 pikpaktui ls --tree /                                 # Recursive tree view
 pikpaktui ls --tree --depth=2 "/My Pack"              # Tree limited to 2 levels deep
 pikpaktui ls --tree -l /Movies                        # Tree with size and date columns
+pikpaktui ls /Movies --json                           # JSON output (pipe to jq)
+pikpaktui ls /Movies --json | jq '.[] | select(.size > 1073741824)'
 pikpaktui mv "/My Pack/file.txt" /Archive             # Move file
 pikpaktui mv -t /Archive /a.txt /b.txt /c.txt        # Batch move to target
 pikpaktui cp "/My Pack/file.txt" /Backup              # Copy file
@@ -141,6 +144,7 @@ pikpaktui rm -rf "/My Pack/folder"                    # Delete folder permanentl
 pikpaktui mkdir "/My Pack" newfolder                  # Create folder
 pikpaktui mkdir -p "/My Pack/a/b/c"                   # Create nested folders recursively
 pikpaktui info "/My Pack/video.mp4"                   # Detailed file info (media metadata)
+pikpaktui info "/My Pack/video.mp4" --json            # JSON (includes hash, links, media tracks)
 pikpaktui cat "/My Pack/notes.txt"                    # Preview text file contents
 
 # Video playback
@@ -152,6 +156,7 @@ pikpaktui play "/My Pack/video.mp4" 2                 # Play by stream number
 # Trash
 pikpaktui trash                                       # List trashed files
 pikpaktui trash -l                                    # Long format (id, size, date)
+pikpaktui trash --json                                # JSON output
 pikpaktui untrash "file.txt"                          # Restore file from trash
 
 # Transfer
@@ -168,6 +173,7 @@ pikpaktui share "/My Pack" -o links.txt               # Save folder share links 
 pikpaktui offline "magnet:?xt=..."                    # Submit magnet link
 pikpaktui offline "https://example.com/file.zip" --to "/Downloads" --name "file.zip"
 pikpaktui tasks                                       # List offline tasks
+pikpaktui tasks list --json                           # JSON output
 pikpaktui tasks retry <task_id>                       # Retry failed task
 pikpaktui tasks rm <task_id>                          # Delete task
 
@@ -176,7 +182,9 @@ pikpaktui star "/My Pack/file.txt"                    # Star a file
 pikpaktui unstar "/My Pack/file.txt"                  # Unstar
 pikpaktui starred                                     # List starred files
 pikpaktui starred -l                                  # Long format (id, size, date)
+pikpaktui starred --json                              # JSON output
 pikpaktui events                                      # Recent file events
+pikpaktui events --json                               # JSON output
 
 # Account
 pikpaktui quota                                       # Storage quota

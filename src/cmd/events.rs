@@ -3,12 +3,27 @@ use anyhow::Result;
 pub fn run(args: &[String]) -> Result<()> {
     let client = super::cli_client()?;
 
-    let limit = args
-        .first()
-        .and_then(|s| s.parse::<u32>().ok())
-        .unwrap_or(20);
+    let mut json = false;
+    let mut limit = 20u32;
+
+    for arg in args {
+        match arg.as_str() {
+            "-J" | "--json" => json = true,
+            _ => {
+                if let Ok(n) = arg.parse::<u32>() {
+                    limit = n;
+                }
+            }
+        }
+    }
 
     let resp = client.events(limit)?;
+
+    if json {
+        let out = serde_json::to_string_pretty(&resp.events).unwrap_or_else(|_| "[]".into());
+        println!("{}", out);
+        return Ok(());
+    }
 
     if resp.events.is_empty() {
         println!("No recent events");

@@ -16,13 +16,13 @@ const DEFAULT_CLIENT_ID: &str = "YNxT9w7GMdWvEOKa";
 const DEFAULT_CLIENT_SECRET: &str = "dbw2OtmVEeuUvIptb1Coyg";
 const USER_AGENT: &str = "ANDROID-com.pikcloud.pikpak/1.21.0";
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum EntryKind {
     Folder,
     File,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Entry {
     pub id: String,
     pub name: String,
@@ -1683,13 +1683,13 @@ impl DriveFile {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MediaLink {
     #[serde(default)]
     pub url: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MediaVideo {
     #[serde(default)]
     pub height: Option<i64>,
@@ -1705,7 +1705,7 @@ pub struct MediaVideo {
     pub audio_codec: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MediaInfo {
     #[serde(default)]
     pub media_name: Option<String>,
@@ -1717,7 +1717,7 @@ pub struct MediaInfo {
     pub is_origin: Option<bool>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileInfoResponse {
     #[serde(default)]
     pub id: Option<String>,
@@ -1742,7 +1742,7 @@ pub struct FileInfoResponse {
     pub medias: Option<Vec<MediaInfo>>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LinkInfo {
     #[serde(default)]
     pub url: Option<String>,
@@ -1771,7 +1771,7 @@ pub struct OfflineTaskResponse {
     pub task: Option<OfflineTask>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OfflineTask {
     #[serde(default)]
     pub id: String,
@@ -1805,7 +1805,7 @@ pub struct EventsResponse {
     pub events: Vec<EventEntry>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventEntry {
     #[serde(default)]
     pub event: Option<String>,

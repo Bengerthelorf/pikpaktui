@@ -1,11 +1,21 @@
 use anyhow::{Result, anyhow};
 
 pub fn run(args: &[String]) -> Result<()> {
-    if args.is_empty() {
-        return Err(anyhow!("usage: pikpaktui info <path>"));
+    let mut json = false;
+    let mut path_arg: Option<&String> = None;
+
+    for arg in args {
+        match arg.as_str() {
+            "-J" | "--json" => json = true,
+            _ => {
+                if path_arg.is_none() {
+                    path_arg = Some(arg);
+                }
+            }
+        }
     }
 
-    let path = &args[0];
+    let path = path_arg.ok_or_else(|| anyhow!("usage: pikpaktui info [-J|--json] <path>"))?;
     let client = super::cli_client()?;
 
     let (parent_path, name) = super::split_parent_name(path)?;
@@ -13,14 +23,16 @@ pub fn run(args: &[String]) -> Result<()> {
     let entry = super::find_entry(&client, &parent_id, &name)?;
     let info = client.file_info(&entry.id)?;
 
+    if json {
+        let out = serde_json::to_string_pretty(&info).unwrap_or_else(|_| "{}".into());
+        println!("{}", out);
+        return Ok(());
+    }
+
     println!("Name:     {}", info.name);
 
     if let Some(kind) = &info.kind {
-        let display = if kind.contains("folder") {
-            "folder"
-        } else {
-            "file"
-        };
+        let display = if kind.contains("folder") { "folder" } else { "file" };
         println!("Type:     {}", display);
     }
 
@@ -44,7 +56,6 @@ pub fn run(args: &[String]) -> Result<()> {
         println!("Created:  {}", created);
     }
 
-    // Video media info
     if let Some(medias) = &info.medias {
         for media in medias {
             if let Some(video) = &media.video {
