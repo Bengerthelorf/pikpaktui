@@ -204,12 +204,12 @@ fn fuzzy_score_lower(name: &str, pattern: &str) -> Option<i32> {
     for &pos in &positions {
         score -= pos as i32;
         if prev_pos == Some(pos.wrapping_sub(1)) {
-            score += 15; // consecutive run
+            score += 15;
         }
         let at_boundary = pos == 0
             || matches!(nc[pos - 1], '-' | '_' | ' ' | '.' | '(' | '[');
         if at_boundary {
-            score += 10; // word boundary
+            score += 10;
         }
         prev_pos = Some(pos);
     }

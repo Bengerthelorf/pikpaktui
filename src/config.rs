@@ -207,36 +207,12 @@ impl Default for ThumbnailSize {
 }
 
 impl ThumbnailSize {
-    pub fn all() -> &'static [Self] {
-        &[Self::Small, Self::Medium, Self::Large]
-    }
-
-    pub fn display_name(self) -> &'static str {
-        match self {
-            Self::Small => "Small",
-            Self::Medium => "Medium",
-            Self::Large => "Large",
-        }
-    }
-
     pub fn as_api_str(self) -> &'static str {
         match self {
             Self::Small => "SIZE_SMALL",
             Self::Medium => "SIZE_MEDIUM",
             Self::Large => "SIZE_LARGE",
         }
-    }
-
-    pub fn next(self) -> Self {
-        let all = Self::all();
-        let idx = all.iter().position(|s| s == &self).unwrap();
-        all[(idx + 1) % all.len()]
-    }
-
-    pub fn prev(self) -> Self {
-        let all = Self::all();
-        let idx = all.iter().position(|s| s == &self).unwrap();
-        all[(idx + all.len() - 1) % all.len()]
     }
 }
 
