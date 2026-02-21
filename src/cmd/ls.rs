@@ -417,6 +417,7 @@ mod sort_tests {
             kind,
             size,
             created_time: created.to_string(),
+            modified_time: String::new(),
             starred: false,
             thumbnail_link: None,
         }
