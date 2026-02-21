@@ -1966,6 +1966,7 @@ impl App {
                         hash: None,
                         mime_type: None,
                         created_time: if entry.created_time.is_empty() { None } else { Some(entry.created_time) },
+                        modified_time: if entry.modified_time.is_empty() { None } else { Some(entry.modified_time) },
                         web_content_link: None,
                         thumbnail_link: entry.thumbnail_link,
                         links: None,

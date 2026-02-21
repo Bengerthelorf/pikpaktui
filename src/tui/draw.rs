@@ -952,8 +952,14 @@ impl App {
                     }
                     if !entry.created_time.is_empty() {
                         lines.push(Line::from(vec![
-                            Span::styled("  Time:  ", Style::default().fg(Color::Cyan)),
+                            Span::styled("  Created:", Style::default().fg(Color::Cyan)),
                             Span::styled(&entry.created_time, Style::default().fg(Color::DarkGray)),
+                        ]));
+                    }
+                    if !entry.modified_time.is_empty() {
+                        lines.push(Line::from(vec![
+                            Span::styled("  Modified:", Style::default().fg(Color::Cyan)),
+                            Span::styled(&entry.modified_time, Style::default().fg(Color::DarkGray)),
                         ]));
                     }
                     let mut markers = Vec::new();
@@ -1024,8 +1030,14 @@ impl App {
                     }
                     if !entry.created_time.is_empty() {
                         info_lines.push(Line::from(vec![
-                            Span::styled("  Time:  ", Style::default().fg(Color::Cyan)),
+                            Span::styled("  Created:", Style::default().fg(Color::Cyan)),
                             Span::styled(&entry.created_time, Style::default().fg(Color::DarkGray)),
+                        ]));
+                    }
+                    if !entry.modified_time.is_empty() {
+                        info_lines.push(Line::from(vec![
+                            Span::styled("  Modified:", Style::default().fg(Color::Cyan)),
+                            Span::styled(&entry.modified_time, Style::default().fg(Color::DarkGray)),
                         ]));
                     }
                     let mut markers = Vec::new();
@@ -2730,7 +2742,14 @@ impl App {
         if let Some(ct) = &info.created_time {
             let date = crate::cmd::format_date(ct);
             lines.push(Line::from(vec![
-                Span::styled("  Date:  ", Style::default().fg(Color::Cyan)),
+                Span::styled("  Created:", Style::default().fg(Color::Cyan)),
+                Span::styled(date, Style::default().fg(Color::White)),
+            ]));
+        }
+        if let Some(mt) = &info.modified_time {
+            let date = crate::cmd::format_date(mt);
+            lines.push(Line::from(vec![
+                Span::styled("  Modified:", Style::default().fg(Color::Cyan)),
                 Span::styled(date, Style::default().fg(Color::White)),
             ]));
         }

@@ -29,6 +29,7 @@ pub struct Entry {
     pub kind: EntryKind,
     pub size: u64,
     pub created_time: String,
+    pub modified_time: String,
     pub starred: bool,
     pub thumbnail_link: Option<String>,
 }
@@ -340,6 +341,7 @@ impl PikPak {
                     },
                     size: f.size.unwrap_or(0),
                     created_time: f.created_time.unwrap_or_default(),
+                    modified_time: f.modified_time.unwrap_or_default(),
                     starred,
                     thumbnail_link: f.thumbnail_link,
                 }
@@ -425,6 +427,7 @@ impl PikPak {
                     },
                     size: f.size.unwrap_or(0),
                     created_time: f.created_time.unwrap_or_default(),
+                    modified_time: f.modified_time.unwrap_or_default(),
                     starred,
                     thumbnail_link: f.thumbnail_link,
                 }
@@ -564,6 +567,7 @@ impl PikPak {
             kind: EntryKind::Folder,
             size: 0,
             created_time: f.created_time.unwrap_or_default(),
+            modified_time: f.modified_time.unwrap_or_default(),
             starred,
             thumbnail_link: f.thumbnail_link,
         })
@@ -898,6 +902,7 @@ impl PikPak {
                 },
                 size: f.size.unwrap_or(0),
                 created_time: f.created_time.unwrap_or_default(),
+                modified_time: f.modified_time.unwrap_or_default(),
                 starred: true, // starred_list only returns starred items
                 thumbnail_link: f.thumbnail_link,
             })
@@ -1666,6 +1671,8 @@ struct DriveFile {
     #[serde(default)]
     created_time: Option<String>,
     #[serde(default)]
+    modified_time: Option<String>,
+    #[serde(default)]
     tags: Vec<DriveFileTag>,
     #[serde(default)]
     thumbnail_link: Option<String>,
@@ -1732,6 +1739,8 @@ pub struct FileInfoResponse {
     pub mime_type: Option<String>,
     #[serde(default)]
     pub created_time: Option<String>,
+    #[serde(default)]
+    pub modified_time: Option<String>,
     #[serde(default)]
     pub web_content_link: Option<String>,
     #[serde(default)]
