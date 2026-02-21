@@ -21,6 +21,16 @@ impl App {
             return Ok(false);
         }
 
+        // Ctrl+C: treat as quit globally, regardless of current mode
+        if code == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL) {
+            if self.download_state.has_active() {
+                self.input = InputMode::ConfirmQuit;
+                return Ok(false);
+            } else {
+                return Ok(true);
+            }
+        }
+
         let mode = std::mem::replace(&mut self.input, InputMode::Normal);
         match mode {
             InputMode::Login {
