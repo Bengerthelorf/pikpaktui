@@ -194,6 +194,54 @@ impl ImageProtocol {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
+pub enum ThumbnailSize {
+    Small,
+    Medium,
+    Large,
+}
+
+impl Default for ThumbnailSize {
+    fn default() -> Self {
+        Self::Medium
+    }
+}
+
+impl ThumbnailSize {
+    pub fn all() -> &'static [Self] {
+        &[Self::Small, Self::Medium, Self::Large]
+    }
+
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Self::Small => "Small",
+            Self::Medium => "Medium",
+            Self::Large => "Large",
+        }
+    }
+
+    pub fn as_api_str(self) -> &'static str {
+        match self {
+            Self::Small => "SIZE_SMALL",
+            Self::Medium => "SIZE_MEDIUM",
+            Self::Large => "SIZE_LARGE",
+        }
+    }
+
+    pub fn next(self) -> Self {
+        let all = Self::all();
+        let idx = all.iter().position(|s| s == &self).unwrap();
+        all[(idx + 1) % all.len()]
+    }
+
+    pub fn prev(self) -> Self {
+        let all = Self::all();
+        let idx = all.iter().position(|s| s == &self).unwrap();
+        all[(idx + all.len() - 1) % all.len()]
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum ThumbnailMode {
     Auto,
     Off,
@@ -449,6 +497,8 @@ pub struct TuiConfig {
     #[serde(default)]
     pub thumbnail_mode: ThumbnailMode,
     #[serde(default)]
+    pub thumbnail_size: ThumbnailSize,
+    #[serde(default)]
     pub sort_field: SortField,
     #[serde(default)]
     pub sort_reverse: bool,
@@ -488,6 +538,7 @@ impl Default for TuiConfig {
             preview_max_size: default_preview_max_size(),
             custom_colors: CustomColors::default(),
             thumbnail_mode: ThumbnailMode::default(),
+            thumbnail_size: ThumbnailSize::default(),
             sort_field: SortField::default(),
             sort_reverse: false,
             image_protocols: BTreeMap::new(),

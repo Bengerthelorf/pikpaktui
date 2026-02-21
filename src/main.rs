@@ -61,8 +61,9 @@ fn entry() -> Result<()> {
 }
 
 fn run_tui() -> Result<()> {
-    let client = PikPak::new()?;
+    let mut client = PikPak::new()?;
     let tui_config = TuiConfig::load();
+    client.thumbnail_size = tui_config.thumbnail_size.as_api_str().to_string();
 
     if client.has_valid_session() {
         return tui::run(client, tui_config);

@@ -56,6 +56,7 @@ pub struct PikPak {
     session_path: PathBuf,
     device_id: String,
     captcha_token: String,
+    pub thumbnail_size: String,
 }
 
 impl PikPak {
@@ -76,6 +77,7 @@ impl PikPak {
             session_path: default_session_path()?,
             device_id: String::new(),
             captcha_token: String::new(),
+            thumbnail_size: "SIZE_MEDIUM".to_string(),
         })
     }
 
@@ -310,7 +312,7 @@ impl PikPak {
                 ("parent_id", parent_id),
                 ("limit", "500"),
                 ("filters", filters),
-                ("thumbnail_size", "SIZE_MEDIUM"),
+                ("thumbnail_size", self.thumbnail_size.as_str()),
             ]);
             if let Some(ref pt) = page_token {
                 rb = rb.query(&[("page_token", pt.as_str())]);

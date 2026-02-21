@@ -2851,6 +2851,26 @@ impl App {
                     }
                 }
                 9 => {
+                    // Thumbnail Size
+                    match code {
+                        KeyCode::Left => {
+                            draft.thumbnail_size = draft.thumbnail_size.prev();
+                            *modified = true;
+                        }
+                        KeyCode::Right => {
+                            draft.thumbnail_size = draft.thumbnail_size.next();
+                            *modified = true;
+                        }
+                        KeyCode::Enter => {
+                            *editing = false;
+                        }
+                        KeyCode::Esc => {
+                            *editing = false;
+                        }
+                        _ => {}
+                    }
+                }
+                10 => {
                     match code {
                         KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Left | KeyCode::Right => {
                             let current_terminal = draft.ensure_current_terminal();
@@ -2875,7 +2895,7 @@ impl App {
                         _ => {}
                     }
                 }
-                10 => {
+                11 => {
                     // Sort Field
                     match code {
                         KeyCode::Left => {
@@ -2895,7 +2915,7 @@ impl App {
                         _ => {}
                     }
                 }
-                11 => {
+                12 => {
                     // Reverse Order
                     match code {
                         KeyCode::Char(' ')
@@ -2912,7 +2932,7 @@ impl App {
                         _ => {}
                     }
                 }
-                12 => {
+                13 => {
                     // Move Mode
                     match code {
                         KeyCode::Left => {
@@ -2940,7 +2960,7 @@ impl App {
                         _ => {}
                     }
                 }
-                13 => {
+                14 => {
                     // CLI Nerd Font
                     match code {
                         KeyCode::Char(' ')
@@ -2957,7 +2977,7 @@ impl App {
                         _ => {}
                     }
                 }
-                14 => {
+                15 => {
                     // Player Command (text input)
                     match code {
                         KeyCode::Esc => {
@@ -2991,7 +3011,7 @@ impl App {
         } else {
             match code {
                 KeyCode::Down | KeyCode::Char('j') => {
-                    *selected = (*selected + 1).min(14);
+                    *selected = (*selected + 1).min(15);
                     None
                 }
                 KeyCode::Up | KeyCode::Char('k') => {
@@ -2999,7 +3019,7 @@ impl App {
                     None
                 }
                 KeyCode::Char(' ') | KeyCode::Enter => {
-                    if *selected == 9 {
+                    if *selected == 10 {
                         // Directly enter image protocol sub-menu
                         let current_terminal = draft.ensure_current_terminal();
                         let terminals: Vec<String> =

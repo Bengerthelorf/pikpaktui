@@ -3127,6 +3127,11 @@ impl App {
                         draft.thumbnail_mode.display_name().to_string(),
                     ),
                     (
+                        "Thumbnail Size".to_string(),
+                        "API thumbnail resolution".to_string(),
+                        draft.thumbnail_size.display_name().to_string(),
+                    ),
+                    (
                         "Image Protocol".to_string(),
                         "Terminal image rendering protocol".to_string(),
                         ">".to_string(),
@@ -3229,8 +3234,8 @@ impl App {
                     Style::default().fg(Color::Green)
                 };
 
-                // Item 13 = Player Command: show as inline text input with cursor when editing
-                let is_text_input_item = global_idx == 13;
+                // Item 15 = Player Command: show as inline text input with cursor when editing
+                let is_text_input_item = global_idx == 15;
                 let cur = if self.cursor_visible { "\u{2588}" } else { " " };
 
                 let mut name_value_spans = vec![
