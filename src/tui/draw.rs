@@ -2734,13 +2734,16 @@ impl App {
     ) {
         let has_thumb = has_thumbnail;
         let area = if has_thumb {
-            centered_rect(65, 75, f.area())
+            centered_rect(80, 55, f.area())
         } else {
             centered_rect(65, 40, f.area())
         };
         f.render_widget(Clear, area);
 
-        let wrap_w = area.width.saturating_sub(2) as usize;
+        let inner_w = area.width.saturating_sub(2);
+        // Reserve ~40% of width for thumbnail column; text wraps within the left 60%.
+        let thumb_col_w: u16 = if has_thumb { (inner_w * 2 / 5).max(10) } else { 0 };
+        let wrap_w = inner_w.saturating_sub(thumb_col_w) as usize;
         let mut lines = vec![Line::from("")];
 
         if let Some(id) = &info.id {
@@ -2859,9 +2862,7 @@ impl App {
             use crate::config::ThumbnailRenderMode;
             use ratatui_image::{picker::{Picker, ProtocolType}, StatefulImage};
 
-            let inner_w = area.width.saturating_sub(2);
             let inner_h = area.height.saturating_sub(2);
-            let text_height = lines.len() as u16;
             let render_mode = self.config.thumbnail_mode.should_use_color();
 
             // For Auto mode: call from_query_stdio() ONCE and reuse for both
@@ -2888,6 +2889,7 @@ impl App {
                 None
             };
 
+            // Image height based on thumb column width (not full overlay width)
             let image_rows: u16 = if let Some(img) = image {
                 match render_mode {
                     ThumbnailRenderMode::Auto => {
@@ -2895,19 +2897,19 @@ impl App {
                             .map(|p| { let f = p.font_size(); (f.0 as u32, f.1 as u32) })
                             .unwrap_or((10, 20));
                         if cw > 0 && ch > 0 && img.width() > 0 {
-                            let rows = (img.height() * inner_w as u32 * cw + img.width() * ch - 1)
+                            let rows = (img.height() * thumb_col_w as u32 * cw + img.width() * ch - 1)
                                 / (img.width() * ch);
-                            (rows as u16).min(inner_h.saturating_sub(text_height))
+                            (rows as u16).min(inner_h)
                         } else {
-                            inner_h.saturating_sub(text_height)
+                            inner_h
                         }
                     }
                     ThumbnailRenderMode::ColoredHalf | ThumbnailRenderMode::Grayscale => {
                         if img.width() > 0 {
-                            let rows = img.height() * inner_w as u32 / (img.width() * 2);
-                            (rows as u16).max(1).min(inner_h.saturating_sub(text_height))
+                            let rows = img.height() * thumb_col_w as u32 / (img.width() * 2);
+                            (rows as u16).max(1).min(inner_h)
                         } else {
-                            inner_h.saturating_sub(text_height)
+                            inner_h
                         }
                     }
                     ThumbnailRenderMode::Off => 0,
@@ -2916,70 +2918,75 @@ impl App {
                 1
             };
 
-            let needed_h = image_rows + text_height + 2;
-            let final_area = if needed_h < area.height {
-                let y = area.y + (area.height - needed_h) / 2;
-                let r = ratatui::layout::Rect { x: area.x, y, width: area.width, height: needed_h };
-                f.render_widget(Clear, area);
-                f.render_widget(Clear, r);
-                r
-            } else {
-                area
-            };
-
             let inner = ratatui::layout::Rect {
-                x: final_area.x + 1,
-                y: final_area.y + 1,
+                x: area.x + 1,
+                y: area.y + 1,
                 width: inner_w,
-                height: final_area.height.saturating_sub(2),
+                height: inner_h,
             };
 
-            let chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Length(image_rows), Constraint::Min(0)])
+            // Horizontal split: metadata text on left, thumbnail on right
+            let h_chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Min(0), Constraint::Length(thumb_col_w)])
                 .split(inner);
 
+            f.render_widget(Paragraph::new(Text::from(lines)), h_chunks[0]);
+
+            let thumb_area = h_chunks[1];
             if let Some(img) = image {
+                // Vertically center the image in the right column
+                let img_rect = if image_rows < thumb_area.height {
+                    let y_offset = (thumb_area.height - image_rows) / 2;
+                    ratatui::layout::Rect {
+                        x: thumb_area.x,
+                        y: thumb_area.y + y_offset,
+                        width: thumb_col_w,
+                        height: image_rows,
+                    }
+                } else {
+                    thumb_area
+                };
                 match render_mode {
                     ThumbnailRenderMode::Auto => {
                         if let Some(picker) = auto_picker {
-                            let render_rect = center_image_rect(img, chunks[0]);
+                            let render_rect = center_image_rect(img, img_rect);
                             let img_display = upscale_for_rect(img, render_rect, picker.font_size());
                             let mut protocol = picker.new_resize_protocol(img_display);
                             f.render_stateful_widget(StatefulImage::default(), render_rect, &mut protocol);
                         }
                     }
                     ThumbnailRenderMode::ColoredHalf => {
-                        let colored_lines = render_image_to_colored_lines(img, inner_w as u32, image_rows as u32);
-                        f.render_widget(Paragraph::new(Text::from(colored_lines)), chunks[0]);
+                        let colored_lines = render_image_to_colored_lines(img, thumb_col_w as u32, image_rows as u32);
+                        f.render_widget(Paragraph::new(Text::from(colored_lines)), img_rect);
                     }
                     ThumbnailRenderMode::Grayscale => {
-                        let ascii_lines = render_image_to_grayscale_lines(img, inner_w as u32, image_rows as u32);
+                        let ascii_lines = render_image_to_grayscale_lines(img, thumb_col_w as u32, image_rows as u32);
                         f.render_widget(
                             Paragraph::new(Text::from(ascii_lines)).style(Style::default().fg(Color::DarkGray)),
-                            chunks[0],
+                            img_rect,
                         );
                     }
                     ThumbnailRenderMode::Off => {}
                 }
             } else {
+                // Spinner centered vertically in the thumbnail column
+                let spinner_y = thumb_area.y + thumb_area.height / 2;
                 let frame = SPINNER_FRAMES[self.spinner_idx];
                 f.render_widget(
                     Paragraph::new(Line::from(Span::styled(
-                        format!("  {} Loading thumbnail...", frame),
+                        format!(" {} Loading...", frame),
                         Style::default().fg(Color::DarkGray),
                     ))),
-                    chunks[0],
+                    ratatui::layout::Rect { x: thumb_area.x, y: spinner_y, width: thumb_col_w, height: 1 },
                 );
             }
-
-            f.render_widget(Paragraph::new(Text::from(lines)), chunks[1]);
 
             let block = self.styled_block()
                 .title(title)
                 .title_style(title_style)
                 .border_style(border_style);
-            f.render_widget(block, final_area);
+            f.render_widget(block, area);
         } else {
             let p = Paragraph::new(Text::from(lines)).block(
                 self.styled_block()
