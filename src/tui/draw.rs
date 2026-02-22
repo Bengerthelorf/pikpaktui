@@ -1509,271 +1509,28 @@ impl App {
                 self.draw_path_input_overlay(f, "Copy Cart", "Copy all cart items to path", input, cur);
             }
             InputMode::Rename { value } => {
-                let area = centered_rect(60, 20, f.area());
-                f.render_widget(Clear, area);
-                let rename_hints = vec![("Enter", "confirm"), ("Esc", "cancel")];
-                let mut hint_spans = vec![Span::raw("  ")];
-                hint_spans.extend(Self::styled_help_spans(&rename_hints));
-                let (rn_bc, rn_tc) = if self.is_vibrant() {
-                    (Color::LightYellow, Color::LightYellow)
-                } else {
-                    (Color::Cyan, Color::Yellow)
-                };
-                let p = Paragraph::new(Text::from(vec![
-                    Line::from(""),
-                    Line::from(vec![
-                        Span::styled("  New name: ", Style::default().fg(Color::Cyan)),
-                        Span::styled(
-                            format!("{}{}", value, cur),
-                            Style::default().fg(Color::Yellow),
-                        ),
-                    ]),
-                    Line::from(""),
-                    Line::from(hint_spans),
-                ]))
-                .block(
-                    self.styled_block()
-                        .title(" Rename ")
-                        .title_style(Style::default().fg(rn_tc))
-                        .border_style(Style::default().fg(rn_bc)),
-                );
-                f.render_widget(p, area);
+                self.draw_rename_overlay(f, value, cur);
             }
             InputMode::Mkdir { value } => {
-                let area = centered_rect(60, 20, f.area());
-                f.render_widget(Clear, area);
-                let mkdir_hints = vec![("Enter", "confirm"), ("Esc", "cancel")];
-                let mut hint_spans = vec![Span::raw("  ")];
-                hint_spans.extend(Self::styled_help_spans(&mkdir_hints));
-                let (mk_bc, mk_tc) = if self.is_vibrant() {
-                    (Color::LightYellow, Color::LightYellow)
-                } else {
-                    (Color::Cyan, Color::Yellow)
-                };
-                let p = Paragraph::new(Text::from(vec![
-                    Line::from(""),
-                    Line::from(vec![
-                        Span::styled("  Folder name: ", Style::default().fg(Color::Cyan)),
-                        Span::styled(
-                            format!("{}{}", value, cur),
-                            Style::default().fg(Color::Yellow),
-                        ),
-                    ]),
-                    Line::from(""),
-                    Line::from(hint_spans),
-                ]))
-                .block(
-                    self.styled_block()
-                        .title(" New Folder ")
-                        .title_style(Style::default().fg(mk_tc))
-                        .border_style(Style::default().fg(mk_bc)),
-                );
-                f.render_widget(p, area);
+                self.draw_mkdir_overlay(f, value, cur);
             }
             InputMode::GotoPath { query } => {
-                let area = centered_rect(70, 20, f.area());
-                f.render_widget(Clear, area);
-                let (bc, tc) = if self.is_vibrant() {
-                    (Color::LightCyan, Color::LightCyan)
-                } else {
-                    (Color::Cyan, Color::Cyan)
-                };
-                let goto_hints = vec![("Enter", "go"), ("Esc", "cancel")];
-                let mut hint_spans = vec![Span::raw("  ")];
-                hint_spans.extend(Self::styled_help_spans(&goto_hints));
-                let p = Paragraph::new(Text::from(vec![
-                    Line::from(""),
-                    Line::from(vec![
-                        Span::styled("  Path: ", Style::default().fg(Color::Cyan)),
-                        Span::styled(
-                            format!("{}{}", query, cur),
-                            Style::default().fg(Color::Yellow),
-                        ),
-                    ]),
-                    Line::from(Span::styled(
-                        "  e.g. /My Files/Movies",
-                        Style::default().fg(Color::DarkGray),
-                    )),
-                    Line::from(""),
-                    Line::from(hint_spans),
-                ]))
-                .block(
-                    self.styled_block()
-                        .title(" Go to Path ")
-                        .title_style(Style::default().fg(tc))
-                        .border_style(Style::default().fg(bc)),
-                );
-                f.render_widget(p, area);
+                self.draw_goto_overlay(f, query, cur);
             }
             InputMode::ConfirmQuit => {
-                let area = centered_rect(60, 20, f.area());
-                f.render_widget(Clear, area);
-                let active = self
-                    .download_state
-                    .tasks
-                    .iter()
-                    .filter(|t| matches!(t.status, super::download::TaskStatus::Downloading | super::download::TaskStatus::Pending))
-                    .count();
-                let quit_hints = vec![("y", "quit"), ("n/Esc", "cancel")];
-                let mut hint_spans = vec![Span::raw("  ")];
-                hint_spans.extend(Self::styled_help_spans(&quit_hints));
-                let p = Paragraph::new(Text::from(vec![
-                    Line::from(""),
-                    Line::from(vec![
-                        Span::styled("  ", Style::default()),
-                        Span::styled(
-                            format!("{} download(s) still active.", active),
-                            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-                        ),
-                    ]),
-                    Line::from(Span::styled(
-                        "  Quit anyway?",
-                        Style::default().fg(Color::Yellow),
-                    )),
-                    Line::from(""),
-                    Line::from(hint_spans),
-                ]))
-                .block({
-                    let (bc, tc) = if self.is_vibrant() {
-                        (Color::LightYellow, Color::LightYellow)
-                    } else {
-                        (Color::Yellow, Color::Yellow)
-                    };
-                    self.styled_block()
-                        .title(" Confirm Quit ")
-                        .title_style(Style::default().fg(tc))
-                        .border_style(Style::default().fg(bc))
-                });
-                f.render_widget(p, area);
+                self.draw_confirm_quit_overlay(f);
             }
             InputMode::ConfirmDelete => {
-                let area = centered_rect(60, 20, f.area());
-                f.render_widget(Clear, area);
-                let name = self
-                    .current_entry()
-                    .map(|e| e.name.as_str())
-                    .unwrap_or("<none>");
-                let del_hints = vec![("y", "trash"), ("p", "permanent"), ("n/Esc", "cancel")];
-                let mut hint_spans = vec![Span::raw("  ")];
-                hint_spans.extend(Self::styled_help_spans(&del_hints));
-                let p = Paragraph::new(Text::from(vec![
-                    Line::from(""),
-                    Line::from(vec![
-                        Span::styled("  Delete ", Style::default().fg(Color::Red)),
-                        Span::styled(
-                            format!("`{}`", name),
-                            Style::default()
-                                .fg(Color::Yellow)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                        Span::styled(" to trash?", Style::default().fg(Color::Red)),
-                    ]),
-                    Line::from(""),
-                    Line::from(hint_spans),
-                ]))
-                .block({
-                    let (del_bc, del_tc) = if self.is_vibrant() {
-                        (Color::LightRed, Color::LightRed)
-                    } else {
-                        (Color::Red, Color::Red)
-                    };
-                    self.styled_block()
-                        .title(" Confirm Remove ")
-                        .title_style(Style::default().fg(del_tc))
-                        .border_style(Style::default().fg(del_bc))
-                });
-                f.render_widget(p, area);
+                self.draw_confirm_delete_overlay(f);
             }
             InputMode::ConfirmPermanentDelete { value } => {
-                let area = centered_rect(60, 55, f.area());
-                f.render_widget(Clear, area);
-                let name = self
-                    .current_entry()
-                    .map(|e| e.name.as_str())
-                    .unwrap_or("<none>");
-                let perm_hints = vec![("Enter", "confirm"), ("Esc", "cancel")];
-                let mut hint_spans = vec![Span::raw("  ")];
-                hint_spans.extend(Self::styled_help_spans(&perm_hints));
-
-                let warn_lines = warn_triangle_lines();
-                let mut lines = vec![Line::from("")];
-                lines.extend(warn_lines);
-                lines.push(Line::from(""));
-                lines.push(Line::from(vec![
-                    Span::styled(
-                        "      PERMANENTLY DELETE ",
-                        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(
-                        format!("`{}`", name),
-                        Style::default()
-                            .fg(Color::Yellow)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                ]));
-                lines.push(Line::from(Span::styled(
-                    "        This cannot be undone!",
-                    Style::default().fg(Color::Red),
-                )));
-                lines.push(Line::from(""));
-                lines.push(Line::from(vec![
-                    Span::styled(
-                        "  Type 'yes' to confirm: ",
-                        Style::default().fg(Color::White),
-                    ),
-                    Span::styled(
-                        format!("{}{}", value, cur),
-                        Style::default().fg(Color::Yellow),
-                    ),
-                ]));
-                lines.push(Line::from(""));
-                lines.push(Line::from(hint_spans));
-
-                let p = Paragraph::new(Text::from(lines)).block(
-                    self.styled_block()
-                        .title(" \u{26a0} Permanent Delete ")
-                        .title_style(Style::default().fg(Color::Red))
-                        .border_style(Style::default().fg(Color::Red)),
-                );
-                f.render_widget(p, area);
+                self.draw_confirm_permanent_delete_overlay(f, value, cur);
             }
             InputMode::CartView => {
                 self.draw_cart_overlay(f);
             }
             InputMode::ConfirmCartDelete => {
-                let area = centered_rect(60, 20, f.area());
-                f.render_widget(Clear, area);
-                let count = self.cart.len();
-                let del_hints = vec![("y/Enter", "trash"), ("n/Esc", "cancel")];
-                let mut hint_spans = vec![Span::raw("  ")];
-                hint_spans.extend(Self::styled_help_spans(&del_hints));
-                let (del_bc, del_tc) = if self.is_vibrant() {
-                    (Color::LightRed, Color::LightRed)
-                } else {
-                    (Color::Red, Color::Red)
-                };
-                let p = Paragraph::new(Text::from(vec![
-                    Line::from(""),
-                    Line::from(vec![
-                        Span::styled("  Trash ", Style::default().fg(Color::Red)),
-                        Span::styled(
-                            format!("{} item(s)", count),
-                            Style::default()
-                                .fg(Color::Yellow)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                        Span::styled(" from cart?", Style::default().fg(Color::Red)),
-                    ]),
-                    Line::from(""),
-                    Line::from(hint_spans),
-                ]))
-                .block(
-                    self.styled_block()
-                        .title(" Confirm Trash Cart ")
-                        .title_style(Style::default().fg(del_tc))
-                        .border_style(Style::default().fg(del_bc)),
-                );
-                f.render_widget(p, area);
+                self.draw_confirm_cart_delete_overlay(f);
             }
             InputMode::DownloadInput { input } => {
                 self.draw_download_input_overlay(f, input, cur);
@@ -1855,6 +1612,209 @@ impl App {
                 self.draw_player_input_overlay(f, value);
             }
         }
+    }
+
+    fn draw_rename_overlay(&self, f: &mut Frame, value: &str, cur: &str) {
+        let area = self.prepare_overlay(f, 60, 20);
+        let (bc, tc) = if self.is_vibrant() {
+            (Color::LightYellow, Color::LightYellow)
+        } else {
+            (Color::Cyan, Color::Yellow)
+        };
+        f.render_widget(
+            Paragraph::new(vec![
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("  New name: ", Style::default().fg(Color::Cyan)),
+                    Span::styled(format!("{}{}", value, cur), Style::default().fg(Color::Yellow)),
+                ]),
+                Line::from(""),
+                Self::hint_line(&[("Enter", "confirm"), ("Esc", "cancel")]),
+            ])
+            .block(self.overlay_block("Rename", bc, tc)),
+            area,
+        );
+    }
+
+    fn draw_mkdir_overlay(&self, f: &mut Frame, value: &str, cur: &str) {
+        let area = self.prepare_overlay(f, 60, 20);
+        let (bc, tc) = if self.is_vibrant() {
+            (Color::LightYellow, Color::LightYellow)
+        } else {
+            (Color::Cyan, Color::Yellow)
+        };
+        f.render_widget(
+            Paragraph::new(vec![
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("  Folder name: ", Style::default().fg(Color::Cyan)),
+                    Span::styled(format!("{}{}", value, cur), Style::default().fg(Color::Yellow)),
+                ]),
+                Line::from(""),
+                Self::hint_line(&[("Enter", "confirm"), ("Esc", "cancel")]),
+            ])
+            .block(self.overlay_block("New Folder", bc, tc)),
+            area,
+        );
+    }
+
+    fn draw_goto_overlay(&self, f: &mut Frame, query: &str, cur: &str) {
+        let area = self.prepare_overlay(f, 70, 20);
+        let (bc, tc) = if self.is_vibrant() {
+            (Color::LightCyan, Color::LightCyan)
+        } else {
+            (Color::Cyan, Color::Cyan)
+        };
+        f.render_widget(
+            Paragraph::new(vec![
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("  Path: ", Style::default().fg(Color::Cyan)),
+                    Span::styled(format!("{}{}", query, cur), Style::default().fg(Color::Yellow)),
+                ]),
+                Line::from(Span::styled(
+                    "  e.g. /My Files/Movies",
+                    Style::default().fg(Color::DarkGray),
+                )),
+                Line::from(""),
+                Self::hint_line(&[("Enter", "go"), ("Esc", "cancel")]),
+            ])
+            .block(self.overlay_block("Go to Path", bc, tc)),
+            area,
+        );
+    }
+
+    fn draw_confirm_quit_overlay(&self, f: &mut Frame) {
+        let area = self.prepare_overlay(f, 60, 20);
+        let (bc, tc) = if self.is_vibrant() {
+            (Color::LightYellow, Color::LightYellow)
+        } else {
+            (Color::Yellow, Color::Yellow)
+        };
+        let active = self
+            .download_state
+            .tasks
+            .iter()
+            .filter(|t| matches!(t.status, super::download::TaskStatus::Downloading | super::download::TaskStatus::Pending))
+            .count();
+        f.render_widget(
+            Paragraph::new(vec![
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("  ", Style::default()),
+                    Span::styled(
+                        format!("{} download(s) still active.", active),
+                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                    ),
+                ]),
+                Line::from(Span::styled("  Quit anyway?", Style::default().fg(Color::Yellow))),
+                Line::from(""),
+                Self::hint_line(&[("y", "quit"), ("n/Esc", "cancel")]),
+            ])
+            .block(self.overlay_block("Confirm Quit", bc, tc)),
+            area,
+        );
+    }
+
+    fn draw_confirm_delete_overlay(&self, f: &mut Frame) {
+        let area = self.prepare_overlay(f, 60, 20);
+        let (bc, tc) = if self.is_vibrant() {
+            (Color::LightRed, Color::LightRed)
+        } else {
+            (Color::Red, Color::Red)
+        };
+        let name = self
+            .current_entry()
+            .map(|e| e.name.as_str())
+            .unwrap_or("<none>");
+        f.render_widget(
+            Paragraph::new(vec![
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("  Delete ", Style::default().fg(Color::Red)),
+                    Span::styled(
+                        format!("`{}`", name),
+                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(" to trash?", Style::default().fg(Color::Red)),
+                ]),
+                Line::from(""),
+                Self::hint_line(&[("y", "trash"), ("p", "permanent"), ("n/Esc", "cancel")]),
+            ])
+            .block(self.overlay_block("Confirm Remove", bc, tc)),
+            area,
+        );
+    }
+
+    fn draw_confirm_permanent_delete_overlay(&self, f: &mut Frame, value: &str, cur: &str) {
+        let area = self.prepare_overlay(f, 60, 55);
+        let name = self
+            .current_entry()
+            .map(|e| e.name.as_str())
+            .unwrap_or("<none>");
+        let warn_lines = warn_triangle_lines();
+        let mut lines = vec![Line::from("")];
+        lines.extend(warn_lines);
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled(
+                "      PERMANENTLY DELETE ",
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("`{}`", name),
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            ),
+        ]));
+        lines.push(Line::from(Span::styled(
+            "        This cannot be undone!",
+            Style::default().fg(Color::Red),
+        )));
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled("  Type 'yes' to confirm: ", Style::default().fg(Color::White)),
+            Span::styled(format!("{}{}", value, cur), Style::default().fg(Color::Yellow)),
+        ]));
+        lines.push(Line::from(""));
+        lines.push(Self::hint_line(&[("Enter", "confirm"), ("Esc", "cancel")]));
+        f.render_widget(
+            Paragraph::new(lines).block(
+                self.styled_block()
+                    .title(Span::styled(
+                        " \u{26a0} Permanent Delete ",
+                        Style::default().fg(Color::Red),
+                    ))
+                    .border_style(Style::default().fg(Color::Red)),
+            ),
+            area,
+        );
+    }
+
+    fn draw_confirm_cart_delete_overlay(&self, f: &mut Frame) {
+        let area = self.prepare_overlay(f, 60, 20);
+        let (bc, tc) = if self.is_vibrant() {
+            (Color::LightRed, Color::LightRed)
+        } else {
+            (Color::Red, Color::Red)
+        };
+        let count = self.cart.len();
+        f.render_widget(
+            Paragraph::new(vec![
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("  Trash ", Style::default().fg(Color::Red)),
+                    Span::styled(
+                        format!("{} item(s)", count),
+                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(" from cart?", Style::default().fg(Color::Red)),
+                ]),
+                Line::from(""),
+                Self::hint_line(&[("y/Enter", "trash"), ("n/Esc", "cancel")]),
+            ])
+            .block(self.overlay_block("Confirm Trash Cart", bc, tc)),
+            area,
+        );
     }
 
     fn draw_path_input_overlay(
