@@ -2472,6 +2472,55 @@ impl App {
 
     // --- Download input overlay ---
 
+    /// Appends a blank separator line followed by a sliding-window candidate list to `lines`.
+    /// Does nothing if `candidates` is empty.
+    fn draw_candidate_list(
+        &self,
+        lines: &mut Vec<Line<'static>>,
+        candidates: &[(String, bool)],
+        selected_idx: Option<usize>,
+    ) {
+        if candidates.is_empty() {
+            return;
+        }
+        lines.push(Line::from(""));
+        let total = candidates.len();
+        const MAX_VIS: usize = 8;
+        let sel = selected_idx.unwrap_or(0);
+        // Sliding window: keep selected item visible, reserving 1 row for "above" indicator.
+        let has_above_row = sel >= MAX_VIS;
+        let item_slots = if has_above_row { MAX_VIS - 1 } else { MAX_VIS };
+        let window_start = if sel + 1 <= item_slots { 0 } else { sel + 1 - item_slots };
+        let window_end = (window_start + item_slots).min(total);
+        if has_above_row {
+            lines.push(Line::from(Span::styled(
+                format!("    ↑ {} more above", window_start),
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
+        for i in window_start..window_end {
+            let (name, is_dir) = &candidates[i];
+            let is_sel = selected_idx == Some(i);
+            let row_prefix = if is_sel { "  > " } else { "    " };
+            let style = if is_sel {
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::Blue)
+            };
+            let suffix = if *is_dir { "/" } else { "" };
+            lines.push(Line::from(Span::styled(
+                format!("{}{}{}", row_prefix, name, suffix),
+                style,
+            )));
+        }
+        if window_end < total {
+            lines.push(Line::from(Span::styled(
+                format!("    ... and {} more", total - window_end),
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
+    }
+
     fn draw_download_input_overlay(&self, f: &mut Frame, input: &LocalPathInput, cur: &str) {
         let candidate_lines = input.candidates.len().min(8);
         let base_height = 6;
@@ -2498,46 +2547,7 @@ impl App {
             ]),
         ];
 
-        if !input.candidates.is_empty() {
-            lines.push(Line::from(""));
-            let total = input.candidates.len();
-            const MAX_VIS: usize = 8;
-            let sel = input.candidate_idx.unwrap_or(0);
-            // Sliding window: keep selected item visible, reserving 1 row for the "above" indicator.
-            let has_above_row = sel >= MAX_VIS;
-            let item_slots = if has_above_row { MAX_VIS - 1 } else { MAX_VIS };
-            let window_start = if sel + 1 <= item_slots { 0 } else { sel + 1 - item_slots };
-            let window_end = (window_start + item_slots).min(total);
-            if has_above_row {
-                lines.push(Line::from(Span::styled(
-                    format!("    ↑ {} more above", window_start),
-                    Style::default().fg(Color::DarkGray),
-                )));
-            }
-            for i in window_start..window_end {
-                let (name, is_dir) = &input.candidates[i];
-                let is_sel = input.candidate_idx == Some(i);
-                let row_prefix = if is_sel { "  > " } else { "    " };
-                let style = if is_sel {
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(Color::Blue)
-                };
-                let suffix = if *is_dir { "/" } else { "" };
-                lines.push(Line::from(Span::styled(
-                    format!("{}{}{}", row_prefix, name, suffix),
-                    style,
-                )));
-            }
-            if window_end < total {
-                lines.push(Line::from(Span::styled(
-                    format!("    ... and {} more", total - window_end),
-                    Style::default().fg(Color::DarkGray),
-                )));
-            }
-        }
+        self.draw_candidate_list(&mut lines, &input.candidates, input.candidate_idx);
 
         lines.push(Line::from(""));
         let dl_hints = vec![("Tab", "complete"), ("Enter", "confirm"), ("Esc", "cancel")];
@@ -2586,43 +2596,7 @@ impl App {
             ]),
         ];
 
-        if !input.candidates.is_empty() {
-            lines.push(Line::from(""));
-            let total = input.candidates.len();
-            const MAX_VIS: usize = 8;
-            let sel = input.candidate_idx.unwrap_or(0);
-            let has_above_row = sel >= MAX_VIS;
-            let item_slots = if has_above_row { MAX_VIS - 1 } else { MAX_VIS };
-            let window_start = if sel + 1 <= item_slots { 0 } else { sel + 1 - item_slots };
-            let window_end = (window_start + item_slots).min(total);
-            if has_above_row {
-                lines.push(Line::from(Span::styled(
-                    format!("    ↑ {} more above", window_start),
-                    Style::default().fg(Color::DarkGray),
-                )));
-            }
-            for i in window_start..window_end {
-                let (name, is_dir) = &input.candidates[i];
-                let is_sel = input.candidate_idx == Some(i);
-                let row_prefix = if is_sel { "  > " } else { "    " };
-                let style = if is_sel {
-                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(Color::Blue)
-                };
-                let suffix = if *is_dir { "/" } else { "" };
-                lines.push(Line::from(Span::styled(
-                    format!("{}{}{}", row_prefix, name, suffix),
-                    style,
-                )));
-            }
-            if window_end < total {
-                lines.push(Line::from(Span::styled(
-                    format!("    ... and {} more", total - window_end),
-                    Style::default().fg(Color::DarkGray),
-                )));
-            }
-        }
+        self.draw_candidate_list(&mut lines, &input.candidates, input.candidate_idx);
 
         lines.push(Line::from(""));
         let hints = vec![("Tab", "complete"), ("Enter", "upload"), ("Esc", "cancel")];
