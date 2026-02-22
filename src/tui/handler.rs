@@ -1035,23 +1035,12 @@ impl App {
     }
 
     fn restore_path_input(&mut self, source: Entry, input: &mut PathInput, is_move: bool) {
-        let owned = PathInput {
-            value: std::mem::take(&mut input.value),
-            candidates: std::mem::take(&mut input.candidates),
-            candidate_idx: input.candidate_idx,
-            completion_base: std::mem::take(&mut input.completion_base),
-        };
-        if is_move {
-            self.input = InputMode::MoveInput {
-                source,
-                input: owned,
-            };
+        let owned = std::mem::take(input);
+        self.input = if is_move {
+            InputMode::MoveInput { source, input: owned }
         } else {
-            self.input = InputMode::CopyInput {
-                source,
-                input: owned,
-            };
-        }
+            InputMode::CopyInput { source, input: owned }
+        };
     }
 
     // --- Picker ---
@@ -1183,24 +1172,12 @@ impl App {
     }
 
     fn restore_picker(&mut self, source: Entry, picker: &mut PickerState, is_move: bool) {
-        let owned = PickerState {
-            folder_id: std::mem::take(&mut picker.folder_id),
-            breadcrumb: std::mem::take(&mut picker.breadcrumb),
-            entries: std::mem::take(&mut picker.entries),
-            selected: picker.selected,
-            loading: picker.loading,
-        };
-        if is_move {
-            self.input = InputMode::MovePicker {
-                source,
-                picker: owned,
-            };
+        let owned = std::mem::take(picker);
+        self.input = if is_move {
+            InputMode::MovePicker { source, picker: owned }
         } else {
-            self.input = InputMode::CopyPicker {
-                source,
-                picker: owned,
-            };
-        }
+            InputMode::CopyPicker { source, picker: owned }
+        };
     }
 
     // --- Operations ---
@@ -1382,12 +1359,7 @@ impl App {
     }
 
     fn restore_cart_path_input(&mut self, input: &mut PathInput, is_move: bool) {
-        let owned = PathInput {
-            value: std::mem::take(&mut input.value),
-            candidates: std::mem::take(&mut input.candidates),
-            candidate_idx: input.candidate_idx,
-            completion_base: std::mem::take(&mut input.completion_base),
-        };
+        let owned = std::mem::take(input);
         self.input = if is_move {
             InputMode::CartMoveInput { input: owned }
         } else {
@@ -1448,18 +1420,12 @@ impl App {
     }
 
     fn restore_cart_picker(&mut self, picker: &mut PickerState, is_move: bool) {
-        let owned = PickerState {
-            folder_id: std::mem::take(&mut picker.folder_id),
-            breadcrumb: std::mem::take(&mut picker.breadcrumb),
-            entries: std::mem::take(&mut picker.entries),
-            selected: picker.selected,
-            loading: picker.loading,
-        };
-        if is_move {
-            self.input = InputMode::CartMovePicker { picker: owned };
+        let owned = std::mem::take(picker);
+        self.input = if is_move {
+            InputMode::CartMovePicker { picker: owned }
         } else {
-            self.input = InputMode::CartCopyPicker { picker: owned };
-        }
+            InputMode::CartCopyPicker { picker: owned }
+        };
     }
 
     fn spawn_cart_move_copy(&mut self, dest_id: String, dest_path: String, is_move: bool) {

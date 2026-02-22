@@ -108,6 +108,7 @@ enum OpResult {
     Upload(Result<String>),
 }
 
+#[derive(Default)]
 struct PickerState {
     folder_id: String,
     breadcrumb: Vec<(String, String)>,

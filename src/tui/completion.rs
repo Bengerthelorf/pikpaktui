@@ -2,6 +2,7 @@ use crate::pikpak::EntryKind;
 
 use super::App;
 
+#[derive(Default)]
 pub(super) struct PathInput {
     pub value: String,
     pub candidates: Vec<String>,
