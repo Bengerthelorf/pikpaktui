@@ -92,7 +92,7 @@ enum OpResult {
     Ls(Result<Vec<Entry>>),
     Ok(String),
     Err(String),
-    Info(Result<FileInfoResponse>),
+    Info(Result<FileInfoResponse>, Option<String>),
     ParentLs(String, Result<Vec<Entry>>),
     PreviewLs(String, Result<Vec<Entry>>),
     PreviewInfo(String, Result<FileInfoResponse>),
@@ -191,6 +191,7 @@ enum InputMode {
     InfoView {
         info: FileInfoResponse,
         image: Option<image::DynamicImage>,
+        has_thumbnail: bool,
     },
     InfoFolderView {
         name: String,
@@ -533,25 +534,20 @@ impl App {
                     self.push_log(msg);
                     self.finish_loading();
                 }
-                OpResult::Info(Ok(info)) => {
+                OpResult::Info(Ok(info), thumb_fallback) => {
                     self.finish_loading();
                     if matches!(self.input, InputMode::InfoLoading) {
-                        let thumb_url = info.thumbnail_link.clone();
-                        self.input = InputMode::InfoView { info, image: None };
+                        let thumb_url = info.thumbnail_link.clone()
+                            .filter(|u| !u.is_empty())
+                            .or_else(|| thumb_fallback.filter(|u| !u.is_empty()));
+                        let has_thumbnail = thumb_url.is_some();
+                        self.input = InputMode::InfoView { info, image: None, has_thumbnail };
                         if let Some(url) = thumb_url {
-                            if !url.is_empty() {
-                                let client = Arc::clone(&self.client);
-                                let tx = self.result_tx.clone();
-                                std::thread::spawn(move || {
-                                    let _ = tx.send(OpResult::InfoThumbnail(
-                                        fetch_and_render_thumbnail(&url, &client),
-                                    ));
-                                });
-                            }
+                            self.spawn_thumbnail_fetch(url, OpResult::InfoThumbnail);
                         }
                     }
                 }
-                OpResult::Info(Err(e)) => {
+                OpResult::Info(Err(e), _) => {
                     self.finish_loading();
                     if matches!(self.input, InputMode::InfoLoading) {
                         self.input = InputMode::Normal;
@@ -938,6 +934,17 @@ impl App {
         }
     }
 
+    fn spawn_thumbnail_fetch<F>(&self, url: String, make_result: F)
+    where
+        F: FnOnce(Result<image::DynamicImage>) -> OpResult + Send + 'static,
+    {
+        let client = Arc::clone(&self.client);
+        let tx = self.result_tx.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(make_result(fetch_and_render_thumbnail(&url, &client)));
+        });
+    }
+
     fn fetch_preview_for_selected(&mut self) {
         let entry = match self.entries.get(self.selected) {
             Some(e) => e.clone(),
@@ -958,13 +965,10 @@ impl App {
             EntryKind::File => {
                 if let Some(ref thumb_url) = entry.thumbnail_link {
                     if !thumb_url.is_empty() {
-                        let thumb_url = thumb_url.clone();
-                        std::thread::spawn(move || {
-                            let _ = tx.send(OpResult::PreviewThumbnail(
-                                eid.clone(),
-                                fetch_and_render_thumbnail(&thumb_url, &client),
-                            ));
-                        });
+                        self.spawn_thumbnail_fetch(
+                            thumb_url.clone(),
+                            move |r| OpResult::PreviewThumbnail(eid.clone(), r),
+                        );
                         return;
                     }
                 }

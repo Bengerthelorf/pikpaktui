@@ -2209,18 +2209,12 @@ impl App {
                         links: None,
                         medias: None,
                     };
-                    let thumb_url = info.thumbnail_link.clone();
-                    self.input = InputMode::InfoView { info, image: None };
+                    let thumb_url = info.thumbnail_link.clone()
+                        .filter(|u| !u.is_empty());
+                    let has_thumbnail = thumb_url.is_some();
+                    self.input = InputMode::InfoView { info, image: None, has_thumbnail };
                     if let Some(url) = thumb_url {
-                        if !url.is_empty() {
-                            let client = Arc::clone(&self.client);
-                            let tx = self.result_tx.clone();
-                            std::thread::spawn(move || {
-                                let _ = tx.send(super::OpResult::InfoThumbnail(
-                                    super::fetch_and_render_thumbnail(&url, &client),
-                                ));
-                            });
-                        }
+                        self.spawn_thumbnail_fetch(url, super::OpResult::InfoThumbnail);
                     }
                 } else {
                     self.input = InputMode::TrashView {
@@ -2266,8 +2260,9 @@ impl App {
         let client = Arc::clone(&self.client);
         let tx = self.result_tx.clone();
         let eid = entry.id.clone();
+        let thumb_fallback = entry.thumbnail_link.clone();
         std::thread::spawn(move || {
-            let _ = tx.send(OpResult::Info(client.file_info(&eid)));
+            let _ = tx.send(OpResult::Info(client.file_info(&eid), thumb_fallback));
         });
     }
 

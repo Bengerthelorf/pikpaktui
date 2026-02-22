@@ -390,14 +390,14 @@ impl App {
                     self.draw_trash_view(f, entries, *selected, true);
                 }
             }
-            InputMode::InfoView { info, image } if !self.trash_entries.is_empty() => {
+            InputMode::InfoView { info, image, has_thumbnail } if !self.trash_entries.is_empty() => {
                 self.draw_trash_view(
                     f,
                     &self.trash_entries,
                     self.trash_selected,
                     self.trash_expanded,
                 );
-                self.draw_info_overlay(f, info, image.as_ref());
+                self.draw_info_overlay(f, info, image.as_ref(), *has_thumbnail);
             }
             _ => self.draw_main(f),
         }
@@ -1522,8 +1522,8 @@ impl App {
             InputMode::InfoLoading => {
                 self.draw_info_loading_overlay(f);
             }
-            InputMode::InfoView { info, image } => {
-                self.draw_info_overlay(f, info, image.as_ref());
+            InputMode::InfoView { info, image, has_thumbnail } => {
+                self.draw_info_overlay(f, info, image.as_ref(), *has_thumbnail);
             }
             InputMode::InfoFolderView { name, entries } => {
                 self.draw_info_folder_overlay(f, name, entries);
@@ -2730,8 +2730,9 @@ impl App {
         f: &mut Frame,
         info: &crate::pikpak::FileInfoResponse,
         image: Option<&image::DynamicImage>,
+        has_thumbnail: bool,
     ) {
-        let has_thumb = info.thumbnail_link.as_ref().is_some_and(|u| !u.is_empty());
+        let has_thumb = has_thumbnail;
         let area = if has_thumb {
             centered_rect(65, 75, f.area())
         } else {
