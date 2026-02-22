@@ -760,6 +760,26 @@ impl App {
                     self.spawn_star_toggle(entry);
                 }
             }
+            KeyCode::Char('y') => {
+                // Copy direct download link to clipboard
+                if let Some(entry) = self.current_entry().cloned() {
+                    if entry.kind == EntryKind::File {
+                        let client = Arc::clone(&self.client);
+                        let tx = self.result_tx.clone();
+                        let eid = entry.id;
+                        let ename = entry.name;
+                        std::thread::spawn(move || {
+                            let _ = tx.send(match client.download_url(&eid) {
+                                Ok((url, _)) => match write_clipboard(&url) {
+                                    Ok(()) => OpResult::Ok(format!("Copied link: '{}'", ename)),
+                                    Err(e) => OpResult::Err(format!("Clipboard failed: {e:#}")),
+                                },
+                                Err(e) => OpResult::Err(format!("Link failed: {e:#}")),
+                            });
+                        });
+                    }
+                }
+            }
             KeyCode::Char('u') => {
                 if modifiers.contains(KeyModifiers::CONTROL) {
                     if !self.entries.is_empty() {
@@ -3260,4 +3280,34 @@ impl App {
         }
     }
 
+}
+
+/// Write `text` to the system clipboard using the best available tool.
+fn write_clipboard(text: &str) -> anyhow::Result<()> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let candidates: &[(&str, &[&str])] = if cfg!(target_os = "macos") {
+        &[("pbcopy", &[] as &[&str])]
+    } else {
+        &[
+            ("wl-copy", &[] as &[&str]),
+            ("xclip", &["-selection", "clipboard"]),
+        ]
+    };
+
+    for &(cmd, args) in candidates {
+        let Ok(mut child) = Command::new(cmd).args(args).stdin(Stdio::piped()).spawn() else {
+            continue;
+        };
+        if let Some(stdin) = child.stdin.as_mut() {
+            let _ = stdin.write_all(text.as_bytes());
+        }
+        child.wait()?;
+        return Ok(());
+    }
+
+    Err(anyhow::anyhow!(
+        "no clipboard tool found (pbcopy / wl-copy / xclip)"
+    ))
 }

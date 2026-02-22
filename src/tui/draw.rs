@@ -2192,6 +2192,7 @@ impl App {
                             ("d", "Delete"),
                             ("f", "New folder"),
                             ("s", "Star / Unstar"),
+                            ("y", "Copy link"),
                             ("a", "Add to cart"),
                         ],
                     ),
