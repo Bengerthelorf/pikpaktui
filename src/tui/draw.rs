@@ -446,6 +446,30 @@ impl App {
         self.config.color_scheme == ColorScheme::Vibrant
     }
 
+    /// Centers a rect and renders Clear. Returns the overlay Rect.
+    fn prepare_overlay(&self, f: &mut Frame, pct_x: u16, pct_y: u16) -> Rect {
+        let area = centered_rect(pct_x, pct_y, f.area());
+        f.render_widget(Clear, area);
+        area
+    }
+
+    /// Styled border block with title in `tc` and border in `bc`.
+    fn overlay_block(&self, title: &str, bc: Color, tc: Color) -> Block<'static> {
+        self.styled_block()
+            .title(Span::styled(
+                format!(" {} ", title),
+                Style::default().fg(tc),
+            ))
+            .border_style(Style::default().fg(bc))
+    }
+
+    /// Standard hints footer line ("  key  desc  key  desc …").
+    fn hint_line(hints: &[(&str, &str)]) -> Line<'static> {
+        let mut spans = vec![Span::raw("  ")];
+        spans.extend(Self::styled_help_spans(hints));
+        Line::from(spans)
+    }
+
     /// File-type color respecting the selected color scheme.
     fn file_color(&self, cat: theme::FileCategory) -> Color {
         self.config.get_color(cat)
