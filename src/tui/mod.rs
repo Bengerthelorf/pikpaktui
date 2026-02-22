@@ -3,6 +3,7 @@ pub(crate) mod download;
 mod download_view;
 mod draw;
 mod handler;
+mod image_render;
 mod local_completion;
 
 pub use download_view::{DownloadViewMode, NetworkStats};
