@@ -13,6 +13,21 @@ use super::download::{DownloadTask, TaskStatus};
 use super::local_completion::LocalPathInput;
 use super::{App, InputMode, LoginField, OpResult, PickerState, PlayOption, PreviewState, handle_text_input};
 
+enum PickerKeyResult {
+    Navigated,
+    Confirmed(String), // dest_id
+    Cancelled,
+    ShowHelp,
+    SwitchToTextInput,
+}
+
+enum PathInputKeyResult {
+    Updated,
+    Confirmed(String), // target path
+    SwitchToPicker,
+    Cancelled,
+}
+
 impl App {
     pub(super) fn handle_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> Result<bool> {
         // Help sheet: any key closes it
@@ -261,6 +276,26 @@ impl App {
             }
             InputMode::CartView => {
                 self.handle_cart_view_key(code);
+                Ok(false)
+            }
+            InputMode::CartMoveInput { mut input } => {
+                self.handle_cart_path_input_key(code, modifiers, &mut input, true);
+                Ok(false)
+            }
+            InputMode::CartCopyInput { mut input } => {
+                self.handle_cart_path_input_key(code, modifiers, &mut input, false);
+                Ok(false)
+            }
+            InputMode::CartMovePicker { mut picker } => {
+                self.handle_cart_picker_key(code, &mut picker, true);
+                Ok(false)
+            }
+            InputMode::CartCopyPicker { mut picker } => {
+                self.handle_cart_picker_key(code, &mut picker, false);
+                Ok(false)
+            }
+            InputMode::ConfirmCartDelete => {
+                self.handle_confirm_cart_delete_key(code);
                 Ok(false)
             }
             InputMode::DownloadInput { mut input } => {
@@ -921,6 +956,63 @@ impl App {
         }
     }
 
+    /// Shared text-input editing logic for all move/copy path inputs.
+    fn apply_path_input_key(
+        &mut self,
+        code: KeyCode,
+        modifiers: KeyModifiers,
+        input: &mut PathInput,
+    ) -> PathInputKeyResult {
+        if code == KeyCode::Char('b') && modifiers.contains(KeyModifiers::CONTROL) {
+            return PathInputKeyResult::SwitchToPicker;
+        }
+        match code {
+            KeyCode::Esc => {
+                if !input.candidates.is_empty() {
+                    input.candidates.clear();
+                    input.candidate_idx = None;
+                    input.completion_base.clear();
+                    PathInputKeyResult::Updated
+                } else {
+                    PathInputKeyResult::Cancelled
+                }
+            }
+            KeyCode::Enter => {
+                if !input.candidates.is_empty() {
+                    input.candidates.clear();
+                    input.candidate_idx = None;
+                    PathInputKeyResult::Updated
+                } else {
+                    let target = input.value.trim().to_string();
+                    if !target.is_empty() {
+                        PathInputKeyResult::Confirmed(target)
+                    } else {
+                        PathInputKeyResult::Updated
+                    }
+                }
+            }
+            KeyCode::Tab => {
+                self.tab_complete(input);
+                PathInputKeyResult::Updated
+            }
+            KeyCode::Backspace => {
+                input.value.pop();
+                input.candidates.clear();
+                input.candidate_idx = None;
+                input.completion_base.clear();
+                PathInputKeyResult::Updated
+            }
+            KeyCode::Char(c) => {
+                input.value.push(c);
+                input.candidates.clear();
+                input.candidate_idx = None;
+                input.completion_base.clear();
+                PathInputKeyResult::Updated
+            }
+            _ => PathInputKeyResult::Updated,
+        }
+    }
+
     fn handle_path_input_key(
         &mut self,
         code: KeyCode,
@@ -929,58 +1021,15 @@ impl App {
         input: &mut PathInput,
         is_move: bool,
     ) {
-        // Ctrl+B: switch to picker
-        if code == KeyCode::Char('b') && modifiers.contains(KeyModifiers::CONTROL) {
-            self.init_picker(source, is_move);
-            return;
-        }
-
-        match code {
-            KeyCode::Esc => {
-                if !input.candidates.is_empty() {
-                    // Close candidate list
-                    input.candidates.clear();
-                    input.candidate_idx = None;
-                    input.completion_base.clear();
-                    self.restore_path_input(source, input, is_move);
-                } else {
-                    let op = if is_move { "Move" } else { "Copy" };
-                    self.push_log(format!("{} cancelled", op));
-                }
+        match self.apply_path_input_key(code, modifiers, input) {
+            PathInputKeyResult::Updated => self.restore_path_input(source, input, is_move),
+            PathInputKeyResult::Confirmed(target) => {
+                self.execute_move_copy(source, &target, is_move);
             }
-            KeyCode::Enter => {
-                if !input.candidates.is_empty() {
-                    // Select current candidate: close candidate list, keep value
-                    input.candidates.clear();
-                    input.candidate_idx = None;
-                    self.restore_path_input(source, input, is_move);
-                } else {
-                    let target = input.value.trim().to_string();
-                    if !target.is_empty() {
-                        self.execute_move_copy(source, &target, is_move);
-                    }
-                }
-            }
-            KeyCode::Tab => {
-                self.tab_complete(input);
-                self.restore_path_input(source, input, is_move);
-            }
-            KeyCode::Backspace => {
-                input.value.pop();
-                input.candidates.clear();
-                input.candidate_idx = None;
-                input.completion_base.clear();
-                self.restore_path_input(source, input, is_move);
-            }
-            KeyCode::Char(c) => {
-                input.value.push(c);
-                input.candidates.clear();
-                input.candidate_idx = None;
-                input.completion_base.clear();
-                self.restore_path_input(source, input, is_move);
-            }
-            _ => {
-                self.restore_path_input(source, input, is_move);
+            PathInputKeyResult::SwitchToPicker => self.init_picker(source, is_move),
+            PathInputKeyResult::Cancelled => {
+                let op = if is_move { "Move" } else { "Copy" };
+                self.push_log(format!("{} cancelled", op));
             }
         }
     }
@@ -1007,37 +1056,37 @@ impl App {
 
     // --- Picker ---
 
-    fn init_picker(&mut self, source: Entry, is_move: bool) {
+    fn build_picker_state(&mut self) -> Option<PickerState> {
         let folder_id = self.current_folder_id.clone();
         let breadcrumb = self.breadcrumb.clone();
-        let entries = match self.client.ls(&folder_id) {
-            Ok(e) => e,
+        match self.client.ls(&folder_id) {
+            Ok(entries) => Some(PickerState {
+                folder_id,
+                breadcrumb,
+                entries,
+                selected: 0,
+                loading: false,
+            }),
             Err(e) => {
                 self.push_log(format!("Picker load failed: {e:#}"));
-                return;
+                None
             }
-        };
-        let picker = PickerState {
-            folder_id,
-            breadcrumb,
-            entries,
-            selected: 0,
-            loading: false,
-        };
-        if is_move {
-            self.input = InputMode::MovePicker { source, picker };
-        } else {
-            self.input = InputMode::CopyPicker { source, picker };
         }
     }
 
-    fn handle_picker_key(
-        &mut self,
-        code: KeyCode,
-        source: Entry,
-        picker: &mut PickerState,
-        is_move: bool,
-    ) {
+    fn init_picker(&mut self, source: Entry, is_move: bool) {
+        if let Some(picker) = self.build_picker_state() {
+            self.input = if is_move {
+                InputMode::MovePicker { source, picker }
+            } else {
+                InputMode::CopyPicker { source, picker }
+            };
+        }
+    }
+
+    /// Shared navigation logic for all picker modes. Mutates `picker` in place
+    /// and returns what action should be taken by the caller.
+    fn apply_picker_key(&mut self, code: KeyCode, picker: &mut PickerState) -> PickerKeyResult {
         let folder_count = picker
             .entries
             .iter()
@@ -1045,25 +1094,17 @@ impl App {
             .count();
 
         match code {
-            KeyCode::Esc => {
-                let op = if is_move { "Move" } else { "Copy" };
-                self.push_log(format!("{} cancelled", op));
-            }
-            // Switch to text input
-            KeyCode::Char('/') => {
-                self.init_path_input(source, is_move);
-            }
             KeyCode::Down | KeyCode::Char('j') => {
                 if folder_count > 0 {
                     picker.selected = (picker.selected + 1).min(folder_count - 1);
                 }
-                self.restore_picker(source, picker, is_move);
+                PickerKeyResult::Navigated
             }
             KeyCode::Up | KeyCode::Char('k') => {
                 if picker.selected > 0 {
                     picker.selected -= 1;
                 }
-                self.restore_picker(source, picker, is_move);
+                PickerKeyResult::Navigated
             }
             KeyCode::Enter => {
                 let folders: Vec<Entry> = picker
@@ -1088,7 +1129,7 @@ impl App {
                         }
                     }
                 }
-                self.restore_picker(source, picker, is_move);
+                PickerKeyResult::Navigated
             }
             KeyCode::Backspace => {
                 if let Some((parent_id, _)) = picker.breadcrumb.pop() {
@@ -1106,20 +1147,38 @@ impl App {
                         }
                     }
                 }
-                self.restore_picker(source, picker, is_move);
+                PickerKeyResult::Navigated
             }
-            KeyCode::Char(' ') => {
-                let dest_id = picker.folder_id.clone();
+            KeyCode::Char(' ') => PickerKeyResult::Confirmed(picker.folder_id.clone()),
+            KeyCode::Char('/') => PickerKeyResult::SwitchToTextInput,
+            KeyCode::Char('h') => PickerKeyResult::ShowHelp,
+            KeyCode::Esc => PickerKeyResult::Cancelled,
+            _ => PickerKeyResult::Navigated,
+        }
+    }
+
+    fn handle_picker_key(
+        &mut self,
+        code: KeyCode,
+        source: Entry,
+        picker: &mut PickerState,
+        is_move: bool,
+    ) {
+        match self.apply_picker_key(code, picker) {
+            PickerKeyResult::Navigated => self.restore_picker(source, picker, is_move),
+            PickerKeyResult::Confirmed(dest_id) => {
                 let dest_path = Self::picker_path_display(picker);
                 self.spawn_move_copy(source, dest_id, dest_path, is_move);
             }
-            KeyCode::Char('h') => {
+            PickerKeyResult::Cancelled => {
+                let op = if is_move { "Move" } else { "Copy" };
+                self.push_log(format!("{} cancelled", op));
+            }
+            PickerKeyResult::ShowHelp => {
                 self.show_help_sheet = true;
                 self.restore_picker(source, picker, is_move);
             }
-            _ => {
-                self.restore_picker(source, picker, is_move);
-            }
+            PickerKeyResult::SwitchToTextInput => self.init_path_input(source, is_move),
         }
     }
 
@@ -1260,10 +1319,211 @@ impl App {
                     };
                 }
             }
+            KeyCode::Char('m') => {
+                if self.cart.is_empty() {
+                    self.push_log("Cart is empty".into());
+                    self.input = InputMode::CartView;
+                } else {
+                    self.init_cart_picker(true);
+                }
+            }
+            KeyCode::Char('c') => {
+                if self.cart.is_empty() {
+                    self.push_log("Cart is empty".into());
+                    self.input = InputMode::CartView;
+                } else {
+                    self.init_cart_picker(false);
+                }
+            }
+            KeyCode::Char('t') => {
+                if self.cart.is_empty() {
+                    self.push_log("Cart is empty".into());
+                    self.input = InputMode::CartView;
+                } else {
+                    self.input = InputMode::ConfirmCartDelete;
+                }
+            }
             _ => {
                 self.input = InputMode::CartView;
             }
         }
+    }
+
+    // --- Cart text path input ---
+
+    fn init_cart_path_input(&mut self, is_move: bool) {
+        let input = PathInput::new();
+        self.input = if is_move {
+            InputMode::CartMoveInput { input }
+        } else {
+            InputMode::CartCopyInput { input }
+        };
+    }
+
+    fn handle_cart_path_input_key(
+        &mut self,
+        code: KeyCode,
+        modifiers: KeyModifiers,
+        input: &mut PathInput,
+        is_move: bool,
+    ) {
+        match self.apply_path_input_key(code, modifiers, input) {
+            PathInputKeyResult::Updated => self.restore_cart_path_input(input, is_move),
+            PathInputKeyResult::Confirmed(target) => {
+                self.execute_cart_move_copy(&target, is_move);
+            }
+            PathInputKeyResult::SwitchToPicker => self.init_cart_picker(is_move),
+            PathInputKeyResult::Cancelled => {
+                let op = if is_move { "Move" } else { "Copy" };
+                self.push_log(format!("{} cancelled", op));
+                self.input = InputMode::CartView;
+            }
+        }
+    }
+
+    fn restore_cart_path_input(&mut self, input: &mut PathInput, is_move: bool) {
+        let owned = PathInput {
+            value: std::mem::take(&mut input.value),
+            candidates: std::mem::take(&mut input.candidates),
+            candidate_idx: input.candidate_idx,
+            completion_base: std::mem::take(&mut input.completion_base),
+        };
+        self.input = if is_move {
+            InputMode::CartMoveInput { input: owned }
+        } else {
+            InputMode::CartCopyInput { input: owned }
+        };
+    }
+
+    fn execute_cart_move_copy(&mut self, target: &str, is_move: bool) {
+        match self.client.resolve_path(target) {
+            Ok(dest_id) => self.spawn_cart_move_copy(dest_id, target.to_string(), is_move),
+            Err(e) => {
+                self.push_log(format!("Invalid path: {e:#}"));
+                self.input = InputMode::CartView;
+            }
+        }
+    }
+
+    // --- Cart Picker (batch move/copy) ---
+
+    fn init_cart_picker(&mut self, is_move: bool) {
+        match self.build_picker_state() {
+            Some(picker) => {
+                self.input = if is_move {
+                    InputMode::CartMovePicker { picker }
+                } else {
+                    InputMode::CartCopyPicker { picker }
+                };
+            }
+            None => {
+                self.input = InputMode::CartView;
+            }
+        }
+    }
+
+    fn handle_cart_picker_key(
+        &mut self,
+        code: KeyCode,
+        picker: &mut PickerState,
+        is_move: bool,
+    ) {
+        match self.apply_picker_key(code, picker) {
+            PickerKeyResult::Navigated => self.restore_cart_picker(picker, is_move),
+            PickerKeyResult::Confirmed(dest_id) => {
+                let dest_path = Self::picker_path_display(picker);
+                self.spawn_cart_move_copy(dest_id, dest_path, is_move);
+            }
+            PickerKeyResult::Cancelled => {
+                let op = if is_move { "Move" } else { "Copy" };
+                self.push_log(format!("{} cancelled", op));
+                self.input = InputMode::CartView;
+            }
+            PickerKeyResult::ShowHelp => {
+                self.show_help_sheet = true;
+                self.restore_cart_picker(picker, is_move);
+            }
+            PickerKeyResult::SwitchToTextInput => self.init_cart_path_input(is_move),
+        }
+    }
+
+    fn restore_cart_picker(&mut self, picker: &mut PickerState, is_move: bool) {
+        let owned = PickerState {
+            folder_id: std::mem::take(&mut picker.folder_id),
+            breadcrumb: std::mem::take(&mut picker.breadcrumb),
+            entries: std::mem::take(&mut picker.entries),
+            selected: picker.selected,
+            loading: picker.loading,
+        };
+        if is_move {
+            self.input = InputMode::CartMovePicker { picker: owned };
+        } else {
+            self.input = InputMode::CartCopyPicker { picker: owned };
+        }
+    }
+
+    fn spawn_cart_move_copy(&mut self, dest_id: String, dest_path: String, is_move: bool) {
+        let ids: Vec<String> = self.cart.iter().map(|e| e.id.clone()).collect();
+        let names: Vec<String> = self.cart.iter().map(|e| e.name.clone()).collect();
+        let client = Arc::clone(&self.client);
+        let tx = self.result_tx.clone();
+        let op = if is_move { "Move" } else { "Copy" };
+        let count = ids.len();
+        self.loading = true;
+        std::thread::spawn(move || {
+            let id_refs: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
+            let result = if is_move {
+                client.mv(&id_refs, &dest_id)
+            } else {
+                client.cp(&id_refs, &dest_id)
+            };
+            let _ = tx.send(match result {
+                Ok(()) => OpResult::Ok(format!(
+                    "{}d {} item(s) -> '{}'",
+                    op, count, dest_path
+                )),
+                Err(e) => OpResult::Err(format!("{} failed: {e:#}", op)),
+            });
+        });
+        // Clear cart after dispatching
+        self.cart.clear();
+        self.cart_ids.clear();
+        self.cart_selected = 0;
+        // Announce item names in log
+        for name in &names {
+            self.push_log(format!("  {}", name));
+        }
+    }
+
+    // --- Confirm Cart Delete ---
+
+    fn handle_confirm_cart_delete_key(&mut self, code: KeyCode) {
+        match code {
+            KeyCode::Char('y') | KeyCode::Enter => {
+                self.spawn_cart_delete();
+            }
+            _ => {
+                self.input = InputMode::CartView;
+            }
+        }
+    }
+
+    fn spawn_cart_delete(&mut self) {
+        let ids: Vec<String> = self.cart.iter().map(|e| e.id.clone()).collect();
+        let count = ids.len();
+        let client = Arc::clone(&self.client);
+        let tx = self.result_tx.clone();
+        self.loading = true;
+        std::thread::spawn(move || {
+            let id_refs: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
+            let _ = tx.send(match client.remove(&id_refs) {
+                Ok(()) => OpResult::Ok(format!("Trashed {} item(s)", count)),
+                Err(e) => OpResult::Err(format!("Trash failed: {e:#}")),
+            });
+        });
+        self.cart.clear();
+        self.cart_ids.clear();
+        self.cart_selected = 0;
     }
 
     // --- Download Input ---

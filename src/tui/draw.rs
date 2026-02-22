@@ -1,5 +1,5 @@
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Direction, Layout};
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{
@@ -12,7 +12,7 @@ use crate::theme;
 
 use super::completion::PathInput;
 use super::local_completion::LocalPathInput;
-use super::{App, InputMode, LoginField, PreviewState, SPINNER_FRAMES, centered_rect, format_size, truncate_name};
+use super::{App, InputMode, LoginField, PickerState, PreviewState, SPINNER_FRAMES, centered_rect, format_size, truncate_name};
 
 impl App {
     /// Returns `true` when a popup overlay is active that may cover the preview pane.
@@ -402,6 +402,9 @@ impl App {
         match &self.input {
             InputMode::Login { .. } => self.draw_login_screen(f),
             InputMode::MovePicker { .. } | InputMode::CopyPicker { .. } => self.draw_picker(f),
+            InputMode::CartMovePicker { .. } | InputMode::CartCopyPicker { .. } => {
+                self.draw_cart_picker(f)
+            }
             InputMode::DownloadView => self.draw_download_view(f),
             InputMode::TrashView {
                 entries,
@@ -1297,7 +1300,10 @@ impl App {
                 ("h", "help"),
                 ("Esc", "cancel"),
             ],
-            InputMode::MoveInput { .. } | InputMode::CopyInput { .. } => vec![
+            InputMode::MoveInput { .. }
+            | InputMode::CopyInput { .. }
+            | InputMode::CartMoveInput { .. }
+            | InputMode::CartCopyInput { .. } => vec![
                 ("Tab", "complete"),
                 ("Enter", "confirm"),
                 ("Ctrl+B", "picker"),
@@ -1323,8 +1329,22 @@ impl App {
                 ("x", "remove"),
                 ("a", "clear all"),
                 ("Enter", "download"),
+                ("m", "move"),
+                ("c", "copy"),
+                ("t", "trash"),
                 ("Esc", "close"),
             ],
+            InputMode::CartMovePicker { .. } | InputMode::CartCopyPicker { .. } => vec![
+                ("j/k", "nav"),
+                ("Enter", "open folder"),
+                ("Space", "confirm here"),
+                ("/", "type path"),
+                ("Backspace", "go up"),
+                ("Esc", "cancel"),
+            ],
+            InputMode::ConfirmCartDelete => {
+                vec![("y/Enter", "trash"), ("n/Esc", "cancel")]
+            }
             InputMode::DownloadInput { .. } | InputMode::UploadInput { .. } => {
                 vec![("Tab", "complete"), ("Enter", "confirm"), ("Esc", "cancel")]
             }
@@ -1447,6 +1467,8 @@ impl App {
             | InputMode::Login { .. }
             | InputMode::MovePicker { .. }
             | InputMode::CopyPicker { .. }
+            | InputMode::CartMovePicker { .. }
+            | InputMode::CartCopyPicker { .. }
             | InputMode::DownloadView => {}
 
             InputMode::MoveInput { input, .. } => {
@@ -1454,6 +1476,12 @@ impl App {
             }
             InputMode::CopyInput { input, .. } => {
                 self.draw_path_input_overlay(f, "Copy", "Copy to path", input, cur);
+            }
+            InputMode::CartMoveInput { input } => {
+                self.draw_path_input_overlay(f, "Move Cart", "Move all cart items to path", input, cur);
+            }
+            InputMode::CartCopyInput { input } => {
+                self.draw_path_input_overlay(f, "Copy Cart", "Copy all cart items to path", input, cur);
             }
             InputMode::Rename { value } => {
                 let area = centered_rect(60, 20, f.area());
@@ -1687,6 +1715,41 @@ impl App {
             InputMode::CartView => {
                 self.draw_cart_overlay(f);
             }
+            InputMode::ConfirmCartDelete => {
+                let area = centered_rect(60, 20, f.area());
+                f.render_widget(Clear, area);
+                let count = self.cart.len();
+                let del_hints = vec![("y/Enter", "trash"), ("n/Esc", "cancel")];
+                let mut hint_spans = vec![Span::raw("  ")];
+                hint_spans.extend(Self::styled_help_spans(&del_hints));
+                let (del_bc, del_tc) = if self.is_vibrant() {
+                    (Color::LightRed, Color::LightRed)
+                } else {
+                    (Color::Red, Color::Red)
+                };
+                let p = Paragraph::new(Text::from(vec![
+                    Line::from(""),
+                    Line::from(vec![
+                        Span::styled("  Trash ", Style::default().fg(Color::Red)),
+                        Span::styled(
+                            format!("{} item(s)", count),
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(" from cart?", Style::default().fg(Color::Red)),
+                    ]),
+                    Line::from(""),
+                    Line::from(hint_spans),
+                ]))
+                .block(
+                    self.styled_block()
+                        .title(" Confirm Trash Cart ")
+                        .title_style(Style::default().fg(del_tc))
+                        .border_style(Style::default().fg(del_bc)),
+                );
+                f.render_widget(p, area);
+            }
             InputMode::DownloadInput { input } => {
                 self.draw_download_input_overlay(f, input, cur);
             }
@@ -1913,6 +1976,124 @@ impl App {
         };
 
         let op = if is_move { "Move" } else { "Copy" };
+        self.draw_picker_right_pane(f, chunks[1], picker, is_move);
+
+        // Help bar
+        if self.config.show_help_bar {
+            let pairs = self.help_pairs();
+            let mut spans = vec![
+                Span::styled(
+                    format!(" {} '{}' ", op, source_entry.name),
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled("│ ", Style::default().fg(Color::DarkGray)),
+            ];
+            spans.extend(Self::styled_help_spans(&pairs));
+            let bar = Paragraph::new(Line::from(spans));
+            f.render_widget(bar, outer[1]);
+        }
+
+        if self.show_help_sheet {
+            self.draw_help_sheet(f);
+        }
+    }
+
+    fn draw_cart_picker(&self, f: &mut Frame) {
+        let outer = if self.config.show_help_bar {
+            Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(1), Constraint::Length(1)])
+                .split(f.area())
+        } else {
+            Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(1)])
+                .split(f.area())
+        };
+        let main_area = outer[0];
+
+        let chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(main_area);
+
+        // Left: cart contents (read-only)
+        let cart_items: Vec<ListItem> = self
+            .cart
+            .iter()
+            .map(|e| {
+                let cat = theme::categorize(e);
+                let ico = theme::icon(cat, self.config.nerd_font);
+                let c = self.file_color(cat);
+                ListItem::new(Line::from(vec![
+                    Span::styled(ico, Style::default().fg(c)),
+                    Span::styled(" ", Style::default()),
+                    Span::styled(&e.name, Style::default().fg(c)),
+                ]))
+            })
+            .collect();
+
+        let total_size: u64 = self.cart.iter().map(|e| e.size).sum();
+        let cart_title = format!(
+            " Cart ({} items, {}) ",
+            self.cart.len(),
+            format_size(total_size)
+        );
+        let cart_list = List::new(cart_items)
+            .block(
+                self.styled_block()
+                    .title(cart_title)
+                    .title_style(Style::default().fg(Color::DarkGray))
+                    .border_style(Style::default().fg(Color::DarkGray)),
+            )
+            .highlight_style(Style::default().fg(Color::DarkGray))
+            .highlight_symbol("  ");
+        let mut cart_state = ListState::default();
+        f.render_stateful_widget(cart_list, chunks[0], &mut cart_state);
+
+        // Right: destination folder picker
+        let (is_move, picker) = match &self.input {
+            InputMode::CartMovePicker { picker } => (true, picker),
+            InputMode::CartCopyPicker { picker } => (false, picker),
+            _ => return,
+        };
+
+        let op = if is_move { "Move" } else { "Copy" };
+        self.draw_picker_right_pane(f, chunks[1], picker, is_move);
+
+        // Help bar
+        if self.config.show_help_bar {
+            let pairs = self.help_pairs();
+            let mut spans = vec![
+                Span::styled(
+                    format!(" {} {} item(s) ", op, self.cart.len()),
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled("│ ", Style::default().fg(Color::DarkGray)),
+            ];
+            spans.extend(Self::styled_help_spans(&pairs));
+            let bar = Paragraph::new(Line::from(spans));
+            f.render_widget(bar, outer[1]);
+        }
+
+        if self.show_help_sheet {
+            self.draw_help_sheet(f);
+        }
+    }
+
+    /// Shared right-pane renderer for both single-file and cart picker views.
+    fn draw_picker_right_pane(
+        &self,
+        f: &mut Frame,
+        area: Rect,
+        picker: &PickerState,
+        is_move: bool,
+    ) {
+        let op = if is_move { "Move" } else { "Copy" };
         let pp = Self::picker_path_display(picker);
         let title = if picker.loading {
             format!(" {} to: {} {} ", op, pp, SPINNER_FRAMES[self.spinner_idx])
@@ -1957,28 +2138,7 @@ impl App {
             )
             .highlight_style(self.highlight_style())
             .highlight_symbol("› ");
-        f.render_stateful_widget(plist, chunks[1], &mut picker_state);
-
-        // Help bar
-        if self.config.show_help_bar {
-            let pairs = self.help_pairs();
-            let mut spans = vec![
-                Span::styled(
-                    format!(" {} '{}' ", op, source_entry.name),
-                    Style::default()
-                        .fg(Color::White)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled("│ ", Style::default().fg(Color::DarkGray)),
-            ];
-            spans.extend(Self::styled_help_spans(&pairs));
-            let bar = Paragraph::new(Line::from(spans));
-            f.render_widget(bar, outer[1]);
-        }
-
-        if self.show_help_sheet {
-            self.draw_help_sheet(f);
-        }
+        f.render_stateful_widget(plist, area, &mut picker_state);
     }
 
     pub(super) fn draw_help_sheet(&self, f: &mut Frame) {
@@ -2287,6 +2447,9 @@ impl App {
             ("x", "remove"),
             ("a", "clear"),
             ("Enter", "download"),
+            ("m", "move"),
+            ("c", "copy"),
+            ("t", "trash"),
             ("Esc", "close"),
         ];
         let mut hint_spans = vec![Span::raw("  ")];

@@ -155,6 +155,19 @@ enum InputMode {
     },
     // Cart & Downloads
     CartView,
+    CartMoveInput {
+        input: PathInput,
+    },
+    CartCopyInput {
+        input: PathInput,
+    },
+    CartMovePicker {
+        picker: PickerState,
+    },
+    CartCopyPicker {
+        picker: PickerState,
+    },
+    ConfirmCartDelete,
     DownloadInput {
         input: LocalPathInput,
     },
