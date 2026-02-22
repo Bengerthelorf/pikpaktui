@@ -2744,10 +2744,13 @@ impl App {
         // Reserve ~40% of width for thumbnail column; text wraps within the left 60%.
         let thumb_col_w: u16 = if has_thumb { (inner_w * 2 / 5).max(10) } else { 0 };
         let wrap_w = inner_w.saturating_sub(thumb_col_w) as usize;
-        let mut lines = vec![Line::from("")];
+        let footer_wrap_w = inner_w as usize;
+
+        // meta_lines: rendered side-by-side with the thumbnail (wraps within text column)
+        let mut meta_lines = vec![Line::from("")];
 
         if let Some(id) = &info.id {
-            lines.extend(wrap_labeled_field(
+            meta_lines.extend(wrap_labeled_field(
                 "  ID:    ", id,
                 Style::default().fg(Color::Cyan),
                 Style::default().fg(Color::DarkGray),
@@ -2755,7 +2758,7 @@ impl App {
             ));
         }
 
-        lines.extend(wrap_labeled_field(
+        meta_lines.extend(wrap_labeled_field(
             "  Name:  ", &info.name,
             Style::default().fg(Color::Cyan),
             Style::default().fg(Color::White),
@@ -2763,7 +2766,7 @@ impl App {
         ));
 
         if let Some(kind) = &info.kind {
-            lines.push(Line::from(vec![
+            meta_lines.push(Line::from(vec![
                 Span::styled("  Type:  ", Style::default().fg(Color::Cyan)),
                 Span::styled(kind.as_str(), Style::default().fg(Color::White)),
             ]));
@@ -2771,7 +2774,7 @@ impl App {
 
         if let Some(size) = &info.size {
             let size_n: u64 = size.parse().unwrap_or(0);
-            lines.push(Line::from(vec![
+            meta_lines.push(Line::from(vec![
                 Span::styled("  Size:  ", Style::default().fg(Color::Cyan)),
                 Span::styled(
                     format!("{} ({})", format_size(size_n), size),
@@ -2782,40 +2785,31 @@ impl App {
 
         if let Some(ct) = &info.created_time {
             let date = crate::cmd::format_date(ct);
-            lines.push(Line::from(vec![
+            meta_lines.push(Line::from(vec![
                 Span::styled("  Created:", Style::default().fg(Color::Cyan)),
                 Span::styled(date, Style::default().fg(Color::White)),
             ]));
         }
         if let Some(mt) = &info.modified_time {
             let date = crate::cmd::format_date(mt);
-            lines.push(Line::from(vec![
+            meta_lines.push(Line::from(vec![
                 Span::styled("  Modified:", Style::default().fg(Color::Cyan)),
                 Span::styled(date, Style::default().fg(Color::White)),
             ]));
         }
 
         if let Some(mime) = &info.mime_type {
-            lines.push(Line::from(vec![
+            meta_lines.push(Line::from(vec![
                 Span::styled("  MIME:  ", Style::default().fg(Color::Cyan)),
                 Span::styled(mime.as_str(), Style::default().fg(Color::White)),
             ]));
         }
 
         if let Some(hash) = &info.hash {
-            lines.extend(wrap_labeled_field(
+            meta_lines.extend(wrap_labeled_field(
                 "  Hash:  ", hash,
                 Style::default().fg(Color::Cyan),
                 Style::default().fg(Color::DarkGray),
-                wrap_w,
-            ));
-        }
-
-        if let Some(link) = &info.web_content_link {
-            lines.extend(wrap_labeled_field(
-                "  Link:  ", link,
-                Style::default().fg(Color::Cyan),
-                Style::default().fg(Color::Blue),
                 wrap_w,
             ));
         }
@@ -2835,12 +2829,24 @@ impl App {
             if !markers.is_empty() {
                 let mut line = vec![Span::styled("  ", Style::default())];
                 line.extend(markers);
-                lines.push(Line::from(line));
+                meta_lines.push(Line::from(line));
             }
         }
 
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
+        // footer_lines: full-width below the side-by-side area (link can be long)
+        let mut footer_lines = Vec::new();
+
+        if let Some(link) = &info.web_content_link {
+            footer_lines.extend(wrap_labeled_field(
+                "  Link:  ", link,
+                Style::default().fg(Color::Cyan),
+                Style::default().fg(Color::Blue),
+                footer_wrap_w,
+            ));
+        }
+
+        footer_lines.push(Line::from(""));
+        footer_lines.push(Line::from(Span::styled(
             "  Press any key to close",
             Style::default().fg(Color::DarkGray),
         )));
@@ -2863,6 +2869,8 @@ impl App {
             use ratatui_image::{picker::{Picker, ProtocolType}, StatefulImage};
 
             let inner_h = area.height.saturating_sub(2);
+            let footer_h = footer_lines.len() as u16;
+            let top_h = inner_h.saturating_sub(footer_h);
             let render_mode = self.config.thumbnail_mode.should_use_color();
 
             // For Auto mode: call from_query_stdio() ONCE and reuse for both
@@ -2899,17 +2907,17 @@ impl App {
                         if cw > 0 && ch > 0 && img.width() > 0 {
                             let rows = (img.height() * thumb_col_w as u32 * cw + img.width() * ch - 1)
                                 / (img.width() * ch);
-                            (rows as u16).min(inner_h)
+                            (rows as u16).min(top_h)
                         } else {
-                            inner_h
+                            top_h
                         }
                     }
                     ThumbnailRenderMode::ColoredHalf | ThumbnailRenderMode::Grayscale => {
                         if img.width() > 0 {
                             let rows = img.height() * thumb_col_w as u32 / (img.width() * 2);
-                            (rows as u16).max(1).min(inner_h)
+                            (rows as u16).max(1).min(top_h)
                         } else {
-                            inner_h
+                            top_h
                         }
                     }
                     ThumbnailRenderMode::Off => 0,
@@ -2925,13 +2933,20 @@ impl App {
                 height: inner_h,
             };
 
-            // Horizontal split: metadata text on left, thumbnail on right
+            // Vertical split: top = side-by-side meta+thumb, bottom = full-width footer (link + hint)
+            let v_chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(top_h), Constraint::Min(0)])
+                .split(inner);
+
+            // Horizontal split within top: metadata text on left, thumbnail on right
             let h_chunks = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([Constraint::Min(0), Constraint::Length(thumb_col_w)])
-                .split(inner);
+                .split(v_chunks[0]);
 
-            f.render_widget(Paragraph::new(Text::from(lines)), h_chunks[0]);
+            f.render_widget(Paragraph::new(Text::from(meta_lines)), h_chunks[0]);
+            f.render_widget(Paragraph::new(Text::from(footer_lines)), v_chunks[1]);
 
             let thumb_area = h_chunks[1];
             if let Some(img) = image {
@@ -2988,7 +3003,8 @@ impl App {
                 .border_style(border_style);
             f.render_widget(block, area);
         } else {
-            let p = Paragraph::new(Text::from(lines)).block(
+            let all_lines: Vec<_> = meta_lines.into_iter().chain(footer_lines).collect();
+            let p = Paragraph::new(Text::from(all_lines)).block(
                 self.styled_block()
                     .title(title)
                     .title_style(title_style)
