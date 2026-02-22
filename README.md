@@ -15,6 +15,7 @@ A TUI and CLI client for [PikPak](https://mypikpak.com) cloud storage, written i
 - **Text preview** — Syntax-highlighted code/text preview powered by [syntect](https://github.com/trishume/syntect) (base16-ocean.dark theme), supporting 50+ languages with line numbers
 - **Folder preview** — Instant children listing in the preview pane; cached entries are reused when opening folders (zero extra API calls)
 - **File operations** — Move, copy, rename, delete (trash or permanent), create folder, star/unstar
+- **Direct link copy** — Press `y` on any file to fetch its direct download URL and copy it to the system clipboard (pbcopy / wl-copy / xclip)
 - **Video playback** — Stream video files directly from PikPak using a configurable external player (mpv, vlc, etc.)
 - **Folder picker** — Visual two-pane picker for move/copy destinations, with tab-completion text input as alternative
 - **Cart & batch download** — Add files to cart, batch download with pause/resume/cancel, HTTP Range resume for interrupted transfers, download state persisted across sessions
@@ -27,7 +28,7 @@ A TUI and CLI client for [PikPak](https://mypikpak.com) cloud storage, written i
 - **Mouse support** — Click to select, double-click to open, scroll wheel navigation
 
 ### CLI
-- **26 subcommands** — `ls`, `search`, `mv`, `cp`, `rename`, `rm`, `mkdir`, `info`, `cat`, `play`, `download`, `upload`, `share`, `offline`, `tasks`, `star`, `unstar`, `starred`, `events`, `trash`, `untrash`, `quota`, `vip`, `completions`, `help`, `version`
+- **27 subcommands** — `ls`, `search`, `mv`, `cp`, `rename`, `rm`, `mkdir`, `info`, `link`, `cat`, `play`, `download`, `upload`, `share`, `offline`, `tasks`, `star`, `unstar`, `starred`, `events`, `trash`, `untrash`, `quota`, `vip`, `completions`, `help`, `version`
 - **Colored output** — `ls` with multi-column grid layout (eza-style), `--sort`/`--reverse` flags, Nerd Font icons support
 - **JSON output** — `-J`/`--json` flag on `ls`, `info`, `tasks`, `starred`, `trash`, `events` for machine-readable output; pipe to `jq` for scripting
 - **Resumable transfer** — Upload: dedup-aware instant upload on hash match, multipart resumable with 10 MB chunks via OSS. Download: HTTP Range resume for interrupted transfers
@@ -145,6 +146,10 @@ pikpaktui mkdir "/My Pack" newfolder                  # Create folder
 pikpaktui mkdir -p "/My Pack/a/b/c"                   # Create nested folders recursively
 pikpaktui info "/My Pack/video.mp4"                   # Detailed file info (media metadata)
 pikpaktui info "/My Pack/video.mp4" --json            # JSON (includes hash, links, media tracks)
+pikpaktui link "/My Pack/file.zip"                    # Print direct download URL
+pikpaktui link "/My Pack/file.zip" --copy             # Copy URL to clipboard (pbcopy/wl-copy/xclip)
+pikpaktui link "/My Pack/video.mp4" -m                # Also print video streaming URLs
+pikpaktui link "/My Pack/file.zip" --json             # JSON output {name, url, size}
 pikpaktui cat "/My Pack/notes.txt"                    # Preview text file contents
 
 # Video playback
@@ -210,6 +215,7 @@ CLI mode requires login: it checks for a valid session first, then falls back to
 | `d` | Delete (trash / permanent) |
 | `f` | New folder |
 | `s` | Star / unstar |
+| `y` | Copy direct download link to clipboard |
 | `a` | Toggle in cart |
 | `S` | Cycle sort field (name → size → created → type → extension → none) |
 | `R` | Toggle reverse sort order |
@@ -389,6 +395,7 @@ src/
     trash.rs             trash — list trashed files
     untrash.rs           untrash — restore from trash
     info.rs              info — detailed file/folder info
+    link.rs              link — get direct download URL, copy to clipboard
     cat.rs               cat — text file preview
     play.rs              play — video playback via external player
     vip.rs               vip — VIP status and invite code
