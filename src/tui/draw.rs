@@ -1917,8 +1917,10 @@ impl App {
         f.render_widget(p, area);
     }
 
-    fn draw_picker(&self, f: &mut Frame) {
-        // Outer vertical split: main area + optional help bar
+    /// Returns `(outer, chunks)` for the 2-pane picker layout.
+    /// `outer[0]` = main area, `outer[1]` = help bar (only if show_help_bar).
+    /// `chunks[0]` = left pane, `chunks[1]` = right pane.
+    fn build_picker_layout(&self, f: &Frame) -> (std::rc::Rc<[Rect]>, std::rc::Rc<[Rect]>) {
         let outer = if self.config.show_help_bar {
             Layout::default()
                 .direction(Direction::Vertical)
@@ -1930,12 +1932,15 @@ impl App {
                 .constraints([Constraint::Min(1)])
                 .split(f.area())
         };
-        let main_area = outer[0];
-
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-            .split(main_area);
+            .split(outer[0]);
+        (outer, chunks)
+    }
+
+    fn draw_picker(&self, f: &mut Frame) {
+        let (outer, chunks) = self.build_picker_layout(f);
 
         // Left: source (read-only)
         let source_items: Vec<ListItem> = self
@@ -2001,23 +2006,7 @@ impl App {
     }
 
     fn draw_cart_picker(&self, f: &mut Frame) {
-        let outer = if self.config.show_help_bar {
-            Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Min(1), Constraint::Length(1)])
-                .split(f.area())
-        } else {
-            Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Min(1)])
-                .split(f.area())
-        };
-        let main_area = outer[0];
-
-        let chunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-            .split(main_area);
+        let (outer, chunks) = self.build_picker_layout(f);
 
         // Left: cart contents (read-only)
         let cart_items: Vec<ListItem> = self
