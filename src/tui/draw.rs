@@ -234,16 +234,8 @@ impl App {
     }
 
     fn draw_confirm_play_overlay(&self, f: &mut Frame, name: &str, _url: &str) {
-        let area = centered_rect(60, 20, f.area());
-        f.render_widget(Clear, area);
-        let player_display = self
-            .config
-            .player
-            .as_deref()
-            .unwrap_or("not configured");
-        let hints = vec![("y/Enter", "play"), ("n/Esc", "cancel")];
-        let mut hint_spans = vec![Span::raw("  ")];
-        hint_spans.extend(Self::styled_help_spans(&hints));
+        let area = self.prepare_overlay(f, 60, 20);
+        let player_display = self.config.player.as_deref().unwrap_or("not configured");
         let (bc, tc) = if self.is_vibrant() {
             (Color::LightGreen, Color::LightGreen)
         } else {
@@ -254,40 +246,35 @@ impl App {
         } else {
             name.to_string()
         };
-        let p = Paragraph::new(Text::from(vec![
-            Line::from(""),
-            Line::from(vec![
-                Span::styled("  Play ", Style::default().fg(Color::Cyan)),
-                Span::styled(
-                    format!("\"{}\"", truncated_name),
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled("?", Style::default().fg(Color::Cyan)),
-            ]),
-            Line::from(""),
-            Line::from(vec![
-                Span::styled("  Open with: ", Style::default().fg(Color::DarkGray)),
-                Span::styled(
-                    player_display,
-                    if self.config.player.is_some() {
-                        Style::default().fg(Color::Green)
-                    } else {
-                        Style::default().fg(Color::Red)
-                    },
-                ),
-            ]),
-            Line::from(""),
-            Line::from(hint_spans),
-        ]))
-        .block(
-            self.styled_block()
-                .title(" Play Video ")
-                .title_style(Style::default().fg(tc))
-                .border_style(Style::default().fg(bc)),
+        f.render_widget(
+            Paragraph::new(vec![
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("  Play ", Style::default().fg(Color::Cyan)),
+                    Span::styled(
+                        format!("\"{}\"", truncated_name),
+                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled("?", Style::default().fg(Color::Cyan)),
+                ]),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("  Open with: ", Style::default().fg(Color::DarkGray)),
+                    Span::styled(
+                        player_display,
+                        if self.config.player.is_some() {
+                            Style::default().fg(Color::Green)
+                        } else {
+                            Style::default().fg(Color::Red)
+                        },
+                    ),
+                ]),
+                Line::from(""),
+                Self::hint_line(&[("y/Enter", "play"), ("n/Esc", "cancel")]),
+            ])
+            .block(self.overlay_block("Play Video", bc, tc)),
+            area,
         );
-        f.render_widget(p, area);
     }
 
     fn draw_play_picker_overlay(
@@ -342,61 +329,45 @@ impl App {
         }
 
         lines.push(Line::from(""));
-        let hints = vec![("Enter", "play"), ("Esc", "cancel")];
-        let mut hint_spans = vec![Span::raw("  ")];
-        hint_spans.extend(Self::styled_help_spans(&hints));
-        lines.push(Line::from(hint_spans));
+        lines.push(Self::hint_line(&[("Enter", "play"), ("Esc", "cancel")]));
 
         let (bc, tc) = if self.is_vibrant() {
             (Color::LightGreen, Color::LightGreen)
         } else {
             (Color::Cyan, Color::Yellow)
         };
-        let p = Paragraph::new(Text::from(lines)).block(
-            self.styled_block()
-                .title(" Select Stream ")
-                .title_style(Style::default().fg(tc))
-                .border_style(Style::default().fg(bc)),
+        f.render_widget(
+            Paragraph::new(Text::from(lines)).block(self.overlay_block("Select Stream", bc, tc)),
+            area,
         );
-        f.render_widget(p, area);
     }
 
     fn draw_player_input_overlay(&self, f: &mut Frame, value: &str) {
-        let area = centered_rect(60, 20, f.area());
-        f.render_widget(Clear, area);
+        let area = self.prepare_overlay(f, 60, 20);
         let cur = if self.cursor_visible { "\u{2588}" } else { " " };
-        let hints = vec![("Enter", "confirm"), ("Esc", "cancel")];
-        let mut hint_spans = vec![Span::raw("  ")];
-        hint_spans.extend(Self::styled_help_spans(&hints));
         let (bc, tc) = if self.is_vibrant() {
             (Color::LightYellow, Color::LightYellow)
         } else {
             (Color::Cyan, Color::Yellow)
         };
-        let p = Paragraph::new(Text::from(vec![
-            Line::from(""),
-            Line::from(Span::styled(
-                "  Enter player command (e.g. mpv, open -a IINA):",
-                Style::default().fg(Color::Cyan),
-            )),
-            Line::from(""),
-            Line::from(vec![
-                Span::styled("  > ", Style::default().fg(Color::Cyan)),
-                Span::styled(
-                    format!("{}{}", value, cur),
-                    Style::default().fg(Color::Yellow),
-                ),
-            ]),
-            Line::from(""),
-            Line::from(hint_spans),
-        ]))
-        .block(
-            self.styled_block()
-                .title(" Player Command ")
-                .title_style(Style::default().fg(tc))
-                .border_style(Style::default().fg(bc)),
+        f.render_widget(
+            Paragraph::new(vec![
+                Line::from(""),
+                Line::from(Span::styled(
+                    "  Enter player command (e.g. mpv, open -a IINA):",
+                    Style::default().fg(Color::Cyan),
+                )),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("  > ", Style::default().fg(Color::Cyan)),
+                    Span::styled(format!("{}{}", value, cur), Style::default().fg(Color::Yellow)),
+                ]),
+                Line::from(""),
+                Self::hint_line(&[("Enter", "confirm"), ("Esc", "cancel")]),
+            ])
+            .block(self.overlay_block("Player Command", bc, tc)),
+            area,
         );
-        f.render_widget(p, area);
     }
 
     pub(super) fn draw(&self, f: &mut Frame) {
@@ -1288,18 +1259,14 @@ impl App {
             (Color::Cyan, Color::Green)
         };
         let title = if self.logs_scroll.is_some() {
-            format!(" Logs [{}/{}] (l to close) ", self.logs.len(), total_visual)
+            format!("Logs [{}/{}] (l to close)", self.logs.len(), total_visual)
         } else {
-            format!(" Logs [{}] (l to close) ", self.logs.len())
+            format!("Logs [{}] (l to close)", self.logs.len())
         };
-        let logs = Paragraph::new(Text::from(visible_lines))
-            .block(
-                self.styled_block()
-                    .title(title)
-                    .title_style(Style::default().fg(log_tc))
-                    .border_style(Style::default().fg(log_bc)),
-            );
-        f.render_widget(logs, area);
+        f.render_widget(
+            Paragraph::new(Text::from(visible_lines)).block(self.overlay_block(&title, log_bc, log_tc)),
+            area,
+        );
     }
 
     pub(super) fn help_pairs(&self) -> Vec<(&str, &str)> {
@@ -1878,28 +1845,22 @@ impl App {
         }
 
         lines.push(Line::from(""));
-        let input_hints = vec![
+        lines.push(Self::hint_line(&[
             ("Tab", "complete"),
             ("Enter", "confirm"),
             ("Ctrl+B", "picker"),
             ("Esc", "cancel"),
-        ];
-        let mut hint_spans = vec![Span::raw("  ")];
-        hint_spans.extend(Self::styled_help_spans(&input_hints));
-        lines.push(Line::from(hint_spans));
+        ]));
 
         let (mc_bc, mc_tc) = if self.is_vibrant() {
             (Color::LightCyan, Color::LightYellow)
         } else {
             (Color::Cyan, Color::Yellow)
         };
-        let p = Paragraph::new(Text::from(lines)).block(
-            self.styled_block()
-                .title(format!(" {} ", title))
-                .title_style(Style::default().fg(mc_tc))
-                .border_style(Style::default().fg(mc_bc)),
+        f.render_widget(
+            Paragraph::new(Text::from(lines)).block(self.overlay_block(title, mc_bc, mc_tc)),
+            area,
         );
-        f.render_widget(p, area);
     }
 
     /// Returns `(outer, chunks)` for the 2-pane picker layout.
@@ -2363,7 +2324,7 @@ impl App {
     fn draw_cart_overlay(&self, f: &mut Frame) {
         let total_size: u64 = self.cart.iter().map(|e| e.size).sum();
         let title = format!(
-            " Cart ({} files, {}) ",
+            "Cart ({} files, {})",
             self.cart.len(),
             format_size(total_size)
         );
@@ -2417,7 +2378,7 @@ impl App {
         }
 
         lines.push(Line::from(""));
-        let cart_hints = vec![
+        lines.push(Self::hint_line(&[
             ("j/k", "nav"),
             ("x", "remove"),
             ("a", "clear"),
@@ -2426,23 +2387,17 @@ impl App {
             ("c", "copy"),
             ("t", "trash"),
             ("Esc", "close"),
-        ];
-        let mut hint_spans = vec![Span::raw("  ")];
-        hint_spans.extend(Self::styled_help_spans(&cart_hints));
-        lines.push(Line::from(hint_spans));
+        ]));
 
         let (ct_bc, ct_tc) = if self.is_vibrant() {
             (Color::LightMagenta, Color::LightMagenta)
         } else {
             (Color::Yellow, Color::Yellow)
         };
-        let p = Paragraph::new(Text::from(lines)).block(
-            self.styled_block()
-                .title(title)
-                .title_style(Style::default().fg(ct_tc))
-                .border_style(Style::default().fg(ct_bc)),
+        f.render_widget(
+            Paragraph::new(Text::from(lines)).block(self.overlay_block(&title, ct_bc, ct_tc)),
+            area,
         );
-        f.render_widget(p, area);
     }
 
     // --- Download input overlay ---
@@ -2525,10 +2480,7 @@ impl App {
         self.draw_candidate_list(&mut lines, &input.candidates, input.candidate_idx);
 
         lines.push(Line::from(""));
-        let dl_hints = vec![("Tab", "complete"), ("Enter", "confirm"), ("Esc", "cancel")];
-        let mut hint_spans = vec![Span::raw("  ")];
-        hint_spans.extend(Self::styled_help_spans(&dl_hints));
-        lines.push(Line::from(hint_spans));
+        lines.push(Self::hint_line(&[("Tab", "complete"), ("Enter", "confirm"), ("Esc", "cancel")]));
 
         let (dl_bc, dl_tc) = if self.is_vibrant() {
             (Color::LightGreen, Color::LightGreen)
@@ -2536,13 +2488,11 @@ impl App {
             (Color::Cyan, Color::Yellow)
         };
         let cart_count = self.cart.len();
-        let p = Paragraph::new(Text::from(lines)).block(
-            self.styled_block()
-                .title(format!(" Download {} files ", cart_count))
-                .title_style(Style::default().fg(dl_tc))
-                .border_style(Style::default().fg(dl_bc)),
+        f.render_widget(
+            Paragraph::new(Text::from(lines))
+                .block(self.overlay_block(&format!("Download {} files", cart_count), dl_bc, dl_tc)),
+            area,
         );
-        f.render_widget(p, area);
     }
 
     // --- Upload input overlay ---
@@ -2574,64 +2524,53 @@ impl App {
         self.draw_candidate_list(&mut lines, &input.candidates, input.candidate_idx);
 
         lines.push(Line::from(""));
-        let hints = vec![("Tab", "complete"), ("Enter", "upload"), ("Esc", "cancel")];
-        let mut hint_spans = vec![Span::raw("  ")];
-        hint_spans.extend(Self::styled_help_spans(&hints));
-        lines.push(Line::from(hint_spans));
+        lines.push(Self::hint_line(&[("Tab", "complete"), ("Enter", "upload"), ("Esc", "cancel")]));
 
         let (ul_bc, ul_tc) = if self.is_vibrant() {
             (Color::LightYellow, Color::LightYellow)
         } else {
             (Color::Yellow, Color::Yellow)
         };
-        let p = Paragraph::new(Text::from(lines)).block(
-            self.styled_block()
-                .title(" Upload File ")
-                .title_style(Style::default().fg(ul_tc).add_modifier(Modifier::BOLD))
-                .border_style(Style::default().fg(ul_bc)),
+        f.render_widget(
+            Paragraph::new(Text::from(lines)).block(
+                self.styled_block()
+                    .title(Span::styled(
+                        " Upload File ",
+                        Style::default().fg(ul_tc).add_modifier(Modifier::BOLD),
+                    ))
+                    .border_style(Style::default().fg(ul_bc)),
+            ),
+            area,
         );
-        f.render_widget(p, area);
     }
 
     // --- Offline input overlay ---
 
     fn draw_offline_input_overlay(&self, f: &mut Frame, value: &str, cur: &str) {
-        let area = centered_rect(70, 25, f.area());
-        f.render_widget(Clear, area);
-
-        let hints = vec![("Enter", "submit"), ("Esc", "cancel")];
-        let mut hint_spans = vec![Span::raw("  ")];
-        hint_spans.extend(Self::styled_help_spans(&hints));
-
-        let p = Paragraph::new(Text::from(vec![
-            Line::from(""),
-            Line::from(Span::styled(
-                "  Enter URL or magnet link for cloud download:",
-                Style::default().fg(Color::White),
-            )),
-            Line::from(""),
-            Line::from(vec![
-                Span::styled("  URL: ", Style::default().fg(Color::Cyan)),
-                Span::styled(
-                    format!("{}{}", value, cur),
-                    Style::default().fg(Color::Yellow),
-                ),
-            ]),
-            Line::from(""),
-            Line::from(hint_spans),
-        ]))
-        .block({
-            let (ol_bc, ol_tc) = if self.is_vibrant() {
-                (Color::LightCyan, Color::LightCyan)
-            } else {
-                (Color::Cyan, Color::Yellow)
-            };
-            self.styled_block()
-                .title(" Offline Download ")
-                .title_style(Style::default().fg(ol_tc))
-                .border_style(Style::default().fg(ol_bc))
-        });
-        f.render_widget(p, area);
+        let area = self.prepare_overlay(f, 70, 25);
+        let (bc, tc) = if self.is_vibrant() {
+            (Color::LightCyan, Color::LightCyan)
+        } else {
+            (Color::Cyan, Color::Yellow)
+        };
+        f.render_widget(
+            Paragraph::new(vec![
+                Line::from(""),
+                Line::from(Span::styled(
+                    "  Enter URL or magnet link for cloud download:",
+                    Style::default().fg(Color::White),
+                )),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("  URL: ", Style::default().fg(Color::Cyan)),
+                    Span::styled(format!("{}{}", value, cur), Style::default().fg(Color::Yellow)),
+                ]),
+                Line::from(""),
+                Self::hint_line(&[("Enter", "submit"), ("Esc", "cancel")]),
+            ])
+            .block(self.overlay_block("Offline Download", bc, tc)),
+            area,
+        );
     }
 
     // --- Offline tasks view (full screen) ---
@@ -2650,7 +2589,7 @@ impl App {
         let area = centered_rect(75, pct, f.area());
         f.render_widget(Clear, area);
 
-        let title = format!(" Offline Tasks ({}) ", tasks.len());
+        let title = format!("Offline Tasks ({})", tasks.len());
 
         let (ot_bc, ot_tc) = if self.is_vibrant() {
             (Color::LightBlue, Color::LightBlue)
@@ -2659,26 +2598,20 @@ impl App {
         };
 
         if tasks.is_empty() {
-            let mut lines = vec![
+            let hints = self.help_pairs();
+            let lines = vec![
                 Line::from(""),
                 Line::from(Span::styled(
                     "  No offline tasks. Press 'o' to add a URL.",
                     Style::default().fg(Color::DarkGray),
                 )),
+                Line::from(""),
+                Self::hint_line(&hints),
             ];
-            lines.push(Line::from(""));
-            let hints = self.help_pairs();
-            let mut hint_spans = vec![Span::raw("  ")];
-            hint_spans.extend(Self::styled_help_spans(&hints));
-            lines.push(Line::from(hint_spans));
-
-            let p = Paragraph::new(Text::from(lines)).block(
-                self.styled_block()
-                    .title(title)
-                    .title_style(Style::default().fg(ot_tc))
-                    .border_style(Style::default().fg(ot_bc)),
+            f.render_widget(
+                Paragraph::new(Text::from(lines)).block(self.overlay_block(&title, ot_bc, ot_tc)),
+                area,
             );
-            f.render_widget(p, area);
         } else {
             let mut lines = vec![Line::from("")];
 
@@ -2747,24 +2680,17 @@ impl App {
 
             lines.push(Line::from(""));
             let hints = self.help_pairs();
-            let mut hint_spans = vec![Span::raw("  ")];
-            hint_spans.extend(Self::styled_help_spans(&hints));
-            lines.push(Line::from(hint_spans));
-
-            let p = Paragraph::new(Text::from(lines)).block(
-                self.styled_block()
-                    .title(title)
-                    .title_style(Style::default().fg(ot_tc))
-                    .border_style(Style::default().fg(ot_bc)),
+            lines.push(Self::hint_line(&hints));
+            f.render_widget(
+                Paragraph::new(Text::from(lines)).block(self.overlay_block(&title, ot_bc, ot_tc)),
+                area,
             );
-            f.render_widget(p, area);
         }
     }
     // --- Info loading overlay (show_preview=false) ---
 
     fn draw_info_loading_overlay(&self, f: &mut Frame) {
-        let area = centered_rect(45, 20, f.area());
-        f.render_widget(Clear, area);
+        let area = self.prepare_overlay(f, 45, 20);
 
         let spinner = SPINNER_FRAMES[self.spinner_idx];
         let (in_bc, in_tc) = if self.is_vibrant() {
@@ -3076,8 +3002,7 @@ impl App {
         highlighted: &[Line],
         truncated: bool,
     ) {
-        let area = centered_rect(60, 70, f.area());
-        f.render_widget(Clear, area);
+        let area = self.prepare_overlay(f, 60, 70);
 
         let inner_height = area.height.saturating_sub(2) as usize;
         let max_lines = inner_height.saturating_sub(if truncated { 2 } else { 1 });
@@ -3401,9 +3326,7 @@ impl App {
                 ("Esc", "close"),
             ]
         };
-        let mut hint_spans = vec![Span::raw("  ")];
-        hint_spans.extend(Self::styled_help_spans(&hints));
-        lines.push(Line::from(hint_spans));
+        lines.push(Self::hint_line(&hints));
 
         // Apply scroll offset
         let visible_lines: Vec<Line> = lines
@@ -3418,19 +3341,11 @@ impl App {
             (Color::Cyan, Color::Yellow)
         };
 
-        let title = if modified {
-            " Settings * "
-        } else {
-            " Settings "
-        };
-
-        let p = Paragraph::new(Text::from(visible_lines)).block(
-            self.styled_block()
-                .title(title)
-                .title_style(Style::default().fg(st_tc))
-                .border_style(Style::default().fg(st_bc)),
+        let title = if modified { "Settings *" } else { "Settings" };
+        f.render_widget(
+            Paragraph::new(Text::from(visible_lines)).block(self.overlay_block(title, st_bc, st_tc)),
+            area,
         );
-        f.render_widget(p, area);
     }
 
     // --- Image protocol settings overlay ---
@@ -3505,17 +3420,12 @@ impl App {
         }
 
         lines.push(Line::from(""));
-
-        // Help bar
-        let hints = vec![
+        lines.push(Self::hint_line(&[
             ("j/k", "nav"),
             ("Left/Right", "protocol"),
             ("s", "save"),
             ("Esc", "back"),
-        ];
-        let mut hint_spans = vec![Span::raw("  ")];
-        hint_spans.extend(Self::styled_help_spans(&hints));
-        lines.push(Line::from(hint_spans));
+        ]));
 
         let (st_bc, st_tc) = if self.is_vibrant() {
             (Color::LightMagenta, Color::LightMagenta)
@@ -3523,19 +3433,11 @@ impl App {
             (Color::Cyan, Color::Yellow)
         };
 
-        let title = if modified {
-            " Image Protocol * "
-        } else {
-            " Image Protocol "
-        };
-
-        let p = Paragraph::new(Text::from(lines)).block(
-            self.styled_block()
-                .title(title)
-                .title_style(Style::default().fg(st_tc))
-                .border_style(Style::default().fg(st_bc)),
+        let title = if modified { "Image Protocol *" } else { "Image Protocol" };
+        f.render_widget(
+            Paragraph::new(Text::from(lines)).block(self.overlay_block(title, st_bc, st_tc)),
+            area,
         );
-        f.render_widget(p, area);
     }
 
     // --- Custom color settings overlay ---
@@ -3613,24 +3515,12 @@ impl App {
 
         lines.push(Line::from(""));
 
-        // Help bar
-        let hints = if editing_rgb {
-            vec![
-                ("0-9", "input"),
-                ("Enter", "confirm"),
-                ("Esc", "cancel"),
-            ]
+        let hints: &[(&str, &str)] = if editing_rgb {
+            &[("0-9", "input"), ("Enter", "confirm"), ("Esc", "cancel")]
         } else {
-            vec![
-                ("j/k", "nav"),
-                ("r/g/b", "edit RGB"),
-                ("s", "save"),
-                ("Esc", "back"),
-            ]
+            &[("j/k", "nav"), ("r/g/b", "edit RGB"), ("s", "save"), ("Esc", "back")]
         };
-        let mut hint_spans = vec![Span::raw("  ")];
-        hint_spans.extend(Self::styled_help_spans(&hints));
-        lines.push(Line::from(hint_spans));
+        lines.push(Self::hint_line(hints));
 
         let (st_bc, st_tc) = if self.is_vibrant() {
             (Color::LightMagenta, Color::LightMagenta)
@@ -3638,19 +3528,11 @@ impl App {
             (Color::Cyan, Color::Yellow)
         };
 
-        let title = if modified {
-            " Custom Colors * "
-        } else {
-            " Custom Colors "
-        };
-
-        let p = Paragraph::new(Text::from(lines)).block(
-            self.styled_block()
-                .title(title)
-                .title_style(Style::default().fg(st_tc))
-                .border_style(Style::default().fg(st_bc)),
+        let title = if modified { "Custom Colors *" } else { "Custom Colors" };
+        f.render_widget(
+            Paragraph::new(Text::from(lines)).block(self.overlay_block(title, st_bc, st_tc)),
+            area,
         );
-        f.render_widget(p, area);
     }
 }
 
