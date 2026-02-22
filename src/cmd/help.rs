@@ -55,6 +55,7 @@ pub fn run() -> Result<()> {
         ("rm [-r] [-f] <path...>",   "Remove to trash (-r folder, -f permanent)"),
         ("mkdir [-p] <parent> <name>","Create folder (-p recursive)"),
         ("info <path>",             "Show detailed file/folder info"),
+        ("link [-m] [-c] <path>",   "Get direct download URL (-m media, -c copy)"),
         ("cat <path>",              "Preview text file contents"),
     ];
     print_commands(file_cmds);

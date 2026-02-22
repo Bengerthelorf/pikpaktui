@@ -6,6 +6,7 @@ pub mod download;
 pub mod events;
 pub mod help;
 pub mod info;
+pub mod link;
 pub mod ls;
 pub mod mkdir;
 pub mod mv;
