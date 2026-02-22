@@ -13,7 +13,7 @@ impl LocalPathInput {
         let default = dirs::download_dir()
             .or_else(dirs::home_dir)
             .map(|p| {
-                let mut s = p.to_string_lossy().to_string();
+                let mut s = p.to_string_lossy().into_owned();
                 if !s.ends_with('/') {
                     s.push('/');
                 }
@@ -33,7 +33,7 @@ impl LocalPathInput {
     pub fn new_for_upload() -> Self {
         let default = dirs::home_dir()
             .map(|p| {
-                let mut s = p.to_string_lossy().to_string();
+                let mut s = p.to_string_lossy().into_owned();
                 if !s.ends_with('/') {
                     s.push('/');
                 }
@@ -70,7 +70,7 @@ impl LocalPathInput {
             if !is_dir && !self.include_files {
                 continue;
             }
-            let name = entry.file_name().to_string_lossy().to_string();
+            let name = entry.file_name().to_string_lossy().into_owned();
             if name.starts_with('.') && !prefix.starts_with('.') {
                 continue;
             }
@@ -157,10 +157,10 @@ fn split_local_path(input: &str) -> (String, String) {
     let path = Path::new(input);
     match path.parent() {
         Some(parent) => {
-            let parent_str = parent.to_string_lossy().to_string();
+            let parent_str = parent.to_string_lossy().into_owned();
             let name = path
                 .file_name()
-                .map(|n| n.to_string_lossy().to_string())
+                .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default();
             (parent_str, name)
         }

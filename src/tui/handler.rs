@@ -427,10 +427,10 @@ impl App {
                     KeyCode::Enter => {
                         let cmd = value.trim().to_string();
                         if !cmd.is_empty() {
-                            self.config.player = Some(cmd.clone());
-                            let _ = self.config.save();
                             self.push_log(format!("Player set to: {}", cmd));
                             self.spawn_player(&cmd, &pending_url);
+                            self.config.player = Some(cmd);
+                            let _ = self.config.save();
                         } else {
                             self.input = InputMode::PlayerInput {
                                 value,
@@ -1096,18 +1096,17 @@ impl App {
                 PickerKeyResult::Navigated
             }
             KeyCode::Enter => {
-                let folders: Vec<Entry> = picker
+                if let Some(entry) = picker
                     .entries
                     .iter()
                     .filter(|e| e.kind == EntryKind::Folder)
-                    .cloned()
-                    .collect();
-                if let Some(entry) = folders.get(picker.selected).cloned() {
+                    .nth(picker.selected)
+                {
                     let old_id = std::mem::replace(&mut picker.folder_id, entry.id.clone());
                     picker.breadcrumb.push((old_id, entry.name.clone()));
                     picker.selected = 0;
                     picker.loading = true;
-                    match self.client.ls(&entry.id) {
+                    match self.client.ls(&picker.folder_id) {
                         Ok(entries) => {
                             picker.entries = entries;
                             picker.loading = false;
@@ -1122,10 +1121,10 @@ impl App {
             }
             KeyCode::Backspace => {
                 if let Some((parent_id, _)) = picker.breadcrumb.pop() {
-                    picker.folder_id = parent_id.clone();
+                    picker.folder_id = parent_id;
                     picker.selected = 0;
                     picker.loading = true;
-                    match self.client.ls(&parent_id) {
+                    match self.client.ls(&picker.folder_id) {
                         Ok(entries) => {
                             picker.entries = entries;
                             picker.loading = false;
@@ -1202,8 +1201,8 @@ impl App {
     ) {
         let client = Arc::clone(&self.client);
         let tx = self.result_tx.clone();
-        let source_id = source.id.clone();
-        let source_name = source.name.clone();
+        let source_id = source.id;
+        let source_name = source.name;
         let op = if is_move { "Move" } else { "Copy" };
         self.loading = true;
         std::thread::spawn(move || {
@@ -1222,8 +1221,8 @@ impl App {
     pub(super) fn spawn_rename(&mut self, entry: Entry, new_name: String) {
         let client = Arc::clone(&self.client);
         let tx = self.result_tx.clone();
-        let eid = entry.id.clone();
-        let old = entry.name.clone();
+        let eid = entry.id;
+        let old = entry.name;
         self.loading = true;
         std::thread::spawn(move || {
             let _ = tx.send(match client.rename(&eid, &new_name) {
@@ -1429,8 +1428,8 @@ impl App {
     }
 
     fn spawn_cart_move_copy(&mut self, dest_id: String, dest_path: String, is_move: bool) {
-        let ids: Vec<String> = self.cart.iter().map(|e| e.id.clone()).collect();
-        let names: Vec<String> = self.cart.iter().map(|e| e.name.clone()).collect();
+        let (ids, names): (Vec<String>, Vec<String>) =
+            self.cart.iter().map(|e| (e.id.clone(), e.name.clone())).unzip();
         let client = Arc::clone(&self.client);
         let tx = self.result_tx.clone();
         let op = if is_move { "Move" } else { "Copy" };
