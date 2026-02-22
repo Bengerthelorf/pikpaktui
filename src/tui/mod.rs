@@ -1009,27 +1009,6 @@ impl App {
         self.push_log(format!("Sort: {} {}", self.config.sort_field.as_str(), arrow));
     }
 
-    fn fetch_text_preview_for_selected(&mut self) {
-        let entry = match self.entries.get(self.selected) {
-            Some(e) => e.clone(),
-            None => return,
-        };
-        if entry.kind != EntryKind::File || !theme::is_text_previewable(&entry) {
-            return;
-        }
-        self.preview_target_id = Some(entry.id.clone());
-        self.preview_state = PreviewState::Loading;
-        let client = Arc::clone(&self.client);
-        let tx = self.result_tx.clone();
-        let eid = entry.id.clone();
-        let max_bytes = self.config.preview_max_size;
-        std::thread::spawn(move || {
-            let _ = tx.send(OpResult::PreviewText(
-                eid.clone(),
-                client.fetch_text_preview(&eid, max_bytes),
-            ));
-        });
-    }
 }
 
 static SYNTAX_SET: LazyLock<syntect::parsing::SyntaxSet> =

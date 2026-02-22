@@ -826,7 +826,7 @@ impl App {
                 let hint = if self.config.lazy_preview {
                     "Select an item"
                 } else {
-                    "Press Space to load preview"
+                    "Press p to load preview"
                 };
                 let p = Paragraph::new(Text::from(vec![
                     Line::from(""),
@@ -980,14 +980,11 @@ impl App {
                     lines.push(Line::from(""));
                     let hint = if entry.kind == EntryKind::File
                         && crate::theme::is_text_previewable(entry)
+                        && entry.size > self.config.preview_max_size
                     {
-                        if entry.size <= self.config.preview_max_size {
-                            "  Press Space to preview"
-                        } else {
-                            "  Press p to preview (large file)"
-                        }
+                        "  Press p to preview (large file)"
                     } else {
-                        "  Press Space for details"
+                        "  Press p to load"
                     };
                     lines.push(Line::from(Span::styled(
                         hint,
