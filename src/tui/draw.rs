@@ -403,7 +403,6 @@ impl App {
         }
     }
 
-    /// Build a `Block` with the configured border style applied.
     pub(super) fn styled_block(&self) -> Block<'static> {
         let block = Block::default().borders(Borders::ALL);
         match self.config.border_style {
@@ -417,14 +416,12 @@ impl App {
         self.config.color_scheme == ColorScheme::Vibrant
     }
 
-    /// Centers a rect and renders Clear. Returns the overlay Rect.
     fn prepare_overlay(&self, f: &mut Frame, pct_x: u16, pct_y: u16) -> Rect {
         let area = centered_rect(pct_x, pct_y, f.area());
         clear_overlay_area(f, area);
         area
     }
 
-    /// Styled border block with title in `tc` and border in `bc`.
     fn overlay_block(&self, title: &str, bc: Color, tc: Color) -> Block<'static> {
         self.styled_block()
             .title(Span::styled(
@@ -434,14 +431,12 @@ impl App {
             .border_style(Style::default().fg(bc))
     }
 
-    /// Standard hints footer line ("  key  desc  key  desc …").
     fn hint_line(hints: &[(&str, &str)]) -> Line<'static> {
         let mut spans = vec![Span::raw("  ")];
         spans.extend(Self::styled_help_spans(hints));
         Line::from(spans)
     }
 
-    /// File-type color respecting the selected color scheme.
     fn file_color(&self, cat: theme::FileCategory) -> Color {
         self.config.get_color(cat)
     }
@@ -3557,9 +3552,6 @@ impl App {
     }
 }
 
-/// Clear an overlay area, extending 1 cell on each side so that any
-/// double-width (CJK) character whose right half sits exactly at the
-/// overlay boundary is fully erased before the border is drawn.
 fn clear_overlay_area(f: &mut Frame, area: ratatui::layout::Rect) {
     let full = f.area();
     let extended = ratatui::layout::Rect {
@@ -3571,7 +3563,6 @@ fn clear_overlay_area(f: &mut Frame, area: ratatui::layout::Rect) {
     f.render_widget(Clear, extended.intersection(full));
 }
 
-/// Wrap a labeled field with hanging indent, CJK-aware.
 fn wrap_labeled_field<'a>(
     label: &'a str,
     value: &'a str,
