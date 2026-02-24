@@ -141,7 +141,7 @@ impl App {
                 .max(25)
                 .min(75);
             let area = centered_rect(75, pct, f.area());
-            f.render_widget(Clear, area);
+            clear_overlay_area(f, area);
 
             if entries.is_empty() {
                 let mut lines = vec![
@@ -286,7 +286,7 @@ impl App {
     ) {
         let height = std::cmp::min(50, 20 + medias.len() as u16 * 2);
         let area = centered_rect(60, height, f.area());
-        f.render_widget(Clear, area);
+        clear_overlay_area(f, area);
 
         let truncated_name = if name.len() > 40 {
             format!("{}...", &name[..37])
@@ -420,7 +420,7 @@ impl App {
     /// Centers a rect and renders Clear. Returns the overlay Rect.
     fn prepare_overlay(&self, f: &mut Frame, pct_x: u16, pct_y: u16) -> Rect {
         let area = centered_rect(pct_x, pct_y, f.area());
-        f.render_widget(Clear, area);
+        clear_overlay_area(f, area);
         area
     }
 
@@ -472,7 +472,7 @@ impl App {
             logging_in,
         } = &self.input
         {
-            f.render_widget(Clear, area);
+            clear_overlay_area(f, area);
             let email_style = match field {
                 LoginField::Email => Style::default().fg(Color::Yellow),
                 LoginField::Password => Style::default().fg(Color::White),
@@ -1224,7 +1224,7 @@ impl App {
 
     fn draw_log_overlay(&self, f: &mut Frame, area: ratatui::layout::Rect) {
         self.logs_overlay_area.set(area);
-        f.render_widget(Clear, area);
+        clear_overlay_area(f, area);
         let visible = area.height.saturating_sub(2) as usize;
         let content_width = area.width.saturating_sub(2).max(1) as usize;
 
@@ -1802,7 +1802,7 @@ impl App {
             .max(20)
             .min(60);
         let area = centered_rect(70, pct, f.area());
-        f.render_widget(Clear, area);
+        clear_overlay_area(f, area);
 
         let mut lines = vec![
             Line::from(""),
@@ -2203,7 +2203,7 @@ impl App {
         let y = (term.height.saturating_sub(sheet_h)) / 2;
         let sheet_area = ratatui::layout::Rect::new(x, y, sheet_w, sheet_h);
 
-        f.render_widget(Clear, sheet_area);
+        clear_overlay_area(f, sheet_area);
 
         let title_style = Style::default()
             .fg(Color::Cyan)
@@ -2333,7 +2333,7 @@ impl App {
             .max(25)
             .min(70);
         let area = centered_rect(65, pct, f.area());
-        f.render_widget(Clear, area);
+        clear_overlay_area(f, area);
 
         let mut lines = vec![Line::from("")];
 
@@ -2461,7 +2461,7 @@ impl App {
             .max(20)
             .min(60);
         let area = centered_rect(70, pct, f.area());
-        f.render_widget(Clear, area);
+        clear_overlay_area(f, area);
 
         let mut lines = vec![
             Line::from(""),
@@ -2500,7 +2500,7 @@ impl App {
         let total_lines = base_height + if candidate_lines > 0 { candidate_lines + 1 } else { 0 };
         let pct = ((total_lines as u16 * 100) / f.area().height.max(1)).max(20).min(60);
         let area = centered_rect(70, pct, f.area());
-        f.render_widget(Clear, area);
+        clear_overlay_area(f, area);
 
         let dest = self.current_path_display();
         let mut lines = vec![
@@ -2584,7 +2584,7 @@ impl App {
             .max(25)
             .min(75);
         let area = centered_rect(75, pct, f.area());
-        f.render_widget(Clear, area);
+        clear_overlay_area(f, area);
 
         let title = format!("Offline Tasks ({})", tasks.len());
 
@@ -2738,7 +2738,7 @@ impl App {
         } else {
             centered_rect(65, 40, f.area())
         };
-        f.render_widget(Clear, area);
+        clear_overlay_area(f, area);
 
         let inner_w = area.width.saturating_sub(2);
         // Reserve ~40% of width for thumbnail column; text wraps within the left 60%.
@@ -3067,7 +3067,7 @@ impl App {
             .max(25)
             .min(70);
         let area = centered_rect(60, pct, f.area());
-        f.render_widget(Clear, area);
+        clear_overlay_area(f, area);
 
         let mut lines = vec![Line::from("")];
 
@@ -3129,7 +3129,7 @@ impl App {
     ) {
         let area = centered_rect(70, 65, f.area());
         self.settings_area.set(area);
-        f.render_widget(Clear, area);
+        clear_overlay_area(f, area);
 
         // Categorized settings: (category_name, settings_list)
         // Each setting: (name, description, value)
@@ -3382,7 +3382,7 @@ impl App {
     ) {
         let area = centered_rect(70, 60, f.area());
         self.settings_area.set(area);
-        f.render_widget(Clear, area);
+        clear_overlay_area(f, area);
 
         let mut lines = vec![
             Line::from(""),
@@ -3475,7 +3475,7 @@ impl App {
     ) {
         let area = centered_rect(70, 70, f.area());
         self.settings_area.set(area);
-        f.render_widget(Clear, area);
+        clear_overlay_area(f, area);
 
         let colors = [
             ("Folder", draft.custom_colors.folder),
@@ -3555,6 +3555,20 @@ impl App {
             area,
         );
     }
+}
+
+/// Clear an overlay area, extending 1 cell on each side so that any
+/// double-width (CJK) character whose right half sits exactly at the
+/// overlay boundary is fully erased before the border is drawn.
+fn clear_overlay_area(f: &mut Frame, area: ratatui::layout::Rect) {
+    let full = f.area();
+    let extended = ratatui::layout::Rect {
+        x: area.x.saturating_sub(1),
+        y: area.y,
+        width: area.width + if area.x > 0 { 2 } else { 1 },
+        height: area.height,
+    };
+    f.render_widget(Clear, extended.intersection(full));
 }
 
 /// Wrap a labeled field with hanging indent, CJK-aware.
