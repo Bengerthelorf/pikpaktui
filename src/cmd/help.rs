@@ -75,6 +75,7 @@ pub fn run() -> Result<()> {
         ("download [-o out] <path>", "Download (-o output, -t dir for batch)"),
         ("upload [-t remote] <local>","Upload (-t remote dir for batch)"),
         ("share <path> [-o file]",   "Share file(s) as PikPak links"),
+        ("save-share <url> [-p code] [--to path]","Save shared link to your drive"),
     ];
     print_commands(transfer_cmds);
     println!();

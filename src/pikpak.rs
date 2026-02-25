@@ -1298,6 +1298,74 @@ impl PikPak {
         Ok((ok, failed))
     }
 
+    pub fn share_info(&self, share_id: &str, pass_code: &str) -> Result<ShareInfoResponse> {
+        let token = self.access_token()?;
+        let url = format!(
+            "{}/drive/v1/share",
+            self.drive_base_url.trim_end_matches('/')
+        );
+
+        let mut rb = self
+            .http
+            .get(&url)
+            .bearer_auth(&token)
+            .query(&[
+                ("share_id", share_id),
+                ("pass_code", pass_code),
+                ("thumbnail_size", "SIZE_MEDIUM"),
+            ]);
+        rb = self.authed_headers(rb);
+
+        let response = rb.send().context("share info request failed")?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().unwrap_or_default();
+            return Err(anyhow!("share info failed ({}): {}", status, sanitize(&body)));
+        }
+
+        let info: ShareInfoResponse = response.json().context("invalid share info json")?;
+        if info.share_status != "OK" {
+            return Err(anyhow!("share is not available (status: {})", info.share_status));
+        }
+        Ok(info)
+    }
+
+    pub fn save_share(
+        &self,
+        share_id: &str,
+        pass_code_token: &str,
+        file_ids: &[&str],
+        to_parent_id: &str,
+    ) -> Result<()> {
+        let token = self.access_token()?;
+        let url = format!(
+            "{}/drive/v1/share/restore",
+            self.drive_base_url.trim_end_matches('/')
+        );
+
+        let payload = serde_json::json!({
+            "share_id": share_id,
+            "pass_code_token": pass_code_token,
+            "file_ids": file_ids,
+            "to": { "parent_id": to_parent_id },
+        });
+
+        let mut rb = self.http.post(&url).bearer_auth(&token).json(&payload);
+        rb = self.authed_headers(rb);
+
+        let response = rb.send().context("save share request failed")?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().unwrap_or_default();
+            // Give a friendlier message for the "restoring your own files" error
+            if body.contains("file_restore_own") {
+                return Err(anyhow!("cannot save: these files already belong to your account"));
+            }
+            return Err(anyhow!("save share failed ({}): {}", status, sanitize(&body)));
+        }
+        Ok(())
+    }
+
     fn oss_initiate_multipart(&self, oss: &OssArgs) -> Result<String> {
         let date = httpdate_now();
         let auth = oss_hmac_auth(
@@ -1530,6 +1598,21 @@ struct ResumableParams {
     bucket: Option<String>,
     #[serde(default)]
     key: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ShareEntry {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ShareInfoResponse {
+    pub share_status: String,
+    #[serde(default)]
+    pub pass_code_token: String,
+    #[serde(default)]
+    pub files: Vec<ShareEntry>,
 }
 
 /// Compute the PikPak hash of a file.

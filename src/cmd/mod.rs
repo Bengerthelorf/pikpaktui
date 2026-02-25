@@ -15,6 +15,7 @@ pub mod play;
 pub mod quota;
 pub mod rename;
 pub mod rm;
+pub mod save_share;
 pub mod share;
 pub mod star;
 pub mod starred;
