@@ -990,8 +990,7 @@ impl PikPak {
             .ok_or_else(|| anyhow!("no invite code in response"))
     }
 
-    /// Get transfer quota info.
-    pub fn transfer_quota(&self) -> Result<serde_json::Value> {
+    pub fn transfer_quota(&self) -> Result<TransferQuotaResponse> {
         let token = self.access_token()?;
         let url = format!(
             "{}/vip/v1/quantity/list",
@@ -1772,6 +1771,24 @@ pub struct QuotaDetail {
     pub usage: Option<String>,
     #[serde(default)]
     pub usage_in_trash: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TransferQuotaResponse {
+    pub base: Option<TransferQuotaBase>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TransferQuotaBase {
+    pub offline: Option<TransferBand>,
+    pub download: Option<TransferBand>,
+    pub upload: Option<TransferBand>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TransferBand {
+    pub total_assets: Option<u64>,
+    pub assets: Option<u64>,
 }
 
 // --- Offline / Tasks response types ---

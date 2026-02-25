@@ -23,18 +23,30 @@ pub fn run() -> Result<()> {
     }
 
     // Transfer quota
-    match client.transfer_quota() {
-        Ok(val) => {
-            if let Some(arr) = val.as_array() {
-                for item in arr {
-                    let kind = item["kind"].as_str().unwrap_or("?");
-                    let total = item["total"].as_i64().unwrap_or(0);
-                    let used = item["used"].as_i64().unwrap_or(0);
-                    println!("Transfer {}: {}/{}", kind, used, total);
+    if let Ok(tq) = client.transfer_quota() {
+        if let Some(base) = tq.base {
+            let fmt = |used: u64, total: u64| -> String {
+                format!("{} / {} used", super::format_size(used), super::format_size(total))
+            };
+            if let Some(dl) = base.download {
+                let total = dl.total_assets.unwrap_or(0);
+                if total > 0 {
+                    println!("Download BW: {}", fmt(dl.assets.unwrap_or(0), total));
+                }
+            }
+            if let Some(ul) = base.upload {
+                let total = ul.total_assets.unwrap_or(0);
+                if total > 0 {
+                    println!("Upload BW:   {}", fmt(ul.assets.unwrap_or(0), total));
+                }
+            }
+            if let Some(of) = base.offline {
+                let total = of.total_assets.unwrap_or(0);
+                if total > 0 {
+                    println!("Offline BW:  {}", fmt(of.assets.unwrap_or(0), total));
                 }
             }
         }
-        Err(_) => {}
     }
 
     Ok(())
