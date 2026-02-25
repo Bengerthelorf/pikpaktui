@@ -1,9 +1,10 @@
 use anyhow::{Result, anyhow};
+use crate::pikpak::EntryKind;
 
 pub fn run(args: &[String]) -> Result<()> {
     if args.is_empty() {
         return Err(anyhow!(
-            "Usage: pikpaktui download [-o <output>] <path>\n       pikpaktui download -t <local_dir> <path...>"
+            "Usage: pikpaktui download [-o <output>] <path>\n       pikpaktui download -t <local_dir> <path...>\n\nIf <path> is a folder, the entire directory tree is downloaded recursively."
         ));
     }
 
@@ -44,14 +45,23 @@ pub fn run(args: &[String]) -> Result<()> {
             let (parent, name) = super::split_parent_name(path)?;
             let parent_id = client.resolve_path(&parent)?;
             let entry = super::find_entry(&client, &parent_id, &name)?;
-            let dest = dir.join(&name);
-            let total = client.download_to(&entry.id, &dest)?;
-            println!(
-                "Downloaded '{}' -> '{}' ({})",
-                name,
-                dest.display(),
-                super::format_size(total)
-            );
+            if entry.kind == EntryKind::Folder {
+                println!("Downloading folder '{}' -> '{}'", name, dir.display());
+                let (ok, failed) = client.download_dir(&entry.id, &name, dir)?;
+                println!("Folder '{}' done: {} file(s) ok, {} failed", name, ok, failed);
+                if failed > 0 {
+                    return Err(anyhow!("{} file(s) failed in '{}'", failed, name));
+                }
+            } else {
+                let dest = dir.join(&name);
+                let total = client.download_to(&entry.id, &dest)?;
+                println!(
+                    "Downloaded '{}' -> '{}' ({})",
+                    name,
+                    dest.display(),
+                    super::format_size(total)
+                );
+            }
         }
     } else {
         let (parent, name) = super::split_parent_name(paths[0])?;
@@ -62,13 +72,31 @@ pub fn run(args: &[String]) -> Result<()> {
             output.unwrap_or_else(|| paths.get(1).map(|s| s.as_ref()).unwrap_or(&name)),
         );
 
-        let total = client.download_to(&entry.id, &dest)?;
-        println!(
-            "Downloaded '{}' -> '{}' ({})",
-            name,
-            dest.display(),
-            super::format_size(total)
-        );
+        if entry.kind == EntryKind::Folder {
+            let parent_dest = dest
+                .parent()
+                .map(|p| p.to_path_buf())
+                .filter(|p| p != std::path::Path::new(""))
+                .unwrap_or_else(|| std::path::PathBuf::from("."));
+            let folder_name = dest
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| name.clone());
+            println!("Downloading folder '{}' -> '{}'", name, dest.display());
+            let (ok, failed) = client.download_dir(&entry.id, &folder_name, &parent_dest)?;
+            println!("Folder '{}' done: {} file(s) ok, {} failed", name, ok, failed);
+            if failed > 0 {
+                return Err(anyhow!("{} file(s) failed in '{}'", failed, name));
+            }
+        } else {
+            let total = client.download_to(&entry.id, &dest)?;
+            println!(
+                "Downloaded '{}' -> '{}' ({})",
+                name,
+                dest.display(),
+                super::format_size(total)
+            );
+        }
     }
     Ok(())
 }

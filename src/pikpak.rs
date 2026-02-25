@@ -1230,6 +1230,74 @@ impl PikPak {
         Ok((ok, failed))
     }
 
+    pub fn download_dir(
+        &self,
+        folder_id: &str,
+        folder_name: &str,
+        local_dest: &Path,
+    ) -> Result<(usize, usize)> {
+        let dir = local_dest.join(folder_name);
+        std::fs::create_dir_all(&dir)
+            .with_context(|| format!("cannot create dir '{}'", dir.display()))?;
+        self.download_dir_inner(folder_id, &dir)
+    }
+
+    fn download_dir_inner(&self, folder_id: &str, local_dir: &Path) -> Result<(usize, usize)> {
+        let mut ok = 0usize;
+        let mut failed = 0usize;
+
+        let entries = match self.ls(folder_id) {
+            Ok(e) => e,
+            Err(e) => {
+                eprintln!("  [error] listing '{}': {}", folder_id, e);
+                return Ok((ok, failed + 1));
+            }
+        };
+
+        for entry in entries {
+            match entry.kind {
+                EntryKind::Folder => {
+                    let sub_dir = local_dir.join(&entry.name);
+                    match std::fs::create_dir_all(&sub_dir) {
+                        Ok(_) => match self.download_dir_inner(&entry.id, &sub_dir) {
+                            Ok((sub_ok, sub_fail)) => {
+                                ok += sub_ok;
+                                failed += sub_fail;
+                            }
+                            Err(e) => {
+                                eprintln!("  [error] {}: {}", entry.name, e);
+                                failed += 1;
+                            }
+                        },
+                        Err(e) => {
+                            eprintln!("  [error] mkdir '{}': {}", sub_dir.display(), e);
+                            failed += 1;
+                        }
+                    }
+                }
+                EntryKind::File => {
+                    let dest = local_dir.join(&entry.name);
+                    let local_size = dest.metadata().map(|m| m.len()).unwrap_or(0);
+                    if local_size > 0 && local_size == entry.size {
+                        println!("  skipping '{}' (already complete)", dest.display());
+                        ok += 1;
+                        continue;
+                    }
+                    println!("  {}", dest.display());
+                    match self.download_to(&entry.id, &dest) {
+                        Ok(_) => ok += 1,
+                        Err(e) => {
+                            eprintln!("  [error] '{}': {}", entry.name, e);
+                            failed += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok((ok, failed))
+    }
+
     fn oss_initiate_multipart(&self, oss: &OssArgs) -> Result<String> {
         let date = httpdate_now();
         let auth = oss_hmac_auth(
