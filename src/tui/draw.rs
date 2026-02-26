@@ -2679,7 +2679,7 @@ impl App {
             );
         }
     }
-    // --- Info loading overlay (show_preview=false) ---
+    // --- Info loading overlay ---
 
     fn draw_info_loading_overlay(&self, f: &mut Frame) {
         let area = self.prepare_overlay(f, 45, 20);
@@ -2718,7 +2718,7 @@ impl App {
         f.render_widget(p, area);
     }
 
-    // --- Info overlay (show_preview=false) ---
+    // --- Info overlay ---
 
     fn draw_info_overlay(
         &self,
@@ -3009,7 +3009,7 @@ impl App {
         }
     }
 
-    // --- Text preview overlay (show_preview=false) ---
+    // --- Text preview overlay ---
 
     fn draw_text_preview_overlay(
         &self,
@@ -3053,7 +3053,7 @@ impl App {
         f.render_widget(p, area);
     }
 
-    // --- Folder listing popup (show_preview=false) ---
+    // --- Folder listing popup ---
 
     fn draw_info_folder_overlay(&self, f: &mut Frame, name: &str, entries: &[Entry]) {
         let visible = entries.len().min(20);

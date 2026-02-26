@@ -123,7 +123,6 @@ impl PikPak {
 
         self.device_id = md5_hex(email);
 
-        // captcha init
         let captcha = self.init_captcha(email)?;
         self.captcha_token = captcha
             .captcha_token
@@ -136,11 +135,7 @@ impl PikPak {
                 )
             })?;
 
-        // signin
-        let url = format!(
-            "{}/v1/auth/signin",
-            self.auth_base_url.trim_end_matches('/')
-        );
+        let url = self.auth_url("v1/auth/signin");
         let payload = serde_json::json!({
             "username": email,
             "password": password,
@@ -179,14 +174,8 @@ impl PikPak {
     }
 
     fn init_captcha(&self, email: &str) -> Result<CaptchaInitResponse> {
-        let url = format!(
-            "{}/v1/shield/captcha/init",
-            self.auth_base_url.trim_end_matches('/')
-        );
-        let action = format!(
-            "POST:{}/v1/auth/signin",
-            self.auth_base_url.trim_end_matches('/')
-        );
+        let url = self.auth_url("v1/shield/captcha/init");
+        let action = format!("POST:{}", self.auth_url("v1/auth/signin"));
 
         let payload = serde_json::json!({
             "action": action,
@@ -242,10 +231,7 @@ impl PikPak {
     /// the user's password. Saves the updated session to disk and returns
     /// the new access_token.
     fn refresh_session(&self, refresh_token: &str) -> Result<String> {
-        let url = format!(
-            "{}/v1/auth/token",
-            self.auth_base_url.trim_end_matches('/')
-        );
+        let url = self.auth_url("v1/auth/token");
 
         let payload = serde_json::json!({
             "grant_type": "refresh_token",
@@ -294,14 +280,19 @@ impl PikPak {
         rb
     }
 
+    fn drive_url(&self, path: &str) -> String {
+        format!("{}/{}", self.drive_base_url.trim_end_matches('/'), path)
+    }
+
+    fn auth_url(&self, path: &str) -> String {
+        format!("{}/{}", self.auth_base_url.trim_end_matches('/'), path)
+    }
+
     // --- Drive API ---
 
     pub fn ls(&self, parent_id: &str) -> Result<Vec<Entry>> {
         let token = self.access_token()?;
-        let url = format!(
-            "{}/drive/v1/files",
-            self.drive_base_url.trim_end_matches('/')
-        );
+        let url = self.drive_url("drive/v1/files");
 
         let filters = r#"{"trashed":{"eq":false}}"#;
         let mut all_entries: Vec<Entry> = Vec::new();
@@ -331,23 +322,7 @@ impl PikPak {
                 .next_page_token
                 .filter(|t| !t.is_empty());
 
-            all_entries.extend(payload.files.into_iter().map(|f| {
-                let starred = f.is_starred();
-                Entry {
-                    id: f.id,
-                    name: f.name,
-                    kind: if f.kind.contains("folder") {
-                        EntryKind::Folder
-                    } else {
-                        EntryKind::File
-                    },
-                    size: f.size.unwrap_or(0),
-                    created_time: f.created_time.unwrap_or_default(),
-                    modified_time: f.modified_time.unwrap_or_default(),
-                    starred,
-                    thumbnail_link: f.thumbnail_link,
-                }
-            }));
+            all_entries.extend(payload.files.into_iter().map(|f| f.into_entry()));
 
             match next {
                 Some(t) => page_token = Some(t),
@@ -388,10 +363,7 @@ impl PikPak {
 
     pub fn ls_trash(&self, limit: u32) -> Result<Vec<Entry>> {
         let token = self.access_token()?;
-        let url = format!(
-            "{}/drive/v1/files",
-            self.drive_base_url.trim_end_matches('/')
-        );
+        let url = self.drive_url("drive/v1/files");
 
         let filters = r#"{"trashed":{"eq":true}}"#;
         let mut rb = self.http.get(&url).bearer_auth(&token).query(&[
@@ -414,36 +386,13 @@ impl PikPak {
         }
 
         let payload: DriveListResponse = response.json().context("invalid ls_trash json")?;
-        let entries = payload
-            .files
-            .into_iter()
-            .map(|f| {
-                let starred = f.is_starred();
-                Entry {
-                    id: f.id,
-                    name: f.name,
-                    kind: if f.kind.contains("folder") {
-                        EntryKind::Folder
-                    } else {
-                        EntryKind::File
-                    },
-                    size: f.size.unwrap_or(0),
-                    created_time: f.created_time.unwrap_or_default(),
-                    modified_time: f.modified_time.unwrap_or_default(),
-                    starred,
-                    thumbnail_link: f.thumbnail_link,
-                }
-            })
-            .collect();
+        let entries = payload.files.into_iter().map(|f| f.into_entry()).collect();
         Ok(entries)
     }
 
     pub fn mv(&self, ids: &[&str], to_parent_id: &str) -> Result<()> {
         let token = self.access_token()?;
-        let url = format!(
-            "{}/drive/v1/files:batchMove",
-            self.drive_base_url.trim_end_matches('/')
-        );
+        let url = self.drive_url("drive/v1/files:batchMove");
 
         let payload = serde_json::json!({
             "ids": ids,
@@ -459,10 +408,7 @@ impl PikPak {
 
     pub fn cp(&self, ids: &[&str], to_parent_id: &str) -> Result<()> {
         let token = self.access_token()?;
-        let url = format!(
-            "{}/drive/v1/files:batchCopy",
-            self.drive_base_url.trim_end_matches('/')
-        );
+        let url = self.drive_url("drive/v1/files:batchCopy");
 
         let payload = serde_json::json!({
             "ids": ids,
@@ -478,11 +424,7 @@ impl PikPak {
 
     pub fn rename(&self, file_id: &str, new_name: &str) -> Result<()> {
         let token = self.access_token()?;
-        let url = format!(
-            "{}/drive/v1/files/{}",
-            self.drive_base_url.trim_end_matches('/'),
-            file_id
-        );
+        let url = format!("{}/{}", self.drive_url("drive/v1/files"), file_id);
 
         let payload = serde_json::json!({ "name": new_name });
         let mut rb = self.http.patch(&url).bearer_auth(&token).json(&payload);
@@ -494,10 +436,7 @@ impl PikPak {
 
     pub fn remove(&self, ids: &[&str]) -> Result<()> {
         let token = self.access_token()?;
-        let url = format!(
-            "{}/drive/v1/files:batchTrash",
-            self.drive_base_url.trim_end_matches('/')
-        );
+        let url = self.drive_url("drive/v1/files:batchTrash");
 
         let payload = serde_json::json!({ "ids": ids });
         let mut rb = self.http.post(&url).bearer_auth(&token).json(&payload);
@@ -509,10 +448,7 @@ impl PikPak {
 
     pub fn delete_permanent(&self, ids: &[&str]) -> Result<()> {
         let token = self.access_token()?;
-        let url = format!(
-            "{}/drive/v1/files:batchDelete",
-            self.drive_base_url.trim_end_matches('/')
-        );
+        let url = self.drive_url("drive/v1/files:batchDelete");
 
         let payload = serde_json::json!({ "ids": ids });
         let mut rb = self.http.post(&url).bearer_auth(&token).json(&payload);
@@ -524,10 +460,7 @@ impl PikPak {
 
     pub fn untrash(&self, ids: &[&str]) -> Result<()> {
         let token = self.access_token()?;
-        let url = format!(
-            "{}/drive/v1/files:batchUntrash",
-            self.drive_base_url.trim_end_matches('/')
-        );
+        let url = self.drive_url("drive/v1/files:batchUntrash");
 
         let payload = serde_json::json!({ "ids": ids });
         let mut rb = self.http.post(&url).bearer_auth(&token).json(&payload);
@@ -539,10 +472,7 @@ impl PikPak {
 
     pub fn mkdir(&self, parent_id: &str, name: &str) -> Result<Entry> {
         let token = self.access_token()?;
-        let url = format!(
-            "{}/drive/v1/files",
-            self.drive_base_url.trim_end_matches('/')
-        );
+        let url = self.drive_url("drive/v1/files");
 
         let payload = serde_json::json!({
             "kind": "drive#folder",
@@ -577,11 +507,7 @@ impl PikPak {
 
     pub fn file_info(&self, file_id: &str) -> Result<FileInfoResponse> {
         let token = self.access_token()?;
-        let url = format!(
-            "{}/drive/v1/files/{}",
-            self.drive_base_url.trim_end_matches('/'),
-            file_id
-        );
+        let url = format!("{}/{}", self.drive_url("drive/v1/files"), file_id);
 
         let mut rb = self.http.get(&url).bearer_auth(&token);
         rb = self.authed_headers(rb);
@@ -681,10 +607,7 @@ impl PikPak {
 
     pub fn quota(&self) -> Result<QuotaInfo> {
         let token = self.access_token()?;
-        let url = format!(
-            "{}/drive/v1/about",
-            self.drive_base_url.trim_end_matches('/')
-        );
+        let url = self.drive_url("drive/v1/about");
 
         let mut rb = self.http.get(&url).bearer_auth(&token);
         rb = self.authed_headers(rb);
@@ -710,10 +633,7 @@ impl PikPak {
         name: Option<&str>,
     ) -> Result<OfflineTaskResponse> {
         let token = self.access_token()?;
-        let url = format!(
-            "{}/drive/v1/files",
-            self.drive_base_url.trim_end_matches('/')
-        );
+        let url = self.drive_url("drive/v1/files");
 
         let mut payload = serde_json::json!({
             "kind": "drive#file",
@@ -750,10 +670,7 @@ impl PikPak {
     /// List offline/cloud download tasks.
     pub fn offline_list(&self, limit: u32, phases: &[&str]) -> Result<OfflineListResponse> {
         let token = self.access_token()?;
-        let url = format!(
-            "{}/drive/v1/tasks",
-            self.drive_base_url.trim_end_matches('/')
-        );
+        let url = self.drive_url("drive/v1/tasks");
 
         let filters = serde_json::json!({
             "phase": { "in": phases.join(",") }
@@ -785,10 +702,7 @@ impl PikPak {
     /// Retry a failed offline download task.
     pub fn offline_task_retry(&self, task_id: &str) -> Result<()> {
         let token = self.access_token()?;
-        let url = format!(
-            "{}/drive/v1/task",
-            self.drive_base_url.trim_end_matches('/')
-        );
+        let url = self.drive_url("drive/v1/task");
 
         let payload = serde_json::json!({
             "type": "offline",
@@ -806,10 +720,7 @@ impl PikPak {
     /// Delete offline tasks by task IDs.
     pub fn delete_tasks(&self, task_ids: &[&str], delete_files: bool) -> Result<()> {
         let token = self.access_token()?;
-        let url = format!(
-            "{}/drive/v1/tasks",
-            self.drive_base_url.trim_end_matches('/')
-        );
+        let url = self.drive_url("drive/v1/tasks");
 
         // Build query params: task_ids=a&task_ids=b&delete_files=true
         let mut pairs: Vec<(&str, String)> = task_ids
@@ -833,10 +744,7 @@ impl PikPak {
     /// Star files by IDs.
     pub fn star(&self, ids: &[&str]) -> Result<()> {
         let token = self.access_token()?;
-        let url = format!(
-            "{}/drive/v1/files:star",
-            self.drive_base_url.trim_end_matches('/')
-        );
+        let url = self.drive_url("drive/v1/files:star");
 
         let payload = serde_json::json!({ "ids": ids });
         let mut rb = self.http.post(&url).bearer_auth(&token).json(&payload);
@@ -849,10 +757,7 @@ impl PikPak {
     /// Unstar files by IDs.
     pub fn unstar(&self, ids: &[&str]) -> Result<()> {
         let token = self.access_token()?;
-        let url = format!(
-            "{}/drive/v1/files:unstar",
-            self.drive_base_url.trim_end_matches('/')
-        );
+        let url = self.drive_url("drive/v1/files:unstar");
 
         let payload = serde_json::json!({ "ids": ids });
         let mut rb = self.http.post(&url).bearer_auth(&token).json(&payload);
@@ -865,10 +770,7 @@ impl PikPak {
     /// List starred files.
     pub fn starred_list(&self, limit: u32) -> Result<Vec<Entry>> {
         let token = self.access_token()?;
-        let url = format!(
-            "{}/drive/v1/files",
-            self.drive_base_url.trim_end_matches('/')
-        );
+        let url = self.drive_url("drive/v1/files");
 
         let filters = r#"{"trashed":{"eq":false},"system_tag":{"in":"STAR"}}"#;
         let mut rb = self.http.get(&url).bearer_auth(&token).query(&[
@@ -894,20 +796,7 @@ impl PikPak {
         let entries = payload
             .files
             .into_iter()
-            .map(|f| Entry {
-                id: f.id,
-                name: f.name,
-                kind: if f.kind.contains("folder") {
-                    EntryKind::Folder
-                } else {
-                    EntryKind::File
-                },
-                size: f.size.unwrap_or(0),
-                created_time: f.created_time.unwrap_or_default(),
-                modified_time: f.modified_time.unwrap_or_default(),
-                starred: true, // starred_list only returns starred items
-                thumbnail_link: f.thumbnail_link,
-            })
+            .map(|f| Entry { starred: true, ..f.into_entry() })
             .collect();
         Ok(entries)
     }
@@ -917,10 +806,7 @@ impl PikPak {
     /// Get recent file events (recently added files).
     pub fn events(&self, limit: u32) -> Result<EventsResponse> {
         let token = self.access_token()?;
-        let url = format!(
-            "{}/drive/v1/events",
-            self.drive_base_url.trim_end_matches('/')
-        );
+        let url = self.drive_url("drive/v1/events");
 
         let mut rb = self.http.get(&url).bearer_auth(&token).query(&[
             ("thumbnail_size", "SIZE_MEDIUM"),
@@ -943,10 +829,7 @@ impl PikPak {
     /// Get VIP membership info.
     pub fn vip_info(&self) -> Result<VipInfoResponse> {
         let token = self.access_token()?;
-        let url = format!(
-            "{}/drive/v1/privilege/vip",
-            self.drive_base_url.trim_end_matches('/')
-        );
+        let url = self.drive_url("drive/v1/privilege/vip");
 
         let mut rb = self.http.get(&url).bearer_auth(&token);
         rb = self.authed_headers(rb);
@@ -964,10 +847,7 @@ impl PikPak {
     /// Get invite code.
     pub fn invite_code(&self) -> Result<String> {
         let token = self.access_token()?;
-        let url = format!(
-            "{}/vip/v1/activity/inviteCode",
-            self.drive_base_url.trim_end_matches('/')
-        );
+        let url = self.drive_url("vip/v1/activity/inviteCode");
 
         let mut rb = self.http.get(&url).bearer_auth(&token);
         rb = self.authed_headers(rb);
@@ -992,10 +872,7 @@ impl PikPak {
 
     pub fn transfer_quota(&self) -> Result<TransferQuotaResponse> {
         let token = self.access_token()?;
-        let url = format!(
-            "{}/vip/v1/quantity/list",
-            self.drive_base_url.trim_end_matches('/')
-        );
+        let url = self.drive_url("vip/v1/quantity/list");
 
         let mut rb = self
             .http
@@ -1107,10 +984,7 @@ impl PikPak {
         let hash = pikpak_hash(local_path)?;
 
         let token = self.access_token()?;
-        let url = format!(
-            "{}/drive/v1/files",
-            self.drive_base_url.trim_end_matches('/')
-        );
+        let url = self.drive_url("drive/v1/files");
         let mut payload = serde_json::json!({
             "kind": "drive#file",
             "name": file_name,
@@ -1300,10 +1174,7 @@ impl PikPak {
 
     pub fn share_info(&self, share_id: &str, pass_code: &str) -> Result<ShareInfoResponse> {
         let token = self.access_token()?;
-        let url = format!(
-            "{}/drive/v1/share",
-            self.drive_base_url.trim_end_matches('/')
-        );
+        let url = self.drive_url("drive/v1/share");
 
         let mut rb = self
             .http
@@ -1338,10 +1209,7 @@ impl PikPak {
         to_parent_id: &str,
     ) -> Result<()> {
         let token = self.access_token()?;
-        let url = format!(
-            "{}/drive/v1/share/restore",
-            self.drive_base_url.trim_end_matches('/')
-        );
+        let url = self.drive_url("drive/v1/share/restore");
 
         let payload = serde_json::json!({
             "share_id": share_id,
@@ -1357,7 +1225,6 @@ impl PikPak {
         let status = response.status();
         if !status.is_success() {
             let body = response.text().unwrap_or_default();
-            // Give a friendlier message for the "restoring your own files" error
             if body.contains("file_restore_own") {
                 return Err(anyhow!("cannot save: these files already belong to your account"));
             }
@@ -1839,6 +1706,24 @@ struct DriveFileTag {
 impl DriveFile {
     fn is_starred(&self) -> bool {
         self.tags.iter().any(|t| t.name == "STAR")
+    }
+
+    fn into_entry(self) -> Entry {
+        let starred = self.is_starred();
+        Entry {
+            kind: if self.kind.contains("folder") {
+                EntryKind::Folder
+            } else {
+                EntryKind::File
+            },
+            id: self.id,
+            name: self.name,
+            size: self.size.unwrap_or(0),
+            created_time: self.created_time.unwrap_or_default(),
+            modified_time: self.modified_time.unwrap_or_default(),
+            starred,
+            thumbnail_link: self.thumbnail_link,
+        }
     }
 }
 
