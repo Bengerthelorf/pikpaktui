@@ -28,7 +28,7 @@ A TUI and CLI client for [PikPak](https://mypikpak.com) cloud storage, written i
 - **Mouse support** — Click to select, double-click to open, scroll wheel navigation
 
 ### CLI
-- **27 subcommands** — `ls`, `search`, `mv`, `cp`, `rename`, `rm`, `mkdir`, `info`, `link`, `cat`, `play`, `download`, `upload`, `share`, `offline`, `tasks`, `star`, `unstar`, `starred`, `events`, `trash`, `untrash`, `quota`, `vip`, `completions`, `help`, `version`
+- **27 subcommands** — `ls`, `mv`, `cp`, `rename`, `rm`, `mkdir`, `info`, `link`, `cat`, `play`, `download`, `upload`, `share`, `save-share`, `offline`, `tasks`, `star`, `unstar`, `starred`, `events`, `trash`, `untrash`, `quota`, `vip`, `completions`, `help`, `version`
 - **Colored output** — `ls` with multi-column grid layout (eza-style), `--sort`/`--reverse` flags, Nerd Font icons support
 - **JSON output** — `-J`/`--json` flag on `ls`, `info`, `tasks`, `starred`, `trash`, `events` for machine-readable output; pipe to `jq` for scripting
 - **Resumable transfer** — Upload: dedup-aware instant upload on hash match, multipart resumable with 10 MB chunks via OSS. Download: HTTP Range resume for interrupted transfers
@@ -168,11 +168,14 @@ pikpaktui untrash "file.txt"                          # Restore file from trash
 pikpaktui download "/My Pack/file.txt"                # Download to current dir
 pikpaktui download "/My Pack/file.txt" /tmp/file.txt  # Download to specific path
 pikpaktui download -o output.mp4 "/My Pack/video.mp4" # Download with custom output name
+pikpaktui download "/My Pack/folder"                  # Download entire folder recursively
 pikpaktui download -t ./videos/ /a.mp4 /b.mp4         # Batch download to directory
 pikpaktui upload ./local-file.txt "/My Pack"          # Upload (dedup + resumable)
 pikpaktui upload -t "/My Pack" ./a.txt ./b.txt        # Batch upload to target
 pikpaktui share "/My Pack/file.txt"                   # Print PikPak share links
 pikpaktui share "/My Pack" -o links.txt               # Save folder share links to file
+pikpaktui save-share "https://mypikpak.com/s/XXXX"   # Save shared link to your drive (root)
+pikpaktui save-share "https://mypikpak.com/s/XXXX" --pass-code PO --to "/My Pack"  # With password and destination
 
 # Offline / cloud download
 pikpaktui offline "magnet:?xt=..."                    # Submit magnet link
@@ -192,7 +195,7 @@ pikpaktui events                                      # Recent file events
 pikpaktui events --json                               # JSON output
 
 # Account
-pikpaktui quota                                       # Storage quota
+pikpaktui quota                                       # Storage and bandwidth quota
 pikpaktui vip                                         # VIP status, invite code, transfer quota
 ```
 
@@ -385,7 +388,8 @@ src/
     download.rs          download — download to local
     upload.rs            upload — resumable dedup-aware upload
     share.rs             share — generate PikPak:// share links
-    quota.rs             quota — storage usage
+    save_share.rs        save-share — save a shared link to your drive
+    quota.rs             quota — storage and bandwidth usage
     offline.rs           offline — submit URL/magnet download
     tasks.rs             tasks — manage offline tasks
     star.rs              star — star files
