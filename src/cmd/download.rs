@@ -4,17 +4,19 @@ use crate::pikpak::EntryKind;
 pub fn run(args: &[String]) -> Result<()> {
     if args.is_empty() {
         return Err(anyhow!(
-            "Usage: pikpaktui download [-o <output>] <path>\n       pikpaktui download -t <local_dir> <path...>\n\nIf <path> is a folder, the entire directory tree is downloaded recursively."
+            "Usage: pikpaktui download [-n] [-o <output>] <path>\n       pikpaktui download [-n] -t <local_dir> <path...>\n\nIf <path> is a folder, the entire directory tree is downloaded recursively."
         ));
     }
 
     let mut output: Option<&str> = None;
     let mut target_dir: Option<&str> = None;
+    let mut dry_run = false;
     let mut paths: Vec<&str> = Vec::new();
     let mut iter = args.iter();
 
     while let Some(arg) = iter.next() {
         match arg.as_str() {
+            "-n" | "--dry-run" => dry_run = true,
             "-o" => {
                 output = Some(
                     iter.next()
@@ -45,6 +47,22 @@ pub fn run(args: &[String]) -> Result<()> {
             let (parent, name) = super::split_parent_name(path)?;
             let parent_id = client.resolve_path(&parent)?;
             let entry = super::find_entry(&client, &parent_id, &name)?;
+
+            if dry_run {
+                let kind_tag = if entry.kind == EntryKind::Folder {
+                    "folder".to_string()
+                } else {
+                    super::format_size(entry.size)
+                };
+                println!(
+                    "[dry-run] Would download '{}' ({}) -> '{}'",
+                    name,
+                    kind_tag,
+                    dir.join(&name).display()
+                );
+                continue;
+            }
+
             if entry.kind == EntryKind::Folder {
                 println!("Downloading folder '{}' -> '{}'", name, dir.display());
                 let (ok, failed) = client.download_dir(&entry.id, &name, dir)?;
@@ -71,6 +89,21 @@ pub fn run(args: &[String]) -> Result<()> {
         let dest = std::path::PathBuf::from(
             output.unwrap_or_else(|| paths.get(1).map(|s| s.as_ref()).unwrap_or(&name)),
         );
+
+        if dry_run {
+            let kind_tag = if entry.kind == EntryKind::Folder {
+                "folder".to_string()
+            } else {
+                super::format_size(entry.size)
+            };
+            println!(
+                "[dry-run] Would download '{}' ({}) -> '{}'",
+                name,
+                kind_tag,
+                dest.display()
+            );
+            return Ok(());
+        }
 
         if entry.kind == EntryKind::Folder {
             let parent_dest = dest

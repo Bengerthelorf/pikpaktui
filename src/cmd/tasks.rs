@@ -75,19 +75,46 @@ pub fn run(args: &[String]) -> Result<()> {
             Ok(())
         }
         "retry" => {
-            let task_id = args
-                .get(1)
-                .ok_or_else(|| anyhow::anyhow!("usage: pikpaktui tasks retry <task_id>"))?;
+            let mut dry_run = false;
+            let mut rest_args: Vec<&str> = Vec::new();
+            for a in &args[1..] {
+                match a.as_str() {
+                    "-n" | "--dry-run" => dry_run = true,
+                    _ => rest_args.push(a),
+                }
+            }
+            let task_id = rest_args
+                .first()
+                .copied()
+                .ok_or_else(|| anyhow::anyhow!("usage: pikpaktui tasks retry [-n] <task_id>"))?;
+            if dry_run {
+                println!("[dry-run] Would retry task '{}'", task_id);
+                return Ok(());
+            }
             client.offline_task_retry(task_id)?;
             println!("Task {} retried", task_id);
             Ok(())
         }
         "delete" | "rm" => {
-            let ids: Vec<&str> = args[1..].iter().map(|s| s.as_str()).collect();
+            let mut dry_run = false;
+            let mut ids: Vec<&str> = Vec::new();
+            for a in &args[1..] {
+                match a.as_str() {
+                    "-n" | "--dry-run" => dry_run = true,
+                    _ => ids.push(a),
+                }
+            }
             if ids.is_empty() {
                 return Err(anyhow::anyhow!(
-                    "usage: pikpaktui tasks delete <task_id...>"
+                    "usage: pikpaktui tasks delete [-n] <task_id...>"
                 ));
+            }
+            if dry_run {
+                println!("[dry-run] Would delete {} task(s):", ids.len());
+                for id in &ids {
+                    println!("  {}", id);
+                }
+                return Ok(());
             }
             client.delete_tasks(&ids, false)?;
             println!("Deleted {} task(s)", ids.len());
