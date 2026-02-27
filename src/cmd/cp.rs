@@ -3,16 +3,18 @@ use anyhow::{Result, anyhow};
 pub fn run(args: &[String]) -> Result<()> {
     if args.len() < 2 {
         return Err(anyhow!(
-            "Usage: pikpaktui cp <src> <dst>\n       pikpaktui cp -t <dst> <src...>"
+            "Usage: pikpaktui cp [-n] <src> <dst>\n       pikpaktui cp [-n] -t <dst> <src...>"
         ));
     }
 
     let mut target: Option<&str> = None;
+    let mut dry_run = false;
     let mut paths: Vec<&str> = Vec::new();
     let mut iter = args.iter();
 
     while let Some(arg) = iter.next() {
         match arg.as_str() {
+            "-n" | "--dry-run" => dry_run = true,
             "-t" => {
                 target = Some(
                     iter.next()
@@ -28,7 +30,7 @@ pub fn run(args: &[String]) -> Result<()> {
 
     if let Some(dst) = target {
         if paths.is_empty() {
-            return Err(anyhow!("Usage: pikpaktui cp -t <dst> <src...>"));
+            return Err(anyhow!("Usage: pikpaktui cp [-n] -t <dst> <src...>"));
         }
         let dest_id = client.resolve_path(dst)?;
         let mut ids: Vec<String> = Vec::new();
@@ -38,17 +40,32 @@ pub fn run(args: &[String]) -> Result<()> {
             let entry = super::find_entry(&client, &parent_id, &name)?;
             ids.push(entry.id);
         }
+
+        if dry_run {
+            println!("[dry-run] Would copy {} item(s) -> '{}':", paths.len(), dst);
+            for (path, id) in paths.iter().zip(ids.iter()) {
+                println!("  {} (id: {})", path, id);
+            }
+            return Ok(());
+        }
+
         let id_refs: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
         client.cp(&id_refs, &dest_id)?;
         println!("Copied {} item(s) -> '{}'", paths.len(), dst);
     } else {
         if paths.len() < 2 {
-            return Err(anyhow!("Usage: pikpaktui cp <src> <dst>"));
+            return Err(anyhow!("Usage: pikpaktui cp [-n] <src> <dst>"));
         }
         let (src_parent, src_name) = super::split_parent_name(paths[0])?;
         let src_parent_id = client.resolve_path(&src_parent)?;
         let entry = super::find_entry(&client, &src_parent_id, &src_name)?;
         let dest_id = client.resolve_path(paths[1])?;
+
+        if dry_run {
+            println!("[dry-run] Would copy '{}' -> '{}' (id: {})", paths[0], paths[1], entry.id);
+            return Ok(());
+        }
+
         client.cp(&[entry.id.as_str()], &dest_id)?;
         println!("Copied '{}' -> '{}'", paths[0], paths[1]);
     }
