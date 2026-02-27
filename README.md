@@ -31,6 +31,7 @@ A TUI and CLI client for [PikPak](https://mypikpak.com) cloud storage, written i
 - **27 subcommands** — `ls`, `mv`, `cp`, `rename`, `rm`, `mkdir`, `info`, `link`, `cat`, `play`, `download`, `upload`, `share`, `save-share`, `offline`, `tasks`, `star`, `unstar`, `starred`, `events`, `trash`, `untrash`, `quota`, `vip`, `completions`, `help`, `version`
 - **Colored output** — `ls` with multi-column grid layout (eza-style), `--sort`/`--reverse` flags, Nerd Font icons support
 - **JSON output** — `-J`/`--json` flag on `ls`, `info`, `tasks`, `starred`, `trash`, `events` for machine-readable output; pipe to `jq` for scripting
+- **Dry run** — `-n`/`--dry-run` flag on all mutating commands (`mv`, `cp`, `rename`, `rm`, `mkdir`, `star`, `unstar`, `untrash`, `download`, `upload`, `offline`, `tasks retry/delete`, `save-share`); resolves paths and prints a plan without making any changes — safe for AI agent use
 - **Resumable transfer** — Upload: dedup-aware instant upload on hash match, multipart resumable with 10 MB chunks via OSS. Download: HTTP Range resume for interrupted transfers
 - **Shell completions** — Zsh completion with dynamic cloud path completion (like `scp`)
 
@@ -197,6 +198,18 @@ pikpaktui events --json                               # JSON output
 # Account
 pikpaktui quota                                       # Storage and bandwidth quota
 pikpaktui vip                                         # VIP status, invite code, transfer quota
+
+# Dry run (preview without making changes; -n works on all mutating commands)
+pikpaktui rm -n "/My Pack/file.txt"                   # Show what would be trashed
+pikpaktui rm -n -rf "/My Pack/folder"                 # Show what would be permanently deleted
+pikpaktui mv -n "/My Pack/a.txt" /Archive             # Show move plan
+pikpaktui cp -n -t /Backup /a.txt /b.txt              # Show batch copy plan
+pikpaktui rename -n "/My Pack/old.txt" new.txt        # Show rename plan
+pikpaktui mkdir -n -p "/My Pack/a/b/c"                # Show which folders would be created
+pikpaktui download -n "/My Pack/folder"               # Show folder that would be downloaded
+pikpaktui upload -n ./file.txt "/My Pack"             # Show upload plan
+pikpaktui save-share -n "https://mypikpak.com/s/XXXX" --to "/My Pack"  # Show items that would be saved
+pikpaktui offline --dry-run "magnet:?xt=..." --to "/Downloads"          # Show task that would be submitted
 ```
 
 CLI mode requires login: it checks for a valid session first, then falls back to `login.yaml` credentials. If neither exists, run `pikpaktui` (TUI) to login.
