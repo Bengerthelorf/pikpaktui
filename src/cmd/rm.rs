@@ -3,11 +3,12 @@ use crate::pikpak::EntryKind;
 
 pub fn run(args: &[String]) -> Result<()> {
     if args.is_empty() {
-        return Err(anyhow!("Usage: pikpaktui rm [-r] [-f] <path...>"));
+        return Err(anyhow!("Usage: pikpaktui rm [-n] [-r] [-f] <path...>"));
     }
 
     let mut force = false;
     let mut recursive = false;
+    let mut dry_run = false;
     let mut paths: Vec<&str> = Vec::new();
 
     for arg in args {
@@ -15,17 +16,25 @@ pub fn run(args: &[String]) -> Result<()> {
             "-f" => force = true,
             "-r" => recursive = true,
             "-rf" | "-fr" => { recursive = true; force = true; }
+            "-n" | "--dry-run" => dry_run = true,
             _ => paths.push(arg),
         }
     }
 
     if paths.is_empty() {
-        return Err(anyhow!("Usage: pikpaktui rm [-r] [-f] <path...>"));
+        return Err(anyhow!("Usage: pikpaktui rm [-n] [-r] [-f] <path...>"));
     }
 
     let client = super::cli_client()?;
-    let mut ids: Vec<String> = Vec::new();
 
+    struct Resolved<'a> {
+        path: &'a str,
+        id: String,
+        kind: EntryKind,
+        size: u64,
+    }
+
+    let mut resolved: Vec<Resolved> = Vec::new();
     for path in &paths {
         let (parent, name) = super::split_parent_name(path)?;
         let parent_id = client.resolve_path(&parent)?;
@@ -37,15 +46,25 @@ pub fn run(args: &[String]) -> Result<()> {
                 path
             ));
         }
-        ids.push(entry.id);
+        resolved.push(Resolved { path, id: entry.id, kind: entry.kind, size: entry.size });
     }
 
-    let id_refs: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
+    if dry_run {
+        let action = if force { "permanently delete" } else { "trash" };
+        println!("[dry-run] Would {} {} item(s):", action, resolved.len());
+        for r in &resolved {
+            let kind_tag = if r.kind == EntryKind::Folder { "folder" } else { &super::format_size(r.size) };
+            println!("  {} (id: {}, {})", r.path, r.id, kind_tag);
+        }
+        return Ok(());
+    }
+
+    let ids: Vec<&str> = resolved.iter().map(|r| r.id.as_str()).collect();
     if force {
-        client.delete_permanent(&id_refs)?;
+        client.delete_permanent(&ids)?;
         println!("Permanently deleted {} item(s)", paths.len());
     } else {
-        client.remove(&id_refs)?;
+        client.remove(&ids)?;
         println!("Removed {} item(s) (to trash)", paths.len());
     }
     Ok(())
