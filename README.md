@@ -31,7 +31,7 @@ A TUI and CLI client for [PikPak](https://mypikpak.com) cloud storage, written i
 - **27 subcommands** — `ls`, `mv`, `cp`, `rename`, `rm`, `mkdir`, `info`, `link`, `cat`, `play`, `download`, `upload`, `share`, `save-share`, `offline`, `tasks`, `star`, `unstar`, `starred`, `events`, `trash`, `untrash`, `quota`, `vip`, `completions`, `help`, `version`
 - **Colored output** — `ls` with multi-column grid layout (eza-style), `--sort`/`--reverse` flags, Nerd Font icons support
 - **JSON output** — `-J`/`--json` flag on `ls`, `info`, `tasks`, `starred`, `trash`, `events` for machine-readable output; pipe to `jq` for scripting
-- **Dry run** — `-n`/`--dry-run` flag on all mutating commands (`mv`, `cp`, `rename`, `rm`, `mkdir`, `star`, `unstar`, `untrash`, `download`, `upload`, `offline`, `tasks retry/delete`, `save-share`); resolves paths and prints a plan without making any changes — safe for AI agent use
+- **Dry run** — `-n`/`--dry-run` flag on mutating commands (`mv`, `cp`, `rename`, `rm`, `mkdir`, `star`, `unstar`, `untrash`, `download`, `upload`, `tasks retry/delete`, `save-share`) and `--dry-run` on `offline`; resolves paths and prints a plan without making any changes — safe for AI agent use
 - **Resumable transfer** — Upload: dedup-aware instant upload on hash match, multipart resumable with 10 MB chunks via OSS. Download: HTTP Range resume for interrupted transfers
 - **Shell completions** — Zsh completion with dynamic cloud path completion (like `scp`)
 
@@ -208,8 +208,8 @@ pikpaktui rename -n "/My Pack/old.txt" new.txt        # Show rename plan
 pikpaktui mkdir -n -p "/My Pack/a/b/c"                # Show which folders would be created
 pikpaktui download -n "/My Pack/folder"               # Show folder that would be downloaded
 pikpaktui upload -n ./file.txt "/My Pack"             # Show upload plan
-pikpaktui save-share -n "https://mypikpak.com/s/XXXX" --to "/My Pack"  # Show items that would be saved
-pikpaktui offline --dry-run "magnet:?xt=..." --to "/Downloads"          # Show task that would be submitted
+pikpaktui save-share "https://mypikpak.com/s/XXXX" -n --to "/My Pack"  # Show items that would be saved
+pikpaktui offline "magnet:?xt=..." --dry-run --to "/Downloads"          # Show task that would be submitted
 ```
 
 CLI mode requires login: it checks for a valid session first, then falls back to `login.yaml` credentials. If neither exists, run `pikpaktui` (TUI) to login.
