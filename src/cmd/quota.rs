@@ -28,9 +28,10 @@ pub fn run(args: &[String]) -> Result<()> {
                 }))
             };
             serde_json::json!({
-                "download": band(b.download.as_ref()),
-                "upload":   band(b.upload.as_ref()),
-                "offline":  band(b.offline.as_ref()),
+                "download":    band(b.download.as_ref()),
+                "upload":      band(b.upload.as_ref()),
+                "offline":     band(b.offline.as_ref()),
+                "expire_time": b.expire_time,
             })
         });
 
@@ -60,6 +61,9 @@ pub fn run(args: &[String]) -> Result<()> {
 
     if let Some(base) = tq.and_then(|t| t.base) {
         println!("Bandwidth");
+        if let Some(ref exp) = base.expire_time {
+            println!("  Expires: {}", exp);
+        }
         if let Some(dl) = base.download {
             let total = dl.total_assets.unwrap_or(0);
             let used  = dl.assets.unwrap_or(0);

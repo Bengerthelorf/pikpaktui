@@ -1836,6 +1836,8 @@ pub struct TransferQuotaBase {
     pub offline: Option<TransferBand>,
     pub download: Option<TransferBand>,
     pub upload: Option<TransferBand>,
+    #[serde(default)]
+    pub expire_time: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
