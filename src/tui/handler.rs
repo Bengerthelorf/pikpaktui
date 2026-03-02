@@ -3241,7 +3241,7 @@ impl App {
         } else {
             match code {
                 KeyCode::Down | KeyCode::Char('j') => {
-                    *selected = (*selected + 1).min(14);
+                    *selected = (*selected + 1).min(15);
                     None
                 }
                 KeyCode::Up | KeyCode::Char('k') => {
