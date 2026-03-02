@@ -112,7 +112,7 @@ pub fn run() -> Result<()> {
     // Account
     println!("  {MAGENTA}{BOLD}Account{RESET}");
     let acct_cmds: &[(&str, &str)] = &[
-        ("quota",                    "Show storage quota"),
+        ("quota",                    "Show storage quota [-J/--json]"),
         ("vip",                      "Show VIP & account info"),
     ];
     print_commands(acct_cmds);

@@ -30,7 +30,7 @@ A TUI and CLI client for [PikPak](https://mypikpak.com) cloud storage, written i
 ### CLI
 - **27 subcommands** — `ls`, `mv`, `cp`, `rename`, `rm`, `mkdir`, `info`, `link`, `cat`, `play`, `download`, `upload`, `share`, `save-share`, `offline`, `tasks`, `star`, `unstar`, `starred`, `events`, `trash`, `untrash`, `quota`, `vip`, `completions`, `help`, `version`
 - **Colored output** — `ls` with multi-column grid layout (eza-style), `--sort`/`--reverse` flags, Nerd Font icons support
-- **JSON output** — `-J`/`--json` flag on `ls`, `info`, `tasks`, `starred`, `trash`, `events` for machine-readable output; pipe to `jq` for scripting
+- **JSON output** — `-J`/`--json` flag on `ls`, `info`, `quota`, `tasks`, `starred`, `trash`, `events` for machine-readable output; pipe to `jq` for scripting
 - **Dry run** — `-n`/`--dry-run` flag on mutating commands (`mv`, `cp`, `rename`, `rm`, `mkdir`, `star`, `unstar`, `untrash`, `download`, `upload`, `tasks retry/delete`, `save-share`) and `--dry-run` on `offline`; resolves paths and prints a plan without making any changes — safe for AI agent use
 - **Resumable transfer** — Upload: dedup-aware instant upload on hash match, multipart resumable with 10 MB chunks via OSS. Download: HTTP Range resume for interrupted transfers
 - **Shell completions** — Zsh completion with dynamic cloud path completion (like `scp`)
@@ -197,6 +197,7 @@ pikpaktui events --json                               # JSON output
 
 # Account
 pikpaktui quota                                       # Storage and bandwidth quota
+pikpaktui quota --json                                # JSON output {storage: {limit,used,trash,free}, bandwidth: {download,upload,offline}}
 pikpaktui vip                                         # VIP status, invite code, transfer quota
 
 # Dry run (preview without making changes; -n works on all mutating commands)

@@ -40,7 +40,7 @@ fn entry() -> Result<()> {
         "upload" => cmd::upload::run(&args[1..]),
         "share" => cmd::share::run(&args[1..]),
         "save-share" => cmd::save_share::run(&args[1..]),
-        "quota" => cmd::quota::run(),
+        "quota" => cmd::quota::run(&args[1..]),
         "offline" => cmd::offline::run(&args[1..]),
         "tasks" => cmd::tasks::run(&args[1..]),
         "star" => cmd::star::run(&args[1..]),
