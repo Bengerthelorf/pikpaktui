@@ -312,7 +312,7 @@ struct App {
 impl App {
     fn new_authed(client: PikPak, config: TuiConfig) -> Self {
         let (tx, rx) = mpsc::channel();
-        let mut dl_state = DownloadState::new();
+        let mut dl_state = DownloadState::new(config.download_jobs);
         dl_state.tasks = download::load_download_state();
         let mut app = Self {
             client: Arc::new(client),
@@ -389,6 +389,7 @@ impl App {
         };
 
         let (tx, rx) = mpsc::channel();
+        let download_jobs = config.download_jobs;
         Self {
             client: Arc::new(client),
             config,
@@ -417,7 +418,7 @@ impl App {
             cart: Vec::new(),
             cart_ids: HashSet::new(),
             cart_selected: 0,
-            download_state: DownloadState::new(),
+            download_state: DownloadState::new(download_jobs),
             download_view_mode: DownloadViewMode::Collapsed,
             network_stats: NetworkStats::new(),
             last_network_update: Instant::now(),

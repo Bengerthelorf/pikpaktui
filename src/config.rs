@@ -485,7 +485,11 @@ pub struct TuiConfig {
     image_protocol: Option<ImageProtocol>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub player: Option<String>,
+    #[serde(default = "default_download_jobs")]
+    pub download_jobs: usize,
 }
+
+fn default_download_jobs() -> usize { 1 }
 
 fn default_preview_max_size() -> u64 {
     65536
@@ -520,6 +524,7 @@ impl Default for TuiConfig {
             image_protocols: BTreeMap::new(),
             image_protocol: None,
             player: None,
+            download_jobs: 1,
         }
     }
 }

@@ -58,10 +58,11 @@ pub struct DownloadState {
     pub msg_tx: Sender<DownloadMsg>,
     pub msg_rx: Receiver<DownloadMsg>,
     pub active_ids: HashSet<usize>,
+    pub max_concurrent: usize,
 }
 
 impl DownloadState {
-    pub fn new() -> Self {
+    pub fn new(max_concurrent: usize) -> Self {
         let (tx, rx) = std::sync::mpsc::channel();
         Self {
             tasks: Vec::new(),
@@ -69,6 +70,7 @@ impl DownloadState {
             msg_tx: tx,
             msg_rx: rx,
             active_ids: HashSet::new(),
+            max_concurrent: max_concurrent.max(1),
         }
     }
 
@@ -85,34 +87,30 @@ impl DownloadState {
             .any(|t| matches!(t.status, TaskStatus::Downloading | TaskStatus::Pending))
     }
 
-    /// Start downloading the next pending task, if any, and no task is currently downloading.
+    /// Start pending tasks up to max_concurrent slots.
     pub fn start_next(&mut self, client: &Arc<PikPak>) {
-        // Only one download at a time
-        if self
-            .tasks
-            .iter()
-            .any(|t| t.status == TaskStatus::Downloading)
-        {
-            return;
-        }
-
-        let next = self
-            .tasks
-            .iter()
-            .position(|t| t.status == TaskStatus::Pending);
-
-        if let Some(idx) = next {
-            self.tasks[idx].status = TaskStatus::Downloading;
-            self.active_ids.insert(idx);
-            spawn_download_worker(
-                Arc::clone(client),
-                idx,
-                self.tasks[idx].file_id.clone(),
-                self.tasks[idx].dest_path.clone(),
-                self.msg_tx.clone(),
-                Arc::clone(&self.tasks[idx].pause_flag),
-                Arc::clone(&self.tasks[idx].cancel_flag),
-            );
+        loop {
+            let active = self.tasks.iter().filter(|t| t.status == TaskStatus::Downloading).count();
+            if active >= self.max_concurrent {
+                break;
+            }
+            let next = self.tasks.iter().position(|t| t.status == TaskStatus::Pending);
+            match next {
+                Some(idx) => {
+                    self.tasks[idx].status = TaskStatus::Downloading;
+                    self.active_ids.insert(idx);
+                    spawn_download_worker(
+                        Arc::clone(client),
+                        idx,
+                        self.tasks[idx].file_id.clone(),
+                        self.tasks[idx].dest_path.clone(),
+                        self.msg_tx.clone(),
+                        Arc::clone(&self.tasks[idx].pause_flag),
+                        Arc::clone(&self.tasks[idx].cancel_flag),
+                    );
+                }
+                None => break,
+            }
         }
     }
 

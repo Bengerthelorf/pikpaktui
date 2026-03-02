@@ -2476,6 +2476,7 @@ impl App {
                         ("Sort Settings", 2),
                         ("Interface Settings", 2),
                         ("Playback Settings", 1),
+                        ("Download Settings", 1),
                     ];
 
                     let bool_items = vec![0, 3, 5, 6, 11, 13];
@@ -3213,6 +3214,23 @@ impl App {
                                 None => draft.player = Some(String::from(c)),
                             }
                             *modified = true;
+                        }
+                        _ => {}
+                    }
+                }
+                15 => {
+                    // Concurrent Downloads (+/- or Left/Right)
+                    match code {
+                        KeyCode::Char('+') | KeyCode::Up | KeyCode::Right => {
+                            draft.download_jobs = (draft.download_jobs + 1).min(16);
+                            *modified = true;
+                        }
+                        KeyCode::Char('-') | KeyCode::Down | KeyCode::Left => {
+                            draft.download_jobs = draft.download_jobs.saturating_sub(1).max(1);
+                            *modified = true;
+                        }
+                        KeyCode::Enter | KeyCode::Esc => {
+                            *editing = false;
                         }
                         _ => {}
                     }

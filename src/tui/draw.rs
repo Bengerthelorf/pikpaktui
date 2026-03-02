@@ -3230,6 +3230,16 @@ impl App {
                     ),
                 ],
             ),
+            (
+                "Download Settings",
+                vec![
+                    (
+                        "Concurrent Downloads".to_string(),
+                        "Simultaneous cart downloads (1 = sequential)".to_string(),
+                        draft.download_jobs.to_string(),
+                    ),
+                ],
+            ),
         ];
 
         // Map each item index to its line position for scrolling
