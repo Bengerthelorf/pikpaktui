@@ -1134,59 +1134,92 @@ impl PikPak {
     }
 
     fn download_dir_inner(&self, folder_id: &str, local_dir: &Path) -> Result<(usize, usize)> {
-        let mut ok = 0usize;
-        let mut failed = 0usize;
+        use std::sync::{Arc, Mutex, atomic::{AtomicUsize, Ordering}};
+
+        const WORKERS: usize = 4;
 
         let entries = match self.ls(folder_id) {
             Ok(e) => e,
             Err(e) => {
                 eprintln!("  [error] listing '{}': {}", folder_id, e);
-                return Ok((ok, failed + 1));
+                return Ok((0, 1));
             }
         };
 
+        let mut files: Vec<Entry> = Vec::new();
+        let mut folders: Vec<Entry> = Vec::new();
         for entry in entries {
             match entry.kind {
-                EntryKind::Folder => {
-                    let sub_dir = local_dir.join(&entry.name);
-                    match std::fs::create_dir_all(&sub_dir) {
-                        Ok(_) => match self.download_dir_inner(&entry.id, &sub_dir) {
-                            Ok((sub_ok, sub_fail)) => {
-                                ok += sub_ok;
-                                failed += sub_fail;
-                            }
+                EntryKind::File => files.push(entry),
+                EntryKind::Folder => folders.push(entry),
+            }
+        }
+
+        // Create all subdirs up front before spawning threads.
+        let mut failed_count = 0usize;
+        for folder in &folders {
+            if let Err(e) = std::fs::create_dir_all(local_dir.join(&folder.name)) {
+                eprintln!("  [error] mkdir '{}': {}", folder.name, e);
+                failed_count += 1;
+            }
+        }
+
+        // Download files concurrently via a worker pool.
+        let ok = Arc::new(AtomicUsize::new(0));
+        let failed = Arc::new(AtomicUsize::new(0));
+        let (tx, rx) = std::sync::mpsc::channel::<Entry>();
+        for entry in files {
+            tx.send(entry).ok();
+        }
+        drop(tx); // workers exit once channel is drained
+        let rx = Arc::new(Mutex::new(rx));
+
+        std::thread::scope(|s| {
+            for _ in 0..WORKERS {
+                let rx = Arc::clone(&rx);
+                let ok = Arc::clone(&ok);
+                let failed = Arc::clone(&failed);
+                s.spawn(move || {
+                    while let Ok(entry) = rx.lock().unwrap().recv() {
+                        let dest = local_dir.join(&entry.name);
+                        let local_size = dest.metadata().map(|m| m.len()).unwrap_or(0);
+                        if local_size > 0 && local_size == entry.size {
+                            println!("  skipping '{}' (already complete)", dest.display());
+                            ok.fetch_add(1, Ordering::Relaxed);
+                            continue;
+                        }
+                        println!("  {}", dest.display());
+                        match self.download_to(&entry.id, &dest) {
+                            Ok(_) => { ok.fetch_add(1, Ordering::Relaxed); }
                             Err(e) => {
-                                eprintln!("  [error] {}: {}", entry.name, e);
-                                failed += 1;
+                                eprintln!("  [error] '{}': {}", entry.name, e);
+                                failed.fetch_add(1, Ordering::Relaxed);
                             }
-                        },
-                        Err(e) => {
-                            eprintln!("  [error] mkdir '{}': {}", sub_dir.display(), e);
-                            failed += 1;
                         }
                     }
+                });
+            }
+        });
+
+        let mut total_ok = ok.load(Ordering::Relaxed);
+        let mut total_failed = failed.load(Ordering::Relaxed) + failed_count;
+
+        // Recurse into subdirs sequentially.
+        for folder in folders {
+            let sub_dir = local_dir.join(&folder.name);
+            match self.download_dir_inner(&folder.id, &sub_dir) {
+                Ok((sub_ok, sub_fail)) => {
+                    total_ok += sub_ok;
+                    total_failed += sub_fail;
                 }
-                EntryKind::File => {
-                    let dest = local_dir.join(&entry.name);
-                    let local_size = dest.metadata().map(|m| m.len()).unwrap_or(0);
-                    if local_size > 0 && local_size == entry.size {
-                        println!("  skipping '{}' (already complete)", dest.display());
-                        ok += 1;
-                        continue;
-                    }
-                    println!("  {}", dest.display());
-                    match self.download_to(&entry.id, &dest) {
-                        Ok(_) => ok += 1,
-                        Err(e) => {
-                            eprintln!("  [error] '{}': {}", entry.name, e);
-                            failed += 1;
-                        }
-                    }
+                Err(e) => {
+                    eprintln!("  [error] {}: {}", folder.name, e);
+                    total_failed += 1;
                 }
             }
         }
 
-        Ok((ok, failed))
+        Ok((total_ok, total_failed))
     }
 
     pub fn share_info(&self, share_id: &str, pass_code: &str) -> Result<ShareInfoResponse> {
