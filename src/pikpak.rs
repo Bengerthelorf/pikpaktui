@@ -1126,17 +1126,18 @@ impl PikPak {
         folder_id: &str,
         folder_name: &str,
         local_dest: &Path,
+        workers: usize,
     ) -> Result<(usize, usize)> {
         let dir = local_dest.join(folder_name);
         std::fs::create_dir_all(&dir)
             .with_context(|| format!("cannot create dir '{}'", dir.display()))?;
-        self.download_dir_inner(folder_id, &dir)
+        self.download_dir_inner(folder_id, &dir, workers)
     }
 
-    fn download_dir_inner(&self, folder_id: &str, local_dir: &Path) -> Result<(usize, usize)> {
+    fn download_dir_inner(&self, folder_id: &str, local_dir: &Path, workers: usize) -> Result<(usize, usize)> {
         use std::sync::{Arc, Mutex, atomic::{AtomicUsize, Ordering}};
 
-        const WORKERS: usize = 4;
+        let workers = workers.max(1);
 
         let entries = match self.ls(folder_id) {
             Ok(e) => e,
@@ -1175,7 +1176,7 @@ impl PikPak {
         let rx = Arc::new(Mutex::new(rx));
 
         std::thread::scope(|s| {
-            for _ in 0..WORKERS {
+            for _ in 0..workers {
                 let rx = Arc::clone(&rx);
                 let ok = Arc::clone(&ok);
                 let failed = Arc::clone(&failed);
@@ -1207,7 +1208,7 @@ impl PikPak {
         // Recurse into subdirs sequentially.
         for folder in folders {
             let sub_dir = local_dir.join(&folder.name);
-            match self.download_dir_inner(&folder.id, &sub_dir) {
+            match self.download_dir_inner(&folder.id, &sub_dir, workers) {
                 Ok((sub_ok, sub_fail)) => {
                     total_ok += sub_ok;
                     total_failed += sub_fail;
