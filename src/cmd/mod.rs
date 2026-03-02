@@ -68,7 +68,7 @@ pub fn split_parent_name(path: &str) -> Result<(String, String)> {
 }
 
 pub fn find_entry(client: &PikPak, parent_id: &str, name: &str) -> Result<pikpak::Entry> {
-    let entries = client.ls(parent_id)?;
+    let entries = client.ls_cached(parent_id)?;
     entries
         .into_iter()
         .find(|e| e.name == name)

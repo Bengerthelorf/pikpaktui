@@ -3,6 +3,8 @@ use base64::Engine as _;
 use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use sha1::Sha1;
+use std::collections::HashMap;
+use std::sync::Mutex;
 use std::env;
 use std::fmt::Write as _;
 use std::fs;
@@ -57,6 +59,7 @@ pub struct PikPak {
     device_id: String,
     captcha_token: String,
     pub thumbnail_size: String,
+    ls_cache: Mutex<HashMap<String, Vec<Entry>>>,
 }
 
 impl PikPak {
@@ -78,6 +81,7 @@ impl PikPak {
             device_id: String::new(),
             captcha_token: String::new(),
             thumbnail_size: "SIZE_MEDIUM".to_string(),
+            ls_cache: Mutex::new(HashMap::new()),
         })
     }
 
@@ -333,6 +337,19 @@ impl PikPak {
         Ok(all_entries)
     }
 
+    /// Like `ls()` but caches results by parent_id for the lifetime of this client.
+    /// Used by path-resolution helpers so repeated segments (e.g. the same parent
+    /// folder appearing in every argument of a batch command) only hit the API once.
+    /// TUI code that needs a fresh listing should call `ls()` directly.
+    pub fn ls_cached(&self, parent_id: &str) -> Result<Vec<Entry>> {
+        if let Some(cached) = self.ls_cache.lock().unwrap().get(parent_id) {
+            return Ok(cached.clone());
+        }
+        let entries = self.ls(parent_id)?;
+        self.ls_cache.lock().unwrap().insert(parent_id.to_string(), entries.clone());
+        Ok(entries)
+    }
+
     /// Resolve a cloud path like `/My Files/Movies` to a folder ID and breadcrumb.
     ///
     /// Returns `(final_folder_id, breadcrumb)` where breadcrumb is a vec of
@@ -349,7 +366,7 @@ impl PikPak {
         let mut breadcrumb: Vec<(String, String)> = Vec::new();
 
         for name in components {
-            let entries = self.ls(&current_id)?;
+            let entries = self.ls_cached(&current_id)?;
             let child = entries
                 .into_iter()
                 .find(|e| e.name == name && e.kind == crate::pikpak::EntryKind::Folder)
@@ -953,7 +970,7 @@ impl PikPak {
 
         let mut current_id = String::new(); // root
         for seg in &segments {
-            let entries = self.ls(&current_id)?;
+            let entries = self.ls_cached(&current_id)?;
             let found = entries
                 .into_iter()
                 .find(|e| e.name == *seg)
