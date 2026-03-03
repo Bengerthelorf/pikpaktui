@@ -1316,6 +1316,8 @@ impl App {
                 ("m", "move"),
                 ("c", "copy"),
                 ("t", "trash"),
+                ("s", "share"),
+                ("S", "quick share"),
                 ("Esc", "close"),
             ],
             InputMode::CartMovePicker { .. } | InputMode::CartCopyPicker { .. } => vec![
@@ -1420,6 +1422,25 @@ impl App {
             }
             InputMode::PlayerInput { .. } => {
                 vec![("Enter", "confirm"), ("Esc", "cancel")]
+            }
+            InputMode::SharePrompt => {
+                vec![("p", "public share"), ("P", "with password"), ("Esc", "cancel")]
+            }
+            InputMode::ShareCreatedView { .. } => {
+                vec![("y", "copy URL"), ("Esc", "close top"), ("Ctrl+Esc", "close all")]
+            }
+            InputMode::MySharesView { confirm_delete, .. } => {
+                if confirm_delete.is_some() {
+                    vec![("y/Enter", "confirm delete"), ("n/Esc", "cancel")]
+                } else {
+                    vec![
+                        ("j/k", "nav"),
+                        ("y", "copy URL"),
+                        ("d", "delete"),
+                        ("r", "refresh"),
+                        ("Esc", "back"),
+                    ]
+                }
             }
             _ => vec![],
         }
@@ -1569,6 +1590,25 @@ impl App {
             }
             InputMode::PlayerInput { value, .. } => {
                 self.draw_player_input_overlay(f, value);
+            }
+            InputMode::SharePrompt => {
+                self.draw_cart_overlay(f);
+                self.draw_share_prompt_overlay(f);
+            }
+            InputMode::ShareCreatedView { shares } => {
+                self.draw_cart_overlay(f);
+                self.draw_share_created_view(f, shares);
+            }
+            InputMode::MySharesView {
+                shares,
+                selected,
+                confirm_delete,
+            } => {
+                if self.loading {
+                    self.draw_info_loading_overlay(f);
+                } else {
+                    self.draw_my_shares_view(f, shares, *selected, confirm_delete.as_deref());
+                }
             }
         }
     }
@@ -2378,6 +2418,7 @@ impl App {
             ("m", "move"),
             ("c", "copy"),
             ("t", "trash"),
+            ("s", "share"),
             ("Esc", "close"),
         ]));
 
@@ -3559,6 +3600,219 @@ impl App {
             Paragraph::new(Text::from(lines)).block(self.overlay_block(title, st_bc, st_tc)),
             area,
         );
+    }
+
+    // --- Share overlays ---
+
+    fn draw_share_prompt_overlay(&self, f: &mut Frame) {
+        let area = self.prepare_overlay(f, 50, 20);
+        let (bc, tc) = if self.is_vibrant() {
+            (Color::LightCyan, Color::LightCyan)
+        } else {
+            (Color::Cyan, Color::LightBlue)
+        };
+        let lines = vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                "  Create share for all cart items:",
+                Style::default().fg(Color::White),
+            )),
+            Line::from(""),
+            Self::hint_line(&[("p", "public share"), ("P", "with password"), ("Esc", "cancel")]),
+        ];
+        f.render_widget(
+            Paragraph::new(Text::from(lines)).block(self.overlay_block("Create Share", bc, tc)),
+            area,
+        );
+    }
+
+    fn draw_share_created_view(&self, f: &mut Frame, shares: &[(String, String, String)]) {
+        if shares.is_empty() {
+            return;
+        }
+        let (bc_top, tc_top) = if self.is_vibrant() {
+            (Color::LightCyan, Color::LightCyan)
+        } else {
+            (Color::Cyan, Color::LightBlue)
+        };
+        let frame = f.area();
+        let card_w = (frame.width * 65 / 100).max(30).min(frame.width.saturating_sub(4));
+        let card_h = 8u16;
+
+        for (i, (title, url, pass_code)) in shares.iter().enumerate() {
+            let ox = (i as u16) * 3;
+            let oy = (i as u16) * 1;
+            let area = Rect {
+                x: 2 + ox,
+                y: 1 + oy,
+                width: card_w.min(frame.width.saturating_sub(2 + ox)),
+                height: card_h,
+            };
+            clear_overlay_area(f, area);
+
+            let is_top = i == shares.len() - 1;
+            let (bc, tc) = if is_top {
+                (bc_top, tc_top)
+            } else {
+                (Color::DarkGray, Color::DarkGray)
+            };
+
+            let name_max = area.width.saturating_sub(4) as usize;
+            let mut lines = vec![Line::from("")];
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(
+                    truncate_name(url, name_max),
+                    Style::default().fg(if is_top { Color::White } else { Color::DarkGray }),
+                ),
+            ]));
+            if !pass_code.is_empty() {
+                lines.push(Line::from(vec![
+                    Span::raw("  Password: "),
+                    Span::styled(
+                        pass_code.clone(),
+                        Style::default().fg(if is_top { Color::Yellow } else { Color::DarkGray }),
+                    ),
+                ]));
+            } else {
+                lines.push(Line::from(""));
+            }
+            lines.push(Line::from(""));
+            if is_top {
+                lines.push(Self::hint_line(&[
+                    ("y", "copy URL"),
+                    ("Esc", "close"),
+                    ("Ctrl+Esc", "close all"),
+                ]));
+            }
+
+            let card_title = format!("Share: {}", truncate_name(title, 30));
+            f.render_widget(
+                Paragraph::new(Text::from(lines)).block(self.overlay_block(&card_title, bc, tc)),
+                area,
+            );
+        }
+    }
+
+    fn draw_my_shares_view(
+        &self,
+        f: &mut Frame,
+        shares: &[crate::pikpak::MyShare],
+        selected: usize,
+        confirm_delete: Option<&str>,
+    ) {
+        let (bc, tc) = if self.is_vibrant() {
+            (Color::LightCyan, Color::LightCyan)
+        } else {
+            (Color::Cyan, Color::LightBlue)
+        };
+        let title = format!(" My Shares ({}) ", shares.len());
+
+        let outer = if self.config.show_help_bar {
+            Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(1), Constraint::Length(1)])
+                .split(f.area())
+        } else {
+            Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(1)])
+                .split(f.area())
+        };
+        let list_area = outer[0];
+
+        let mut lines = vec![Line::from("")];
+
+        if shares.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "  No shares found.",
+                Style::default().fg(Color::DarkGray),
+            )));
+            lines.push(Line::from(""));
+            lines.push(Self::hint_line(&[("r", "refresh"), ("Esc", "back")]));
+        } else {
+            let max_visible = list_area.height.saturating_sub(5) as usize;
+            let scroll_offset = if selected >= max_visible {
+                selected - max_visible + 1
+            } else {
+                0
+            };
+            let url_max = list_area.width.saturating_sub(6) as usize;
+            let title_max = (list_area.width / 2).saturating_sub(4) as usize;
+
+            for (i, share) in shares.iter().enumerate().skip(scroll_offset).take(max_visible) {
+                let is_sel = i == selected;
+                let prefix = if is_sel { " \u{203a} " } else { "   " };
+                let name_style = if is_sel {
+                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::White)
+                };
+                let expiry = if share.expiration_days == "0" || share.expiration_days.is_empty() {
+                    "permanent".to_string()
+                } else {
+                    format!("{}d", share.expiration_days)
+                };
+                let date = &share.create_time;
+                let date_short = date.get(..10).unwrap_or(date.as_str());
+                let meta = format!(
+                    "  views:{} saves:{}  {}  {}",
+                    share.view_count, share.restore_count, expiry, date_short
+                );
+                lines.push(Line::from(vec![
+                    Span::styled(prefix, name_style),
+                    Span::styled(truncate_name(&share.title, title_max), name_style),
+                    Span::styled(meta, Style::default().fg(Color::DarkGray)),
+                ]));
+                lines.push(Line::from(vec![
+                    Span::raw("     "),
+                    Span::styled(
+                        truncate_name(&share.share_url, url_max),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                ]));
+            }
+
+            let remaining = shares.len().saturating_sub(scroll_offset + max_visible);
+            if remaining > 0 {
+                lines.push(Line::from(Span::styled(
+                    format!("   ... and {} more", remaining),
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
+
+            lines.push(Line::from(""));
+            if let Some(_) = confirm_delete {
+                lines.push(Line::from(vec![
+                    Span::styled("  Delete this share? ", Style::default().fg(Color::Red)),
+                    Span::styled("y/Enter = yes  ", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                    Span::styled("n/Esc = cancel", Style::default().fg(Color::DarkGray)),
+                ]));
+            } else {
+                lines.push(Self::hint_line(&[
+                    ("j/k", "nav"),
+                    ("y", "copy URL"),
+                    ("d", "delete"),
+                    ("r", "refresh"),
+                    ("Esc", "back"),
+                ]));
+            }
+        }
+
+        let p = Paragraph::new(Text::from(lines)).block(
+            self.styled_block()
+                .title(title)
+                .title_style(Style::default().fg(tc))
+                .border_style(Style::default().fg(bc)),
+        );
+        f.render_widget(p, list_area);
+
+        if self.config.show_help_bar {
+            let pairs = self.help_pairs();
+            let mut spans = vec![Span::raw(" ")];
+            spans.extend(Self::styled_help_spans(&pairs));
+            f.render_widget(Paragraph::new(Line::from(spans)), outer[1]);
+        }
     }
 }
 
