@@ -395,10 +395,16 @@ impl App {
                 selected,
                 confirm_delete,
             } => {
+                self.draw_my_shares_view(f, shares, *selected, confirm_delete.as_deref());
                 if self.loading {
                     self.draw_info_loading_overlay(f);
-                } else {
-                    self.draw_my_shares_view(f, shares, *selected, confirm_delete.as_deref());
+                }
+                if self.show_logs_overlay {
+                    let log_area = Layout::default()
+                        .direction(Direction::Horizontal)
+                        .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
+                        .split(f.area())[1];
+                    self.draw_log_overlay(f, log_area);
                 }
             }
             InputMode::InfoView { info, image, has_thumbnail } if !self.trash_entries.is_empty() => {

@@ -1638,6 +1638,14 @@ impl App {
                     let client = Arc::clone(&self.client);
                     let tx = self.result_tx.clone();
                     self.loading = true;
+                    // Restore mode before spawning so the view stays visible during load
+                    let owned_shares = std::mem::take(shares);
+                    let sel = *selected;
+                    self.input = InputMode::MySharesView {
+                        shares: owned_shares,
+                        selected: sel,
+                        confirm_delete: None,
+                    };
                     std::thread::spawn(move || {
                         let msg = match client.delete_shares(&[share_id.as_str()]) {
                             Ok(()) => OpResult::MyShares(client.list_shares()),
@@ -1692,10 +1700,26 @@ impl App {
                 if let Some(share) = shares.get(*selected) {
                     let url = share.share_url.clone();
                     match write_clipboard(&url) {
-                        Ok(()) => self.push_log(format!("Copied URL: {url}")),
-                        Err(e) => self.push_log(format!("Clipboard failed: {e:#}")),
+                        Ok(()) => {
+                            self.push_log(format!("Copied: {url}"));
+                            self.show_logs_overlay = true;
+                        }
+                        Err(e) => {
+                            self.push_log(format!("Clipboard failed: {e:#}"));
+                            self.show_logs_overlay = true;
+                        }
                     }
                 }
+                let owned = std::mem::take(shares);
+                let sel = *selected;
+                self.input = InputMode::MySharesView {
+                    shares: owned,
+                    selected: sel,
+                    confirm_delete: None,
+                };
+            }
+            KeyCode::Char('l') => {
+                self.show_logs_overlay = !self.show_logs_overlay;
                 let owned = std::mem::take(shares);
                 let sel = *selected;
                 self.input = InputMode::MySharesView {
