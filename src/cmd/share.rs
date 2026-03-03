@@ -4,17 +4,22 @@ use std::io::Write as _;
 pub fn run(args: &[String]) -> Result<()> {
     if args.is_empty() {
         return Err(anyhow!(
-            "Usage:\n  pikpaktui share [-p] [-d <days>] [-J] [-o <file>] <path...>\n  pikpaktui share -S [-n] [-p <code>] [-t <path>] [-J] <url>"
+            "Usage:\n  pikpaktui share [-p] [-d <days>] [-J] [-o <file>] <path...>\n  pikpaktui share -S [-n] [-p <code>] [-t <path>] [-J] <url>\n  pikpaktui share -l [-J]\n  pikpaktui share -D <share_id...>"
         ));
     }
 
-    // Detect mode from first flag scan
-    let save_mode = args.iter().any(|a| a == "-S" || a == "--save");
+    let list_mode   = args.iter().any(|a| a == "-l" || a == "--list");
+    let delete_mode = args.iter().any(|a| a == "-D" || a == "--delete");
+    let save_mode   = args.iter().any(|a| a == "-S" || a == "--save");
 
-    if save_mode {
-        run_save(&args)
+    if list_mode {
+        run_list(args)
+    } else if delete_mode {
+        run_delete(args)
+    } else if save_mode {
+        run_save(args)
     } else {
-        run_create(&args)
+        run_create(args)
     }
 }
 
@@ -185,5 +190,74 @@ fn run_save(args: &[String]) -> Result<()> {
         println!("Saved {} item(s) to '{}'", info.files.len(), dest_display);
     }
 
+    Ok(())
+}
+
+fn run_list(args: &[String]) -> Result<()> {
+    let json = args.iter().any(|a| a == "-J" || a == "--json");
+
+    let client = super::cli_client()?;
+    let shares = client.list_shares()?;
+
+    if shares.is_empty() {
+        if json {
+            println!("[]");
+        } else {
+            println!("No shares found.");
+        }
+        return Ok(());
+    }
+
+    if json {
+        let out: Vec<_> = shares.iter().map(|s| serde_json::json!({
+            "share_id":      s.share_id,
+            "share_url":     s.share_url,
+            "title":         s.title,
+            "pass_code":     if s.pass_code.is_empty() { None } else { Some(&s.pass_code) },
+            "share_to":      s.share_to,
+            "create_time":   s.create_time,
+            "expiration_days": s.expiration_days.parse::<i64>().unwrap_or(-1),
+            "view_count":    s.view_count.parse::<u64>().unwrap_or(0),
+            "restore_count": s.restore_count.parse::<u64>().unwrap_or(0),
+            "file_num":      s.file_num.parse::<u64>().unwrap_or(0),
+            "share_status":  s.share_status,
+        })).collect();
+        println!("{}", serde_json::to_string_pretty(&out)?);
+        return Ok(());
+    }
+
+    for s in &shares {
+        let expiry = match s.expiration_days.as_str() {
+            "-1" | "" => "permanent".to_string(),
+            d => format!("{d}d"),
+        };
+        let locked = if s.pass_code.is_empty() { "" } else { " 🔒" };
+        let views   = s.view_count.parse::<u64>().unwrap_or(0);
+        let saves   = s.restore_count.parse::<u64>().unwrap_or(0);
+        let date    = super::format_date(&s.create_time);
+        println!(
+            "{} {}{}  [{}]  views:{} saves:{}  {}",
+            s.share_id, s.title, locked, expiry, views, saves, date
+        );
+        println!("  {}", s.share_url);
+    }
+
+    Ok(())
+}
+
+fn run_delete(args: &[String]) -> Result<()> {
+    let ids: Vec<&str> = args
+        .iter()
+        .filter(|a| *a != "-D" && *a != "--delete")
+        .map(|a| a.as_str())
+        .collect();
+
+    if ids.is_empty() {
+        return Err(anyhow!("share -D requires at least one share_id"));
+    }
+
+    let client = super::cli_client()?;
+    client.delete_shares(&ids)?;
+    println!("Deleted {} share(s).", ids.len());
     Ok(())
 }

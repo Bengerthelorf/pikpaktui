@@ -75,7 +75,9 @@ pub fn run() -> Result<()> {
         ("download [-o out] <path>", "Download (-o output, -t dir for batch)"),
         ("upload [-t remote] <local>","Upload (-t remote dir for batch)"),
         ("share [-p] [-d days] [-J] <path...>","Create share link (-p password, -d expiry days)"),
-        ("share -S [-n] [-t path] [-J] <url>","Save share to drive (-n preview only)"),
+        ("share -S [-n] [-p code] [-t path] [-J] <url>","Save share to drive (-n preview only)"),
+        ("share -l [-J]",               "List your own shares"),
+        ("share -D <share_id...>",      "Delete share(s) by ID"),
     ];
     print_commands(transfer_cmds);
     println!();

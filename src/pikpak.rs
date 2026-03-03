@@ -1312,6 +1312,45 @@ impl PikPak {
         response.json().context("invalid create share response")
     }
 
+    pub fn list_shares(&self) -> Result<Vec<MyShare>> {
+        let token = self.access_token()?;
+        let url = self.drive_url("drive/v1/share/list");
+
+        let mut rb = self
+            .http
+            .get(&url)
+            .bearer_auth(&token)
+            .query(&[("limit", "100"), ("thumbnail_size", "SIZE_SMALL")]);
+        rb = self.authed_headers(rb);
+
+        let response = rb.send().context("list shares request failed")?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().unwrap_or_default();
+            return Err(anyhow!("list shares failed ({}): {}", status, sanitize(&body)));
+        }
+        let resp: ShareListResponse = response.json().context("invalid share list json")?;
+        Ok(resp.data)
+    }
+
+    pub fn delete_shares(&self, share_ids: &[&str]) -> Result<()> {
+        let token = self.access_token()?;
+        let url = self.drive_url("drive/v1/share:batchDelete");
+
+        let payload = serde_json::json!({ "ids": share_ids });
+
+        let mut rb = self.http.post(&url).bearer_auth(&token).json(&payload);
+        rb = self.authed_headers(rb);
+
+        let response = rb.send().context("delete shares request failed")?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().unwrap_or_default();
+            return Err(anyhow!("delete shares failed ({}): {}", status, sanitize(&body)));
+        }
+        Ok(())
+    }
+
     fn oss_initiate_multipart(&self, oss: &OssArgs) -> Result<String> {
         let date = httpdate_now();
         let auth = oss_hmac_auth(
@@ -1544,6 +1583,36 @@ struct ResumableParams {
     bucket: Option<String>,
     #[serde(default)]
     key: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ShareListResponse {
+    #[serde(default)]
+    pub data: Vec<MyShare>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MyShare {
+    pub share_id: String,
+    pub share_url: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub pass_code: String,
+    #[serde(default)]
+    pub share_to: String,
+    #[serde(default)]
+    pub create_time: String,
+    #[serde(default)]
+    pub expiration_days: String,
+    #[serde(default)]
+    pub view_count: String,
+    #[serde(default)]
+    pub restore_count: String,
+    #[serde(default)]
+    pub file_num: String,
+    #[serde(default)]
+    pub share_status: String,
 }
 
 #[derive(Debug, Deserialize)]
