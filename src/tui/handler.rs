@@ -28,6 +28,17 @@ enum PathInputKeyResult {
     Cancelled,
 }
 
+enum LocalPathInputResult {
+    Updated,
+    Confirmed(String), // final path value
+    Cancelled,
+}
+
+enum PathInputContext {
+    SingleItem { source: Entry },
+    Cart,
+}
+
 impl App {
     pub(super) fn handle_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> Result<bool> {
         // Help sheet: any key closes it
@@ -961,6 +972,12 @@ impl App {
                     query: String::new(),
                 };
             }
+            KeyCode::Esc => {
+                if self.shares_pending {
+                    self.shares_pending = false;
+                    self.finish_loading();
+                }
+            }
             _ => {}
         }
         Ok(false)
@@ -1050,15 +1067,40 @@ impl App {
         input: &mut PathInput,
         is_move: bool,
     ) {
+        self.handle_generic_path_input_key(code, modifiers, input, is_move, PathInputContext::SingleItem { source });
+    }
+
+    fn handle_generic_path_input_key(
+        &mut self,
+        code: KeyCode,
+        modifiers: KeyModifiers,
+        input: &mut PathInput,
+        is_move: bool,
+        context: PathInputContext,
+    ) {
         match self.apply_path_input_key(code, modifiers, input) {
-            PathInputKeyResult::Updated => self.restore_path_input(source, input, is_move),
-            PathInputKeyResult::Confirmed(target) => {
-                self.execute_move_copy(source, &target, is_move);
-            }
-            PathInputKeyResult::SwitchToPicker => self.init_picker(source, is_move),
+            PathInputKeyResult::Updated => match &context {
+                PathInputContext::SingleItem { source } => self.restore_path_input(source.clone(), input, is_move),
+                PathInputContext::Cart => self.restore_cart_path_input(input, is_move),
+            },
+            PathInputKeyResult::Confirmed(target) => match context {
+                PathInputContext::SingleItem { source } => {
+                    self.execute_move_copy(source, &target, is_move);
+                }
+                PathInputContext::Cart => {
+                    self.execute_cart_move_copy(&target, is_move);
+                }
+            },
+            PathInputKeyResult::SwitchToPicker => match context {
+                PathInputContext::SingleItem { source } => self.init_picker(source, is_move),
+                PathInputContext::Cart => self.init_cart_picker(is_move),
+            },
             PathInputKeyResult::Cancelled => {
                 let op = if is_move { "Move" } else { "Copy" };
                 self.push_log(format!("{} cancelled", op));
+                if matches!(context, PathInputContext::Cart) {
+                    self.input = InputMode::CartView;
+                }
             }
         }
     }
@@ -1181,21 +1223,50 @@ impl App {
         picker: &mut PickerState,
         is_move: bool,
     ) {
+        self.handle_generic_picker_key(code, picker, is_move, PathInputContext::SingleItem { source });
+    }
+
+    fn handle_generic_picker_key(
+        &mut self,
+        code: KeyCode,
+        picker: &mut PickerState,
+        is_move: bool,
+        context: PathInputContext,
+    ) {
         match self.apply_picker_key(code, picker) {
-            PickerKeyResult::Navigated => self.restore_picker(source, picker, is_move),
+            PickerKeyResult::Navigated => match &context {
+                PathInputContext::SingleItem { source } => self.restore_picker(source.clone(), picker, is_move),
+                PathInputContext::Cart => self.restore_cart_picker(picker, is_move),
+            },
             PickerKeyResult::Confirmed(dest_id) => {
                 let dest_path = Self::picker_path_display(picker);
-                self.spawn_move_copy(source, dest_id, dest_path, is_move);
+                match context {
+                    PathInputContext::SingleItem { source } => {
+                        self.spawn_move_copy(source, dest_id, dest_path, is_move);
+                    }
+                    PathInputContext::Cart => {
+                        self.spawn_cart_move_copy(dest_id, dest_path, is_move);
+                    }
+                }
             }
             PickerKeyResult::Cancelled => {
                 let op = if is_move { "Move" } else { "Copy" };
                 self.push_log(format!("{} cancelled", op));
+                if matches!(context, PathInputContext::Cart) {
+                    self.input = InputMode::CartView;
+                }
             }
             PickerKeyResult::ShowHelp => {
                 self.show_help_sheet = true;
-                self.restore_picker(source, picker, is_move);
+                match &context {
+                    PathInputContext::SingleItem { source } => self.restore_picker(source.clone(), picker, is_move),
+                    PathInputContext::Cart => self.restore_cart_picker(picker, is_move),
+                }
             }
-            PickerKeyResult::SwitchToTextInput => self.init_path_input(source, is_move),
+            PickerKeyResult::SwitchToTextInput => match context {
+                PathInputContext::SingleItem { source } => self.init_path_input(source, is_move),
+                PathInputContext::Cart => self.init_cart_path_input(is_move),
+            },
         }
     }
 
@@ -1388,18 +1459,7 @@ impl App {
         input: &mut PathInput,
         is_move: bool,
     ) {
-        match self.apply_path_input_key(code, modifiers, input) {
-            PathInputKeyResult::Updated => self.restore_cart_path_input(input, is_move),
-            PathInputKeyResult::Confirmed(target) => {
-                self.execute_cart_move_copy(&target, is_move);
-            }
-            PathInputKeyResult::SwitchToPicker => self.init_cart_picker(is_move),
-            PathInputKeyResult::Cancelled => {
-                let op = if is_move { "Move" } else { "Copy" };
-                self.push_log(format!("{} cancelled", op));
-                self.input = InputMode::CartView;
-            }
-        }
+        self.handle_generic_path_input_key(code, modifiers, input, is_move, PathInputContext::Cart);
     }
 
     fn restore_cart_path_input(&mut self, input: &mut PathInput, is_move: bool) {
@@ -1444,23 +1504,7 @@ impl App {
         picker: &mut PickerState,
         is_move: bool,
     ) {
-        match self.apply_picker_key(code, picker) {
-            PickerKeyResult::Navigated => self.restore_cart_picker(picker, is_move),
-            PickerKeyResult::Confirmed(dest_id) => {
-                let dest_path = Self::picker_path_display(picker);
-                self.spawn_cart_move_copy(dest_id, dest_path, is_move);
-            }
-            PickerKeyResult::Cancelled => {
-                let op = if is_move { "Move" } else { "Copy" };
-                self.push_log(format!("{} cancelled", op));
-                self.input = InputMode::CartView;
-            }
-            PickerKeyResult::ShowHelp => {
-                self.show_help_sheet = true;
-                self.restore_cart_picker(picker, is_move);
-            }
-            PickerKeyResult::SwitchToTextInput => self.init_cart_path_input(is_move),
-        }
+        self.handle_generic_picker_key(code, picker, is_move, PathInputContext::Cart);
     }
 
     fn restore_cart_picker(&mut self, picker: &mut PickerState, is_move: bool) {
@@ -1775,16 +1819,22 @@ impl App {
         }
     }
 
-    // --- Download Input ---
+    // --- Local path input (shared between download + upload) ---
 
-    fn handle_download_input_key(&mut self, code: KeyCode, input: &mut LocalPathInput) {
+    /// Process a key event on a local-path input field (tab-completion, navigation, typing).
+    /// Returns `Updated` for navigation/typing, `Confirmed(path)` on Enter with no candidate,
+    /// or `Cancelled` on Esc with no candidates open.
+    fn apply_local_path_input_key(
+        code: KeyCode,
+        input: &mut LocalPathInput,
+    ) -> LocalPathInputResult {
         match code {
             KeyCode::Esc => {
                 if !input.candidates.is_empty() {
                     input.clear_candidates();
-                    self.restore_download_input(input);
+                    LocalPathInputResult::Updated
                 } else {
-                    self.input = InputMode::CartView;
+                    LocalPathInputResult::Cancelled
                 }
             }
             KeyCode::Tab => {
@@ -1793,36 +1843,29 @@ impl App {
                 } else {
                     input.navigate_next();
                 }
-                self.restore_download_input(input);
+                LocalPathInputResult::Updated
             }
             KeyCode::BackTab => {
                 if input.candidates.is_empty() {
                     input.open_candidates();
                 }
                 input.navigate_prev();
-                self.restore_download_input(input);
+                LocalPathInputResult::Updated
             }
             KeyCode::Up => {
                 input.navigate_prev();
-                self.restore_download_input(input);
+                LocalPathInputResult::Updated
             }
             KeyCode::Down => {
                 input.navigate_next();
-                self.restore_download_input(input);
+                LocalPathInputResult::Updated
             }
             KeyCode::Enter => {
                 let applied = input.confirm_selected();
                 if applied {
-                    self.restore_download_input(input);
+                    LocalPathInputResult::Updated
                 } else {
-                    let dest = input.value.trim().to_string();
-                    if dest.is_empty() {
-                        self.push_log("No destination path specified".into());
-                        self.restore_download_input(input);
-                    } else {
-                        self.start_cart_download(&dest);
-                        self.input = InputMode::DownloadView;
-                    }
+                    LocalPathInputResult::Confirmed(input.value.trim().to_string())
                 }
             }
             KeyCode::Backspace => {
@@ -1830,144 +1873,101 @@ impl App {
                 if !input.candidates.is_empty() {
                     input.open_candidates();
                 }
-                self.restore_download_input(input);
+                LocalPathInputResult::Updated
             }
             KeyCode::Char(c) => {
                 input.value.push(c);
                 if !input.candidates.is_empty() {
                     input.open_candidates();
                 }
-                self.restore_download_input(input);
+                LocalPathInputResult::Updated
             }
-            _ => {
-                self.restore_download_input(input);
+            _ => LocalPathInputResult::Updated,
+        }
+    }
+
+    // --- Download Input ---
+
+    fn handle_download_input_key(&mut self, code: KeyCode, input: &mut LocalPathInput) {
+        match Self::apply_local_path_input_key(code, input) {
+            LocalPathInputResult::Updated => self.restore_download_input(input),
+            LocalPathInputResult::Confirmed(dest) => {
+                if dest.is_empty() {
+                    self.push_log("No destination path specified".into());
+                    self.restore_download_input(input);
+                } else {
+                    self.start_cart_download(&dest);
+                    self.input = InputMode::DownloadView;
+                }
+            }
+            LocalPathInputResult::Cancelled => {
+                self.input = InputMode::CartView;
             }
         }
     }
 
     fn restore_download_input(&mut self, input: &mut LocalPathInput) {
-        let owned = LocalPathInput {
-            value: std::mem::take(&mut input.value),
-            candidates: std::mem::take(&mut input.candidates),
-            candidate_idx: input.candidate_idx,
-            completion_base: std::mem::take(&mut input.completion_base),
-            include_files: input.include_files,
-        };
+        let owned = std::mem::take(input);
         self.input = InputMode::DownloadInput { input: owned };
     }
 
     fn restore_upload_input(&mut self, input: &mut LocalPathInput) {
-        let owned = LocalPathInput {
-            value: std::mem::take(&mut input.value),
-            candidates: std::mem::take(&mut input.candidates),
-            candidate_idx: input.candidate_idx,
-            completion_base: std::mem::take(&mut input.completion_base),
-            include_files: input.include_files,
-        };
+        let owned = std::mem::take(input);
         self.input = InputMode::UploadInput { input: owned };
     }
 
     fn handle_upload_input_key(&mut self, code: KeyCode, input: &mut LocalPathInput) {
-        match code {
-            KeyCode::Esc => {
-                if !input.candidates.is_empty() {
-                    input.clear_candidates();
+        match Self::apply_local_path_input_key(code, input) {
+            LocalPathInputResult::Updated => self.restore_upload_input(input),
+            LocalPathInputResult::Confirmed(path_str) => {
+                let local_path = std::path::PathBuf::from(&path_str);
+                if !local_path.exists() {
+                    self.push_log(format!("File not found: {}", local_path.display()));
                     self.restore_upload_input(input);
-                } else {
+                } else if local_path.is_dir() {
+                    let folder_id = self.current_folder_id.clone();
+                    let client = Arc::clone(&self.client);
+                    let tx = self.result_tx.clone();
+                    let name = local_path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                    self.loading = true;
+                    self.loading_label = Some(format!("Uploading folder {}…", name));
                     self.input = InputMode::Normal;
-                }
-            }
-            KeyCode::Tab => {
-                if input.candidates.is_empty() {
-                    input.open_candidates();
-                } else {
-                    input.navigate_next();
-                }
-                self.restore_upload_input(input);
-            }
-            KeyCode::BackTab => {
-                if input.candidates.is_empty() {
-                    input.open_candidates();
-                }
-                input.navigate_prev();
-                self.restore_upload_input(input);
-            }
-            KeyCode::Up => {
-                input.navigate_prev();
-                self.restore_upload_input(input);
-            }
-            KeyCode::Down => {
-                input.navigate_next();
-                self.restore_upload_input(input);
-            }
-            KeyCode::Enter => {
-                let applied = input.confirm_selected();
-                if applied {
-                    self.restore_upload_input(input);
-                } else {
-                    let local_path = std::path::PathBuf::from(input.value.trim());
-                    if !local_path.exists() {
-                        self.push_log(format!("File not found: {}", local_path.display()));
-                        self.restore_upload_input(input);
-                    } else if local_path.is_dir() {
-                        let folder_id = self.current_folder_id.clone();
-                        let client = Arc::clone(&self.client);
-                        let tx = self.result_tx.clone();
-                        let name = local_path.file_name().unwrap_or_default().to_string_lossy().to_string();
-                        self.loading = true;
-                        self.loading_label = Some(format!("Uploading folder {}…", name));
-                        self.input = InputMode::Normal;
-                        std::thread::spawn(move || {
-                            let result = client.upload_dir(&folder_id, &local_path).map(|(ok, failed)| {
-                                if failed == 0 {
-                                    format!("Uploaded folder '{}' ({} files)", name, ok)
+                    std::thread::spawn(move || {
+                        let result = client.upload_dir(&folder_id, &local_path).map(|(ok, failed)| {
+                            if failed == 0 {
+                                format!("Uploaded folder '{}' ({} files)", name, ok)
+                            } else {
+                                format!("Uploaded folder '{}' ({} ok, {} failed)", name, ok, failed)
+                            }
+                        });
+                        let _ = tx.send(OpResult::Upload(result));
+                    });
+                } else if local_path.is_file() {
+                    let folder_id = self.current_folder_id.clone();
+                    let client = Arc::clone(&self.client);
+                    let tx = self.result_tx.clone();
+                    let name = local_path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                    self.loading = true;
+                    self.loading_label = Some(format!("Uploading {}…", name));
+                    self.input = InputMode::Normal;
+                    std::thread::spawn(move || {
+                        let result = client.upload_file(Some(&folder_id), &local_path)
+                            .map(|(name, dedup)| {
+                                if dedup {
+                                    format!("Uploaded '{}' (instant, dedup)", name)
                                 } else {
-                                    format!("Uploaded folder '{}' ({} ok, {} failed)", name, ok, failed)
+                                    format!("Uploaded '{}'", name)
                                 }
                             });
-                            let _ = tx.send(OpResult::Upload(result));
-                        });
-                    } else if local_path.is_file() {
-                        let folder_id = self.current_folder_id.clone();
-                        let client = Arc::clone(&self.client);
-                        let tx = self.result_tx.clone();
-                        let name = local_path.file_name().unwrap_or_default().to_string_lossy().to_string();
-                        self.loading = true;
-                        self.loading_label = Some(format!("Uploading {}…", name));
-                        self.input = InputMode::Normal;
-                        std::thread::spawn(move || {
-                            let result = client.upload_file(Some(&folder_id), &local_path)
-                                .map(|(name, dedup)| {
-                                    if dedup {
-                                        format!("Uploaded '{}' (instant, dedup)", name)
-                                    } else {
-                                        format!("Uploaded '{}'", name)
-                                    }
-                                });
-                            let _ = tx.send(OpResult::Upload(result));
-                        });
-                    } else {
-                        self.push_log(format!("Not a file or directory: {}", local_path.display()));
-                        self.restore_upload_input(input);
-                    }
+                        let _ = tx.send(OpResult::Upload(result));
+                    });
+                } else {
+                    self.push_log(format!("Not a file or directory: {}", local_path.display()));
+                    self.restore_upload_input(input);
                 }
             }
-            KeyCode::Backspace => {
-                input.value.pop();
-                if !input.candidates.is_empty() {
-                    input.open_candidates();
-                }
-                self.restore_upload_input(input);
-            }
-            KeyCode::Char(c) => {
-                input.value.push(c);
-                if !input.candidates.is_empty() {
-                    input.open_candidates();
-                }
-                self.restore_upload_input(input);
-            }
-            _ => {
-                self.restore_upload_input(input);
+            LocalPathInputResult::Cancelled => {
+                self.input = InputMode::Normal;
             }
         }
     }

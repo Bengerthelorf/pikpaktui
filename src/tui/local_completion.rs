@@ -8,6 +8,12 @@ pub(super) struct LocalPathInput {
     pub include_files: bool, // false = dirs only (download dest), true = files too (upload)
 }
 
+impl Default for LocalPathInput {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LocalPathInput {
     pub fn new() -> Self {
         let default = dirs::download_dir()

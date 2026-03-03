@@ -5,6 +5,7 @@ mod draw;
 mod handler;
 mod image_render;
 mod local_completion;
+mod widgets;
 
 pub use download_view::{DownloadViewMode, NetworkStats};
 
@@ -319,6 +320,8 @@ struct App {
     // Quota display
     quota_used: Option<u64>,
     quota_limit: Option<u64>,
+    // My Shares deferred loading
+    shares_pending: bool,
 }
 
 impl App {
@@ -376,6 +379,7 @@ impl App {
             loading_label: None,
             quota_used: None,
             quota_limit: None,
+            shares_pending: false,
         };
         app.refresh();
         app.fetch_quota();
@@ -452,6 +456,7 @@ impl App {
             loading_label: None,
             quota_used: None,
             quota_limit: None,
+            shares_pending: false,
         }
     }
 
@@ -809,19 +814,23 @@ impl App {
                 }
                 OpResult::MyShares(Ok(shares)) => {
                     self.finish_loading();
-                    let selected = if let InputMode::MySharesView { selected, .. } = &self.input {
-                        (*selected).min(shares.len().saturating_sub(1))
-                    } else {
-                        0
-                    };
-                    self.input = InputMode::MySharesView {
-                        shares,
-                        selected,
-                        confirm_delete: None,
-                    };
+                    if self.shares_pending || matches!(self.input, InputMode::MySharesView { .. }) {
+                        self.shares_pending = false;
+                        let selected = if let InputMode::MySharesView { selected, .. } = &self.input {
+                            (*selected).min(shares.len().saturating_sub(1))
+                        } else {
+                            0
+                        };
+                        self.input = InputMode::MySharesView {
+                            shares,
+                            selected,
+                            confirm_delete: None,
+                        };
+                    }
                 }
                 OpResult::MyShares(Err(e)) => {
                     self.finish_loading();
+                    self.shares_pending = false;
                     self.push_log(format!("Failed to load shares: {e:#}"));
                     if matches!(self.input, InputMode::MySharesView { .. }) {
                         self.input = InputMode::Normal;
@@ -1048,11 +1057,7 @@ impl App {
     }
 
     fn open_my_shares_view(&mut self) {
-        self.input = InputMode::MySharesView {
-            shares: vec![],
-            selected: 0,
-            confirm_delete: None,
-        };
+        self.shares_pending = true;
         self.loading = true;
         self.loading_label = Some("Loading shares...".into());
         let client = Arc::clone(&self.client);

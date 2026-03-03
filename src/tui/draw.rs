@@ -13,6 +13,7 @@ use crate::theme;
 use super::completion::PathInput;
 use super::image_render::{center_image_rect, render_image_to_colored_lines, render_image_to_grayscale_lines, upscale_for_rect};
 use super::local_completion::LocalPathInput;
+use super::widgets;
 use super::{App, InputMode, LoginField, PickerState, PreviewState, SPINNER_FRAMES, centered_rect, format_size, truncate_name};
 
 impl App {
@@ -20,6 +21,11 @@ impl App {
     /// Used to suppress terminal-image-protocol rendering so that iTerm2 / Kitty
     /// don't leave stale image data under the overlay.
     fn has_overlay(&self) -> bool {
+        if matches!(self.input, InputMode::DownloadView)
+            && self.download_view_mode == super::DownloadViewMode::Collapsed
+        {
+            return true;
+        }
         !matches!(
             self.input,
             InputMode::Normal
@@ -45,26 +51,12 @@ impl App {
         };
 
         if expanded {
-            let outer = if self.config.show_help_bar {
-                Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([Constraint::Min(1), Constraint::Length(1)])
-                    .split(f.area())
-            } else {
-                Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([Constraint::Min(1)])
-                    .split(f.area())
-            };
-            let list_area = outer[0];
+            let (list_area, help_bar_area) = self.layout_with_help_bar(f.area());
 
             if entries.is_empty() {
                 let lines = vec![
                     Line::from(""),
-                    Line::from(Span::styled(
-                        "  Trash is empty.",
-                        Style::default().fg(Color::DarkGray),
-                    )),
+                    widgets::empty_state_line("Trash is empty."),
                 ];
                 let p = Paragraph::new(Text::from(lines)).block(
                     self.styled_block()
@@ -76,11 +68,7 @@ impl App {
             } else {
                 let mut lines = vec![Line::from("")];
                 let max_visible = list_area.height.saturating_sub(4) as usize;
-                let scroll_offset = if selected >= max_visible {
-                    selected - max_visible + 1
-                } else {
-                    0
-                };
+                let scroll_offset = widgets::scroll_offset(selected, max_visible);
                 let name_max = list_area.width.saturating_sub(20) as usize;
 
                 for (i, entry) in entries.iter().enumerate().skip(scroll_offset).take(max_visible) {
@@ -110,13 +98,7 @@ impl App {
                     ]));
                 }
 
-                let remaining = entries.len().saturating_sub(scroll_offset + max_visible);
-                if remaining > 0 {
-                    lines.push(Line::from(Span::styled(
-                        format!("   ... and {} more", remaining),
-                        Style::default().fg(Color::DarkGray),
-                    )));
-                }
+                widgets::push_remaining_indicator(&mut lines, entries.len(), scroll_offset, max_visible);
 
                 let p = Paragraph::new(Text::from(lines)).block(
                     self.styled_block()
@@ -127,29 +109,22 @@ impl App {
                 f.render_widget(p, list_area);
             }
 
-            if self.config.show_help_bar {
+            if let Some(bar_area) = help_bar_area {
                 let pairs = self.help_pairs();
                 let mut spans = vec![Span::raw(" ")];
                 spans.extend(Self::styled_help_spans(&pairs));
                 let bar = Paragraph::new(Line::from(spans));
-                f.render_widget(bar, outer[1]);
+                f.render_widget(bar, bar_area);
             }
         } else {
-            let visible = entries.len().min(15);
-            let total_lines = 2 + visible.max(1) + 2;
-            let pct = ((total_lines as u16 * 100) / f.area().height.max(1))
-                .max(25)
-                .min(75);
+            let pct = widgets::dynamic_overlay_height(entries.len(), 15, f.area().height, 25, 75);
             let area = centered_rect(75, pct, f.area());
             clear_overlay_area(f, area);
 
             if entries.is_empty() {
                 let mut lines = vec![
                     Line::from(""),
-                    Line::from(Span::styled(
-                        "  Trash is empty.",
-                        Style::default().fg(Color::DarkGray),
-                    )),
+                    widgets::empty_state_line("Trash is empty."),
                 ];
                 lines.push(Line::from(""));
                 let hints = vec![("r", "refresh"), ("Esc", "close")];
@@ -167,11 +142,7 @@ impl App {
             } else {
                 let mut lines = vec![Line::from("")];
                 let max_visible = 15;
-                let scroll_offset = if selected >= max_visible {
-                    selected - max_visible + 1
-                } else {
-                    0
-                };
+                let scroll_offset = widgets::scroll_offset(selected, max_visible);
 
                 for (i, entry) in entries.iter().enumerate().skip(scroll_offset).take(max_visible) {
                     let is_sel = i == selected;
@@ -200,13 +171,7 @@ impl App {
                     ]));
                 }
 
-                let remaining = entries.len().saturating_sub(scroll_offset + max_visible);
-                if remaining > 0 {
-                    lines.push(Line::from(Span::styled(
-                        format!("   ... and {} more", remaining),
-                        Style::default().fg(Color::DarkGray),
-                    )));
-                }
+                widgets::push_remaining_indicator(&mut lines, entries.len(), scroll_offset, max_visible);
 
                 lines.push(Line::from(""));
                 let hints = vec![
@@ -377,7 +342,14 @@ impl App {
             InputMode::CartMovePicker { .. } | InputMode::CartCopyPicker { .. } => {
                 self.draw_cart_picker(f)
             }
-            InputMode::DownloadView => self.draw_download_view(f),
+            InputMode::DownloadView => {
+                if self.download_view_mode == super::DownloadViewMode::Collapsed {
+                    self.draw_main(f);
+                    self.draw_download_collapsed(f);
+                } else {
+                    self.draw_download_expanded(f);
+                }
+            }
             InputMode::TrashView {
                 entries,
                 selected,
@@ -431,6 +403,40 @@ impl App {
 
     pub(super) fn is_vibrant(&self) -> bool {
         self.config.color_scheme == ColorScheme::Vibrant
+    }
+
+    /// Returns `(border, title)` colors for a single base color.
+    /// In vibrant mode, both are the light variant; otherwise both are `base`.
+    fn themed_colors(&self, base: Color) -> (Color, Color) {
+        if self.is_vibrant() {
+            let v = vibrant(base);
+            (v, v)
+        } else {
+            (base, base)
+        }
+    }
+
+    /// Returns `(border, title)` colors for distinct base colors.
+    /// In vibrant mode, each is mapped to its light variant.
+    fn themed_colors_pair(&self, border: Color, title: Color) -> (Color, Color) {
+        if self.is_vibrant() {
+            (vibrant(border), vibrant(title))
+        } else {
+            (border, title)
+        }
+    }
+
+    /// Split the area into a main content region and an optional help bar row.
+    fn layout_with_help_bar(&self, area: Rect) -> (Rect, Option<Rect>) {
+        if self.config.show_help_bar {
+            let outer = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(1), Constraint::Length(1)])
+                .split(area);
+            (outer[0], Some(outer[1]))
+        } else {
+            (area, None)
+        }
     }
 
     fn prepare_overlay(&self, f: &mut Frame, pct_x: u16, pct_y: u16) -> Rect {
@@ -537,11 +543,7 @@ impl App {
             hint_spans.extend(Self::styled_help_spans(&login_hints));
             lines.push(Line::from(hint_spans));
 
-            let (bc, tc) = if self.is_vibrant() {
-                (Color::LightCyan, Color::LightCyan)
-            } else {
-                (Color::Cyan, Color::Cyan)
-            };
+            let (bc, tc) = self.themed_colors(Color::Cyan);
             let p = Paragraph::new(Text::from(lines))
                 .block(
                     self.styled_block()
@@ -555,19 +557,7 @@ impl App {
     }
 
     fn draw_main(&self, f: &mut Frame) {
-        // Outer vertical split: main area + optional help bar
-        let outer = if self.config.show_help_bar {
-            Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Min(1), Constraint::Length(1)])
-                .split(f.area())
-        } else {
-            Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Min(1)])
-                .split(f.area())
-        };
-        let main_area = outer[0];
+        let (main_area, help_bar_area) = self.layout_with_help_bar(f.area());
 
         if self.config.show_preview {
             // Three-column miller columns: parent 20% | current 40% | preview 40%
@@ -617,8 +607,7 @@ impl App {
         }
 
         // Help bar
-        if self.config.show_help_bar {
-            let bar_area = outer[1];
+        if let Some(bar_area) = help_bar_area {
             let pairs = self.help_pairs();
             let mut help_spans = vec![Span::raw(" ")];
             help_spans.extend(Self::styled_help_spans(&pairs));
@@ -701,6 +690,10 @@ impl App {
         }
 
         self.draw_overlay(f);
+
+        if self.shares_pending && self.loading {
+            self.draw_info_loading_overlay(f);
+        }
 
         if self.show_help_sheet {
             self.draw_help_sheet(f);
@@ -1666,11 +1659,7 @@ impl App {
 
     fn draw_goto_overlay(&self, f: &mut Frame, query: &str, cur: &str) {
         let area = self.prepare_overlay(f, 70, 20);
-        let (bc, tc) = if self.is_vibrant() {
-            (Color::LightCyan, Color::LightCyan)
-        } else {
-            (Color::Cyan, Color::Cyan)
-        };
+        let (bc, tc) = self.themed_colors(Color::Cyan);
         f.render_widget(
             Paragraph::new(vec![
                 Line::from(""),
@@ -1690,66 +1679,56 @@ impl App {
         );
     }
 
-    fn draw_confirm_quit_overlay(&self, f: &mut Frame) {
+    /// Draw a simple confirmation overlay with title, body lines, and base color.
+    fn draw_simple_confirm(&self, f: &mut Frame, title: &str, body: Vec<Line<'_>>, base_color: Color) {
         let area = self.prepare_overlay(f, 60, 20);
-        let (bc, tc) = if self.is_vibrant() {
-            (Color::LightYellow, Color::LightYellow)
-        } else {
-            (Color::Yellow, Color::Yellow)
-        };
+        let (bc, tc) = self.themed_colors(base_color);
+        f.render_widget(
+            Paragraph::new(body).block(self.overlay_block(title, bc, tc)),
+            area,
+        );
+    }
+
+    fn draw_confirm_quit_overlay(&self, f: &mut Frame) {
         let active = self
             .download_state
             .tasks
             .iter()
             .filter(|t| matches!(t.status, super::download::TaskStatus::Downloading | super::download::TaskStatus::Pending))
             .count();
-        f.render_widget(
-            Paragraph::new(vec![
-                Line::from(""),
-                Line::from(vec![
-                    Span::styled("  ", Style::default()),
-                    Span::styled(
-                        format!("{} download(s) still active.", active),
-                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-                    ),
-                ]),
-                Line::from(Span::styled("  Quit anyway?", Style::default().fg(Color::Yellow))),
-                Line::from(""),
-                Self::hint_line(&[("y", "quit"), ("n/Esc", "cancel")]),
-            ])
-            .block(self.overlay_block("Confirm Quit", bc, tc)),
-            area,
-        );
+        self.draw_simple_confirm(f, "Confirm Quit", vec![
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  ", Style::default()),
+                Span::styled(
+                    format!("{} download(s) still active.", active),
+                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                ),
+            ]),
+            Line::from(Span::styled("  Quit anyway?", Style::default().fg(Color::Yellow))),
+            Line::from(""),
+            Self::hint_line(&[("y", "quit"), ("n/Esc", "cancel")]),
+        ], Color::Yellow);
     }
 
     fn draw_confirm_delete_overlay(&self, f: &mut Frame) {
-        let area = self.prepare_overlay(f, 60, 20);
-        let (bc, tc) = if self.is_vibrant() {
-            (Color::LightRed, Color::LightRed)
-        } else {
-            (Color::Red, Color::Red)
-        };
         let name = self
             .current_entry()
             .map(|e| e.name.as_str())
             .unwrap_or("<none>");
-        f.render_widget(
-            Paragraph::new(vec![
-                Line::from(""),
-                Line::from(vec![
-                    Span::styled("  Delete ", Style::default().fg(Color::Red)),
-                    Span::styled(
-                        format!("`{}`", name),
-                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(" to trash?", Style::default().fg(Color::Red)),
-                ]),
-                Line::from(""),
-                Self::hint_line(&[("y", "trash"), ("p", "permanent"), ("n/Esc", "cancel")]),
-            ])
-            .block(self.overlay_block("Confirm Remove", bc, tc)),
-            area,
-        );
+        self.draw_simple_confirm(f, "Confirm Remove", vec![
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  Delete ", Style::default().fg(Color::Red)),
+                Span::styled(
+                    format!("`{}`", name),
+                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(" to trash?", Style::default().fg(Color::Red)),
+            ]),
+            Line::from(""),
+            Self::hint_line(&[("y", "trash"), ("p", "permanent"), ("n/Esc", "cancel")]),
+        ], Color::Red);
     }
 
     fn draw_confirm_permanent_delete_overlay(&self, f: &mut Frame, value: &str, cur: &str) {
@@ -1797,30 +1776,20 @@ impl App {
     }
 
     fn draw_confirm_cart_delete_overlay(&self, f: &mut Frame) {
-        let area = self.prepare_overlay(f, 60, 20);
-        let (bc, tc) = if self.is_vibrant() {
-            (Color::LightRed, Color::LightRed)
-        } else {
-            (Color::Red, Color::Red)
-        };
         let count = self.cart.len();
-        f.render_widget(
-            Paragraph::new(vec![
-                Line::from(""),
-                Line::from(vec![
-                    Span::styled("  Trash ", Style::default().fg(Color::Red)),
-                    Span::styled(
-                        format!("{} item(s)", count),
-                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(" from cart?", Style::default().fg(Color::Red)),
-                ]),
-                Line::from(""),
-                Self::hint_line(&[("y/Enter", "trash"), ("n/Esc", "cancel")]),
-            ])
-            .block(self.overlay_block("Confirm Trash Cart", bc, tc)),
-            area,
-        );
+        self.draw_simple_confirm(f, "Confirm Trash Cart", vec![
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  Trash ", Style::default().fg(Color::Red)),
+                Span::styled(
+                    format!("{} item(s)", count),
+                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(" from cart?", Style::default().fg(Color::Red)),
+            ]),
+            Line::from(""),
+            Self::hint_line(&[("y/Enter", "trash"), ("n/Esc", "cancel")]),
+        ], Color::Red);
     }
 
     fn draw_path_input_overlay(
@@ -1891,11 +1860,7 @@ impl App {
             ("Esc", "cancel"),
         ]));
 
-        let (mc_bc, mc_tc) = if self.is_vibrant() {
-            (Color::LightCyan, Color::LightYellow)
-        } else {
-            (Color::Cyan, Color::Yellow)
-        };
+        let (mc_bc, mc_tc) = self.themed_colors_pair(Color::Cyan, Color::Yellow);
         f.render_widget(
             Paragraph::new(Text::from(lines)).block(self.overlay_block(title, mc_bc, mc_tc)),
             area,
@@ -2098,11 +2063,7 @@ impl App {
             picker_state.select(Some(picker.selected.min(folders.len() - 1)));
         }
 
-        let (pk_bc, pk_tc) = if self.is_vibrant() {
-            (Color::LightYellow, Color::LightYellow)
-        } else {
-            (Color::Yellow, Color::Yellow)
-        };
+        let (pk_bc, pk_tc) = self.themed_colors(Color::Yellow);
         let plist = List::new(picker_items)
             .block(
                 self.styled_block()
@@ -2370,27 +2331,16 @@ impl App {
         );
 
         let max_items = 12;
-        let visible_items = self.cart.len().min(max_items);
-        let total_lines = 2 + visible_items + 2; // padding + items + hint + padding
-        let pct = ((total_lines as u16 * 100) / f.area().height.max(1))
-            .max(25)
-            .min(70);
+        let pct = widgets::dynamic_overlay_height(self.cart.len(), max_items, f.area().height, 25, 70);
         let area = centered_rect(65, pct, f.area());
         clear_overlay_area(f, area);
 
         let mut lines = vec![Line::from("")];
 
         if self.cart.is_empty() {
-            lines.push(Line::from(Span::styled(
-                "  Cart is empty. Press 'a' on files to add them.",
-                Style::default().fg(Color::DarkGray),
-            )));
+            lines.push(widgets::empty_state_line("Cart is empty. Press 'a' on files to add them."));
         } else {
-            let cart_offset = if self.cart_selected >= max_items {
-                self.cart_selected - max_items + 1
-            } else {
-                0
-            };
+            let cart_offset = widgets::scroll_offset(self.cart_selected, max_items);
             for (i, entry) in self.cart.iter().enumerate().skip(cart_offset).take(max_items) {
                 let is_sel = i == self.cart_selected;
                 let prefix = if is_sel { " \u{203a} " } else { "   " };
@@ -2408,13 +2358,7 @@ impl App {
                     Span::styled(format!("  {}", size), Style::default().fg(Color::DarkGray)),
                 ]));
             }
-            let remaining = self.cart.len().saturating_sub(cart_offset + max_items);
-            if remaining > 0 {
-                lines.push(Line::from(Span::styled(
-                    format!("   ... and {} more", remaining),
-                    Style::default().fg(Color::DarkGray),
-                )));
-            }
+            widgets::push_remaining_indicator(&mut lines, self.cart.len(), cart_offset, max_items);
         }
 
         lines.push(Line::from(""));
@@ -2567,11 +2511,7 @@ impl App {
         lines.push(Line::from(""));
         lines.push(Self::hint_line(&[("Tab", "complete"), ("Enter", "upload"), ("Esc", "cancel")]));
 
-        let (ul_bc, ul_tc) = if self.is_vibrant() {
-            (Color::LightYellow, Color::LightYellow)
-        } else {
-            (Color::Yellow, Color::Yellow)
-        };
+        let (ul_bc, ul_tc) = self.themed_colors(Color::Yellow);
         f.render_widget(
             Paragraph::new(Text::from(lines)).block(
                 self.styled_block()
@@ -2622,11 +2562,7 @@ impl App {
         tasks: &[crate::pikpak::OfflineTask],
         selected: usize,
     ) {
-        let visible = tasks.len().min(15);
-        let total_lines = 2 + visible.max(1) + 2; // padding + items + hint + padding
-        let pct = ((total_lines as u16 * 100) / f.area().height.max(1))
-            .max(25)
-            .min(75);
+        let pct = widgets::dynamic_overlay_height(tasks.len(), 15, f.area().height, 25, 75);
         let area = centered_rect(75, pct, f.area());
         clear_overlay_area(f, area);
 
@@ -2642,10 +2578,7 @@ impl App {
             let hints = self.help_pairs();
             let lines = vec![
                 Line::from(""),
-                Line::from(Span::styled(
-                    "  No offline tasks. Press 'o' to add a URL.",
-                    Style::default().fg(Color::DarkGray),
-                )),
+                widgets::empty_state_line("No offline tasks. Press 'o' to add a URL."),
                 Line::from(""),
                 Self::hint_line(&hints),
             ];
@@ -2657,11 +2590,7 @@ impl App {
             let mut lines = vec![Line::from("")];
 
             let max_visible = 15;
-            let task_offset = if selected >= max_visible {
-                selected - max_visible + 1
-            } else {
-                0
-            };
+            let task_offset = widgets::scroll_offset(selected, max_visible);
             for (i, task) in tasks.iter().enumerate().skip(task_offset).take(max_visible) {
                 let is_sel = i == selected;
                 let prefix = if is_sel { " \u{203a} " } else { "   " };
@@ -2711,13 +2640,7 @@ impl App {
                 lines.push(Line::from(spans));
             }
 
-            let remaining = tasks.len().saturating_sub(task_offset + max_visible);
-            if remaining > 0 {
-                lines.push(Line::from(Span::styled(
-                    format!("   ... and {} more", remaining),
-                    Style::default().fg(Color::DarkGray),
-                )));
-            }
+            widgets::push_remaining_indicator(&mut lines, tasks.len(), task_offset, max_visible);
 
             lines.push(Line::from(""));
             let hints = self.help_pairs();
@@ -2734,11 +2657,7 @@ impl App {
         let area = self.prepare_overlay(f, 45, 20);
 
         let spinner = SPINNER_FRAMES[self.spinner_idx];
-        let (in_bc, in_tc) = if self.is_vibrant() {
-            (Color::LightCyan, Color::LightCyan)
-        } else {
-            (Color::Cyan, Color::Cyan)
-        };
+        let (in_bc, in_tc) = self.themed_colors(Color::Cyan);
 
         let label = self.loading_label.as_deref().unwrap_or("Loading...");
         let title = self
@@ -2895,11 +2814,7 @@ impl App {
             Style::default().fg(Color::DarkGray),
         )));
 
-        let (in_bc, in_tc) = if self.is_vibrant() {
-            (Color::LightCyan, Color::LightCyan)
-        } else {
-            (Color::Cyan, Color::Cyan)
-        };
+        let (in_bc, in_tc) = self.themed_colors(Color::Cyan);
 
         let title = format!(" \u{2139} Info: {} ", truncate_name(&info.name, 30));
         let title_style = Style::default()
@@ -3088,11 +3003,7 @@ impl App {
             Style::default().fg(Color::DarkGray),
         )));
 
-        let (in_bc, in_tc) = if self.is_vibrant() {
-            (Color::LightCyan, Color::LightCyan)
-        } else {
-            (Color::Cyan, Color::Cyan)
-        };
+        let (in_bc, in_tc) = self.themed_colors(Color::Cyan);
         let p = Paragraph::new(Text::from(lines)).block(
             self.styled_block()
                 .title(format!(" {} ", truncate_name(name, 40)))
@@ -3146,11 +3057,7 @@ impl App {
             Style::default().fg(Color::DarkGray),
         )));
 
-        let (in_bc, in_tc) = if self.is_vibrant() {
-            (Color::LightCyan, Color::LightCyan)
-        } else {
-            (Color::Cyan, Color::Cyan)
-        };
+        let (in_bc, in_tc) = self.themed_colors(Color::Cyan);
         let title = format!(" {} ({}) ", truncate_name(name, 25), entries.len());
         let p = Paragraph::new(Text::from(lines)).block(
             self.styled_block()
@@ -3716,26 +3623,12 @@ impl App {
         };
 
         // Outer: content + optional help bar
-        let outer = if self.config.show_help_bar {
-            Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Min(1), Constraint::Length(1)])
-                .split(f.area())
-        } else {
-            Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Min(1)])
-                .split(f.area())
-        };
-        let main_area = outer[0];
+        let (main_area, help_bar_area) = self.layout_with_help_bar(f.area());
 
         if shares.is_empty() {
             let lines = vec![
                 Line::from(""),
-                Line::from(Span::styled(
-                    "  No shares found.",
-                    Style::default().fg(Color::DarkGray),
-                )),
+                widgets::empty_state_line("No shares found."),
                 Line::from(""),
                 Self::hint_line(&[("r", "refresh"), ("Esc", "back")]),
             ];
@@ -3765,7 +3658,7 @@ impl App {
             // usable rows: borders(2) + leading blank(1) + confirm/nothing(1) = subtract 4
             // but we removed the inner hint line, so just borders + blank
             let usable = list_area.height.saturating_sub(3) as usize;
-            let scroll_offset = if selected >= usable { selected - usable + 1 } else { 0 };
+            let scroll_offset = widgets::scroll_offset(selected, usable);
 
             let mut list_lines = vec![Line::from("")];
             for (i, share) in shares.iter().enumerate().skip(scroll_offset).take(usable) {
@@ -3843,11 +3736,11 @@ impl App {
             );
         }
 
-        if self.config.show_help_bar {
+        if let Some(bar_area) = help_bar_area {
             let pairs = self.help_pairs();
             let mut spans = vec![Span::raw(" ")];
             spans.extend(Self::styled_help_spans(&pairs));
-            f.render_widget(Paragraph::new(Line::from(spans)), outer[1]);
+            f.render_widget(Paragraph::new(Line::from(spans)), bar_area);
         }
     }
 }
@@ -3959,7 +3852,7 @@ fn share_detail_lines(share: &crate::pikpak::MyShare, width: u16) -> Vec<Line<'s
     lines
 }
 
-fn clear_overlay_area(f: &mut Frame, area: ratatui::layout::Rect) {
+pub(super) fn clear_overlay_area(f: &mut Frame, area: ratatui::layout::Rect) {
     let full = f.area();
     let extended = ratatui::layout::Rect {
         x: area.x.saturating_sub(1),
@@ -4139,5 +4032,18 @@ fn warn_triangle_lines() -> Vec<Line<'static>> {
             w,
         )),
     ]
+}
+
+/// Map a base color to its vibrant (light) variant.
+fn vibrant(c: Color) -> Color {
+    match c {
+        Color::Red => Color::LightRed,
+        Color::Green => Color::LightGreen,
+        Color::Yellow => Color::LightYellow,
+        Color::Blue => Color::LightBlue,
+        Color::Cyan => Color::LightCyan,
+        Color::Magenta => Color::LightMagenta,
+        other => other,
+    }
 }
 

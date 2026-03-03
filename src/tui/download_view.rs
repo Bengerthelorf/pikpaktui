@@ -2,7 +2,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{List, ListItem, ListState, Paragraph};
 use std::collections::VecDeque;
 
 use super::download::TaskStatus;
@@ -52,18 +52,8 @@ impl NetworkStats {
 }
 
 impl App {
-    /// Draw download view based on mode
-    pub(super) fn draw_download_view(&self, f: &mut Frame) {
-        match self.download_view_mode {
-            DownloadViewMode::Collapsed => self.draw_download_collapsed(f),
-            DownloadViewMode::Expanded => self.draw_download_expanded(f),
-        }
-    }
-
     /// Collapsed view: Cart-like centered popup with summary
-    fn draw_download_collapsed(&self, f: &mut Frame) {
-        let bg = Block::default().style(Style::default().bg(Color::Black));
-        f.render_widget(bg, f.area());
+    pub(super) fn draw_download_collapsed(&self, f: &mut Frame) {
 
         let ds = &self.download_state;
         let done = ds.done_count();
@@ -92,7 +82,7 @@ impl App {
 
         // Center area size
         let area = centered_rect(70, 50, f.area());
-        f.render_widget(Clear, area);
+        super::draw::clear_overlay_area(f, area);
 
         // Build content
         let mut lines = vec![
@@ -220,7 +210,7 @@ impl App {
     }
 
     /// Expanded view: Full-screen with list on left, activity/details on right
-    fn draw_download_expanded(&self, f: &mut Frame) {
+    pub(super) fn draw_download_expanded(&self, f: &mut Frame) {
         let outer = if self.config.show_help_bar {
             Layout::default()
                 .direction(Direction::Vertical)
