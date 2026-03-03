@@ -74,9 +74,8 @@ pub fn run() -> Result<()> {
     let transfer_cmds: &[(&str, &str)] = &[
         ("download [-o out] <path>", "Download (-o output, -t dir for batch)"),
         ("upload [-t remote] <local>","Upload (-t remote dir for batch)"),
-        ("share <path> [-o file]",   "Share file(s) as PikPak links"),
-        ("share-info [-p code] [-J] <url>","Preview share contents (no save)"),
-        ("save-share <url> [-p code] [-J] [--to path]","Save shared link to your drive"),
+        ("share [-p] [-d days] [-J] <path...>","Create share link (-p password, -d expiry days)"),
+        ("share -S [-n] [-t path] [-J] <url>","Save share to drive (-n preview only)"),
     ];
     print_commands(transfer_cmds);
     println!();

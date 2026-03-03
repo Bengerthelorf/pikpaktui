@@ -1284,6 +1284,34 @@ impl PikPak {
         Ok(())
     }
 
+    pub fn create_share(
+        &self,
+        file_ids: &[&str],
+        need_password: bool,
+        expiration_days: i64,
+    ) -> Result<CreateShareResponse> {
+        let token = self.access_token()?;
+        let url = self.drive_url("drive/v1/share");
+
+        let payload = serde_json::json!({
+            "file_ids": file_ids,
+            "share_to": if need_password { "encryptedlink" } else { "publiclink" },
+            "expiration_days": expiration_days,
+            "pass_code_option": if need_password { "REQUIRED" } else { "NOT_REQUIRED" },
+        });
+
+        let mut rb = self.http.post(&url).bearer_auth(&token).json(&payload);
+        rb = self.authed_headers(rb);
+
+        let response = rb.send().context("create share request failed")?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().unwrap_or_default();
+            return Err(anyhow!("create share failed ({}): {}", status, sanitize(&body)));
+        }
+        response.json().context("invalid create share response")
+    }
+
     fn oss_initiate_multipart(&self, oss: &OssArgs) -> Result<String> {
         let date = httpdate_now();
         let auth = oss_hmac_auth(
@@ -1516,6 +1544,16 @@ struct ResumableParams {
     bucket: Option<String>,
     #[serde(default)]
     key: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateShareResponse {
+    pub share_id: String,
+    pub share_url: String,
+    #[serde(default)]
+    pub pass_code: String,
+    #[serde(default)]
+    pub share_text: String,
 }
 
 #[derive(Debug, Deserialize)]
