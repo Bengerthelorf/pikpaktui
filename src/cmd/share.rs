@@ -232,16 +232,16 @@ fn run_list(args: &[String]) -> Result<()> {
     for s in &shares {
         let is_pw = !s.pass_code.is_empty() || s.share_to.contains("encrypted");
         let (type_str, type_ansi) = if is_pw {
-            ("pw  ", "\x1b[33m")   // yellow
+            ("private  ", "\x1b[33m")   // yellow
         } else {
-            ("pub ", "\x1b[32m")   // green
+            ("public   ", "\x1b[32m")   // green
         };
         let (expiry_str, expiry_ansi) = match s.expiration_days.as_str() {
-            "-1" | "" | "0" => ("perm".to_string(), "\x1b[32m"),
+            "-1" | "" | "0" => ("permanent".to_string(), "\x1b[32m"),
             d => {
                 let n = d.parse::<i64>().unwrap_or(99);
                 let color = if n <= 3 { "\x1b[31m" } else if n <= 7 { "\x1b[33m" } else { "\x1b[2m" };
-                (format!("{:>3}d", n), color)
+                (format!("{} days", n), color)
             }
         };
         let views = s.view_count.parse::<u64>().unwrap_or(0);
@@ -252,7 +252,7 @@ fn run_list(args: &[String]) -> Result<()> {
         let title_padded = format!("{:<width$}", s.title.chars().take(title_w).collect::<String>(), width = title_w);
 
         println!(
-            "\x1b[2m{}\x1b[0m  \x1b[1m{}\x1b[0m  {}{}\x1b[0m  {}{:<4}\x1b[0m  \x1b[2mviews\x1b[0m {:>3}  \x1b[2msaves\x1b[0m {:>3}  \x1b[34m{}\x1b[0m",
+            "\x1b[2m{}\x1b[0m  \x1b[1m{}\x1b[0m  {}{}\x1b[0m  {}{}\x1b[0m  \x1b[2mviews\x1b[0m {:>3}  \x1b[2msaves\x1b[0m {:>3}  \x1b[34m{}\x1b[0m",
             s.share_id, title_padded, type_ansi, type_str, expiry_ansi, expiry_str, views, saves, date
         );
         println!("  \x1b[2;36m{}\x1b[0m", s.share_url);

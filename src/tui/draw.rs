@@ -3758,10 +3758,14 @@ impl App {
 
             // --- Left pane: list ---
             let list_title = format!(" My Shares ({}) ", shares.len());
-            // usable rows inside the block (minus top/bottom borders + blank + hint rows)
-            let usable = list_area.height.saturating_sub(4) as usize;
+            // badge section: "  public  permanent" = 2+7+2+9 = 20 chars; prefix = 3
+            const BADGE_W: u16 = 20;
+            const PREFIX_W: u16 = 3;
+            let name_col = list_area.width.saturating_sub(PREFIX_W + BADGE_W + 2) as usize;
+            // usable rows: borders(2) + leading blank(1) + confirm/nothing(1) = subtract 4
+            // but we removed the inner hint line, so just borders + blank
+            let usable = list_area.height.saturating_sub(3) as usize;
             let scroll_offset = if selected >= usable { selected - usable + 1 } else { 0 };
-            let name_max = list_area.width.saturating_sub(12) as usize;
 
             let mut list_lines = vec![Line::from("")];
             for (i, share) in shares.iter().enumerate().skip(scroll_offset).take(usable) {
@@ -3774,16 +3778,21 @@ impl App {
                 };
                 let is_pw = share_is_password(share);
                 let (type_str, type_color) = if is_pw {
-                    ("pw  ", Color::Yellow)
+                    ("private  ", Color::Yellow)
                 } else {
-                    ("pub ", Color::Green)
+                    ("public   ", Color::Green)
                 };
-                let expiry_str = share_expiry_short(&share.expiration_days);
+                let expiry_str = share_expiry_label(&share.expiration_days);
                 let expiry_color = share_expiry_color(&share.expiration_days);
+
+                // Pad title so badges start at a fixed column
+                let title = truncate_name(&share.title, name_col);
+                let pad = " ".repeat(name_col.saturating_sub(title.chars().count()) + 2);
 
                 list_lines.push(Line::from(vec![
                     Span::styled(prefix, name_style),
-                    Span::styled(truncate_name(&share.title, name_max), name_style),
+                    Span::styled(title, name_style),
+                    Span::styled(pad, Style::default()),
                     Span::styled(type_str, Style::default().fg(type_color)),
                     Span::styled(expiry_str, Style::default().fg(expiry_color)),
                 ]));
@@ -3797,23 +3806,15 @@ impl App {
                 )));
             }
 
-            list_lines.push(Line::from(""));
+            // Confirm-delete prompt (only shown when active; no inner hint bar otherwise)
             if confirm_delete.is_some() {
+                list_lines.push(Line::from(""));
                 list_lines.push(Line::from(vec![
                     Span::styled("  Delete? ", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
                     Span::styled("y", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
                     Span::styled(" yes  ", Style::default().fg(Color::DarkGray)),
                     Span::styled("n", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
                     Span::styled("/Esc no", Style::default().fg(Color::DarkGray)),
-                ]));
-            } else {
-                list_lines.push(Self::hint_line(&[
-                    ("j/k", "nav"),
-                    ("y", "copy"),
-                    ("d", "delete"),
-                    ("r", "refresh"),
-                    ("l", "logs"),
-                    ("Esc", "back"),
                 ]));
             }
 
@@ -3855,10 +3856,13 @@ fn share_is_password(share: &crate::pikpak::MyShare) -> bool {
     !share.pass_code.is_empty() || share.share_to.contains("encrypted")
 }
 
-fn share_expiry_short(days: &str) -> String {
+fn share_expiry_label(days: &str) -> String {
     match days {
-        "" | "-1" | "0" => "perm".to_string(),
-        d => format!("{:>3}d", d.parse::<i64>().unwrap_or(0)),
+        "" | "-1" | "0" => "permanent".to_string(),
+        d => {
+            let n = d.parse::<i64>().unwrap_or(0);
+            format!("{} days", n)
+        }
     }
 }
 
@@ -3879,13 +3883,10 @@ fn share_detail_lines(share: &crate::pikpak::MyShare, width: u16) -> Vec<Line<'s
     let url_max = width.saturating_sub(14) as usize;
 
     let is_pw = share_is_password(share);
-    let type_str = if is_pw { "Password protected" } else { "Public" }.to_string();
+    let type_str = if is_pw { "private" } else { "public" }.to_string();
     let type_color = if is_pw { Color::Yellow } else { Color::Green };
 
-    let expiry_str = match share.expiration_days.as_str() {
-        "" | "-1" | "0" => "Permanent".to_string(),
-        d => format!("{} days", d),
-    };
+    let expiry_str = share_expiry_label(&share.expiration_days);
     let expiry_color = share_expiry_color(&share.expiration_days);
 
     let date = share.create_time.get(..10).unwrap_or(share.create_time.as_str()).to_string();
