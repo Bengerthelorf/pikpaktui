@@ -329,6 +329,22 @@ impl App {
                 self.handle_trash_view_key(code, &mut entries, &mut selected, expanded);
                 Ok(false)
             }
+            InputMode::SharePrompt => {
+                self.handle_share_prompt_key(code);
+                Ok(false)
+            }
+            InputMode::ShareCreatedView { mut shares } => {
+                self.handle_share_created_view_key(code, modifiers, &mut shares);
+                Ok(false)
+            }
+            InputMode::MySharesView {
+                mut shares,
+                mut selected,
+                mut confirm_delete,
+            } => {
+                self.handle_my_shares_key(code, modifiers, &mut shares, &mut selected, &mut confirm_delete);
+                Ok(false)
+            }
             InputMode::ConfirmPlay { name, url } => {
                 match code {
                     KeyCode::Enter | KeyCode::Char('y') => {
@@ -733,18 +749,16 @@ impl App {
                 self.show_help_sheet = true;
             }
             KeyCode::Char('a') => {
-                // Toggle current file in/out of cart
+                // Toggle current entry (file or folder) in/out of cart
                 if let Some(entry) = self.current_entry().cloned() {
-                    if entry.kind == EntryKind::File {
-                        if self.cart_ids.contains(&entry.id) {
-                            self.cart_ids.remove(&entry.id);
-                            self.cart.retain(|e| e.id != entry.id);
-                            self.push_log(format!("Removed '{}' from cart", entry.name));
-                        } else {
-                            self.cart_ids.insert(entry.id.clone());
-                            self.push_log(format!("Added '{}' to cart", entry.name));
-                            self.cart.push(entry);
-                        }
+                    if self.cart_ids.contains(&entry.id) {
+                        self.cart_ids.remove(&entry.id);
+                        self.cart.retain(|e| e.id != entry.id);
+                        self.push_log(format!("Removed '{}' from cart", entry.name));
+                    } else {
+                        self.cart_ids.insert(entry.id.clone());
+                        self.push_log(format!("Added '{}' to cart", entry.name));
+                        self.cart.push(entry);
                     }
                 }
             }
@@ -753,6 +767,9 @@ impl App {
             }
             KeyCode::Char('D') => {
                 self.input = InputMode::DownloadView;
+            }
+            KeyCode::Char('M') => {
+                self.open_my_shares_view();
             }
             KeyCode::Char('s') => {
                 // Star/unstar current entry
@@ -1331,6 +1348,22 @@ impl App {
                     self.input = InputMode::ConfirmCartDelete;
                 }
             }
+            KeyCode::Char('s') => {
+                if self.cart.is_empty() {
+                    self.push_log("Cart is empty".into());
+                    self.input = InputMode::CartView;
+                } else {
+                    self.input = InputMode::SharePrompt;
+                }
+            }
+            KeyCode::Char('S') => {
+                if self.cart.is_empty() {
+                    self.push_log("Cart is empty".into());
+                    self.input = InputMode::CartView;
+                } else {
+                    self.spawn_create_shares(false);
+                }
+            }
             _ => {
                 self.input = InputMode::CartView;
             }
@@ -1501,6 +1534,222 @@ impl App {
         self.cart.clear();
         self.cart_ids.clear();
         self.cart_selected = 0;
+    }
+
+    // --- Share ---
+
+    fn handle_share_prompt_key(&mut self, code: KeyCode) {
+        match code {
+            KeyCode::Char('p') => {
+                self.spawn_create_shares(false);
+            }
+            KeyCode::Char('P') => {
+                self.spawn_create_shares(true);
+            }
+            _ => {
+                self.input = InputMode::CartView;
+            }
+        }
+    }
+
+    fn handle_share_created_view_key(
+        &mut self,
+        code: KeyCode,
+        modifiers: KeyModifiers,
+        shares: &mut Vec<(String, String, String)>,
+    ) {
+        let ctrl = modifiers.contains(KeyModifiers::CONTROL);
+        match code {
+            KeyCode::Esc if ctrl => {
+                // Close all share cards
+                shares.clear();
+                self.input = InputMode::CartView;
+            }
+            KeyCode::Esc => {
+                // Close topmost card
+                shares.pop();
+                if shares.is_empty() {
+                    self.input = InputMode::CartView;
+                } else {
+                    let owned = std::mem::take(shares);
+                    self.input = InputMode::ShareCreatedView { shares: owned };
+                }
+            }
+            KeyCode::Char('y') => {
+                // Copy URL of topmost card
+                if let Some((_, url, _)) = shares.last() {
+                    match write_clipboard(url) {
+                        Ok(()) => self.push_log(format!("Copied URL: {url}")),
+                        Err(e) => self.push_log(format!("Clipboard failed: {e:#}")),
+                    }
+                }
+                let owned = std::mem::take(shares);
+                self.input = InputMode::ShareCreatedView { shares: owned };
+            }
+            _ => {
+                let owned = std::mem::take(shares);
+                self.input = InputMode::ShareCreatedView { shares: owned };
+            }
+        }
+    }
+
+    fn spawn_create_shares(&mut self, need_password: bool) {
+        if self.cart.is_empty() {
+            self.input = InputMode::CartView;
+            return;
+        }
+        // Switch to ShareCreatedView immediately (results will be pushed as they come in)
+        self.input = InputMode::ShareCreatedView { shares: vec![] };
+        for entry in &self.cart {
+            let client = Arc::clone(&self.client);
+            let tx = self.result_tx.clone();
+            let file_id = entry.id.clone();
+            let title = entry.name.clone();
+            std::thread::spawn(move || {
+                let result = client.create_share(&[file_id.as_str()], need_password, 0);
+                let msg = match result {
+                    Ok(resp) => {
+                        let url = resp.share_url.clone();
+                        let _ = write_clipboard(&url);
+                        OpResult::ShareCreated {
+                            title,
+                            url: resp.share_url,
+                            pass_code: resp.pass_code,
+                        }
+                    }
+                    Err(e) => OpResult::Err(format!("Share failed for '{title}': {e:#}")),
+                };
+                let _ = tx.send(msg);
+            });
+        }
+    }
+
+    fn handle_my_shares_key(
+        &mut self,
+        code: KeyCode,
+        _modifiers: KeyModifiers,
+        shares: &mut Vec<crate::pikpak::MyShare>,
+        selected: &mut usize,
+        confirm_delete: &mut Option<String>,
+    ) {
+        if confirm_delete.is_some() {
+            match code {
+                KeyCode::Char('y') | KeyCode::Enter => {
+                    let share_id = confirm_delete.take().unwrap();
+                    let client = Arc::clone(&self.client);
+                    let tx = self.result_tx.clone();
+                    self.loading = true;
+                    std::thread::spawn(move || {
+                        let msg = match client.delete_shares(&[share_id.as_str()]) {
+                            Ok(()) => OpResult::MyShares(client.list_shares()),
+                            Err(e) => OpResult::Err(format!("Delete failed: {e:#}")),
+                        };
+                        let _ = tx.send(msg);
+                    });
+                }
+                _ => {
+                    *confirm_delete = None;
+                    let owned_shares = std::mem::take(shares);
+                    let sel = *selected;
+                    self.input = InputMode::MySharesView {
+                        shares: owned_shares,
+                        selected: sel,
+                        confirm_delete: None,
+                    };
+                }
+            }
+            return;
+        }
+
+        match code {
+            KeyCode::Esc => {
+                self.input = InputMode::Normal;
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if !shares.is_empty() {
+                    *selected = (*selected + 1).min(shares.len() - 1);
+                }
+                let owned = std::mem::take(shares);
+                let sel = *selected;
+                self.input = InputMode::MySharesView {
+                    shares: owned,
+                    selected: sel,
+                    confirm_delete: None,
+                };
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if *selected > 0 {
+                    *selected -= 1;
+                }
+                let owned = std::mem::take(shares);
+                let sel = *selected;
+                self.input = InputMode::MySharesView {
+                    shares: owned,
+                    selected: sel,
+                    confirm_delete: None,
+                };
+            }
+            KeyCode::Char('y') => {
+                if let Some(share) = shares.get(*selected) {
+                    let url = share.share_url.clone();
+                    match write_clipboard(&url) {
+                        Ok(()) => self.push_log(format!("Copied URL: {url}")),
+                        Err(e) => self.push_log(format!("Clipboard failed: {e:#}")),
+                    }
+                }
+                let owned = std::mem::take(shares);
+                let sel = *selected;
+                self.input = InputMode::MySharesView {
+                    shares: owned,
+                    selected: sel,
+                    confirm_delete: None,
+                };
+            }
+            KeyCode::Char('d') | KeyCode::Char('x') => {
+                if let Some(share) = shares.get(*selected) {
+                    let id = share.share_id.clone();
+                    let owned = std::mem::take(shares);
+                    let sel = *selected;
+                    self.input = InputMode::MySharesView {
+                        shares: owned,
+                        selected: sel,
+                        confirm_delete: Some(id),
+                    };
+                } else {
+                    let owned = std::mem::take(shares);
+                    let sel = *selected;
+                    self.input = InputMode::MySharesView {
+                        shares: owned,
+                        selected: sel,
+                        confirm_delete: None,
+                    };
+                }
+            }
+            KeyCode::Char('r') => {
+                self.loading = true;
+                self.loading_label = Some("Loading shares...".into());
+                let client = Arc::clone(&self.client);
+                let tx = self.result_tx.clone();
+                let sel = *selected;
+                self.input = InputMode::MySharesView {
+                    shares: std::mem::take(shares),
+                    selected: sel,
+                    confirm_delete: None,
+                };
+                std::thread::spawn(move || {
+                    let _ = tx.send(OpResult::MyShares(client.list_shares()));
+                });
+            }
+            _ => {
+                let owned = std::mem::take(shares);
+                let sel = *selected;
+                self.input = InputMode::MySharesView {
+                    shares: owned,
+                    selected: sel,
+                    confirm_delete: None,
+                };
+            }
+        }
     }
 
     // --- Download Input ---
