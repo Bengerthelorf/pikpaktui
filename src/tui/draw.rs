@@ -390,6 +390,17 @@ impl App {
                     self.draw_trash_view(f, entries, *selected, true);
                 }
             }
+            InputMode::MySharesView {
+                shares,
+                selected,
+                confirm_delete,
+            } => {
+                if self.loading {
+                    self.draw_info_loading_overlay(f);
+                } else {
+                    self.draw_my_shares_view(f, shares, *selected, confirm_delete.as_deref());
+                }
+            }
             InputMode::InfoView { info, image, has_thumbnail } if !self.trash_entries.is_empty() => {
                 self.draw_trash_view(
                     f,
@@ -1474,7 +1485,8 @@ impl App {
             | InputMode::CopyPicker { .. }
             | InputMode::CartMovePicker { .. }
             | InputMode::CartCopyPicker { .. }
-            | InputMode::DownloadView => {}
+            | InputMode::DownloadView
+            | InputMode::MySharesView { .. } => {}
 
             InputMode::MoveInput { input, .. } => {
                 self.draw_path_input_overlay(f, "Move", "Move to path", input, cur);
@@ -1598,17 +1610,6 @@ impl App {
             InputMode::ShareCreatedView { shares } => {
                 self.draw_cart_overlay(f);
                 self.draw_share_created_view(f, shares);
-            }
-            InputMode::MySharesView {
-                shares,
-                selected,
-                confirm_delete,
-            } => {
-                if self.loading {
-                    self.draw_info_loading_overlay(f);
-                } else {
-                    self.draw_my_shares_view(f, shares, *selected, confirm_delete.as_deref());
-                }
             }
         }
     }
@@ -2178,6 +2179,7 @@ impl App {
                         vec![
                             ("D", "Downloads"),
                             ("A", "View cart"),
+                            ("M", "My Shares"),
                             ("o", "Cloud download"),
                             ("O", "Offline tasks"),
                             ("t", "Trash"),
