@@ -78,9 +78,9 @@ fn run_create(args: &[String]) -> Result<()> {
         });
         println!("{}", serde_json::to_string_pretty(&out)?);
     } else {
-        println!("{}", result.share_url);
+        println!("\x1b[1;36m{}\x1b[0m", result.share_url);
         if !result.pass_code.is_empty() {
-            println!("Password: {}", result.pass_code);
+            println!("\x1b[33mPassword:\x1b[0m \x1b[1;33m{}\x1b[0m", result.pass_code);
         }
         if let Some(out_path) = output_file {
             let mut f = std::fs::File::create(out_path)
@@ -226,20 +226,36 @@ fn run_list(args: &[String]) -> Result<()> {
         return Ok(());
     }
 
+    // Compute column widths for alignment
+    let title_w = shares.iter().map(|s| s.title.chars().count()).max().unwrap_or(0).min(40);
+
     for s in &shares {
-        let expiry = match s.expiration_days.as_str() {
-            "-1" | "" => "permanent".to_string(),
-            d => format!("{d}d"),
+        let is_pw = !s.pass_code.is_empty() || s.share_to.contains("encrypted");
+        let (type_str, type_ansi) = if is_pw {
+            ("pw  ", "\x1b[33m")   // yellow
+        } else {
+            ("pub ", "\x1b[32m")   // green
         };
-        let locked = if s.pass_code.is_empty() { "" } else { " 🔒" };
-        let views   = s.view_count.parse::<u64>().unwrap_or(0);
-        let saves   = s.restore_count.parse::<u64>().unwrap_or(0);
-        let date    = super::format_date(&s.create_time);
+        let (expiry_str, expiry_ansi) = match s.expiration_days.as_str() {
+            "-1" | "" | "0" => ("perm".to_string(), "\x1b[32m"),
+            d => {
+                let n = d.parse::<i64>().unwrap_or(99);
+                let color = if n <= 3 { "\x1b[31m" } else if n <= 7 { "\x1b[33m" } else { "\x1b[2m" };
+                (format!("{:>3}d", n), color)
+            }
+        };
+        let views = s.view_count.parse::<u64>().unwrap_or(0);
+        let saves = s.restore_count.parse::<u64>().unwrap_or(0);
+        let date  = super::format_date(&s.create_time);
+
+        // Pad title to align columns
+        let title_padded = format!("{:<width$}", s.title.chars().take(title_w).collect::<String>(), width = title_w);
+
         println!(
-            "{} {}{}  [{}]  views:{} saves:{}  {}",
-            s.share_id, s.title, locked, expiry, views, saves, date
+            "\x1b[2m{}\x1b[0m  \x1b[1m{}\x1b[0m  {}{}\x1b[0m  {}{:<4}\x1b[0m  \x1b[2mviews\x1b[0m {:>3}  \x1b[2msaves\x1b[0m {:>3}  \x1b[34m{}\x1b[0m",
+            s.share_id, title_padded, type_ansi, type_str, expiry_ansi, expiry_str, views, saves, date
         );
-        println!("  {}", s.share_url);
+        println!("  \x1b[2;36m{}\x1b[0m", s.share_url);
     }
 
     Ok(())

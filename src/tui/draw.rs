@@ -3714,8 +3714,8 @@ impl App {
         } else {
             (Color::Cyan, Color::LightBlue)
         };
-        let title = format!(" My Shares ({}) ", shares.len());
 
+        // Outer: content + optional help bar
         let outer = if self.config.show_help_bar {
             Layout::default()
                 .direction(Direction::Vertical)
@@ -3727,28 +3727,44 @@ impl App {
                 .constraints([Constraint::Min(1)])
                 .split(f.area())
         };
-        let list_area = outer[0];
-
-        let mut lines = vec![Line::from("")];
+        let main_area = outer[0];
 
         if shares.is_empty() {
-            lines.push(Line::from(Span::styled(
-                "  No shares found.",
-                Style::default().fg(Color::DarkGray),
-            )));
-            lines.push(Line::from(""));
-            lines.push(Self::hint_line(&[("r", "refresh"), ("Esc", "back")]));
+            let lines = vec![
+                Line::from(""),
+                Line::from(Span::styled(
+                    "  No shares found.",
+                    Style::default().fg(Color::DarkGray),
+                )),
+                Line::from(""),
+                Self::hint_line(&[("r", "refresh"), ("Esc", "back")]),
+            ];
+            f.render_widget(
+                Paragraph::new(Text::from(lines)).block(
+                    self.styled_block()
+                        .title(Span::styled(" My Shares ", Style::default().fg(tc)))
+                        .border_style(Style::default().fg(bc)),
+                ),
+                main_area,
+            );
         } else {
-            let max_visible = list_area.height.saturating_sub(5) as usize;
-            let scroll_offset = if selected >= max_visible {
-                selected - max_visible + 1
-            } else {
-                0
-            };
-            let url_max = list_area.width.saturating_sub(6) as usize;
-            let title_max = (list_area.width / 2).saturating_sub(4) as usize;
+            // Two-pane: list (38%) | detail (62%)
+            let panes = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(38), Constraint::Percentage(62)])
+                .split(main_area);
+            let list_area = panes[0];
+            let detail_area = panes[1];
 
-            for (i, share) in shares.iter().enumerate().skip(scroll_offset).take(max_visible) {
+            // --- Left pane: list ---
+            let list_title = format!(" My Shares ({}) ", shares.len());
+            // usable rows inside the block (minus top/bottom borders + blank + hint rows)
+            let usable = list_area.height.saturating_sub(4) as usize;
+            let scroll_offset = if selected >= usable { selected - usable + 1 } else { 0 };
+            let name_max = list_area.width.saturating_sub(12) as usize;
+
+            let mut list_lines = vec![Line::from("")];
+            for (i, share) in shares.iter().enumerate().skip(scroll_offset).take(usable) {
                 let is_sel = i == selected;
                 let prefix = if is_sel { " \u{203a} " } else { "   " };
                 let name_style = if is_sel {
@@ -3756,64 +3772,75 @@ impl App {
                 } else {
                     Style::default().fg(Color::White)
                 };
-                let expiry = if share.expiration_days == "0" || share.expiration_days.is_empty() {
-                    "permanent".to_string()
+                let is_pw = share_is_password(share);
+                let (type_str, type_color) = if is_pw {
+                    ("pw  ", Color::Yellow)
                 } else {
-                    format!("{}d", share.expiration_days)
+                    ("pub ", Color::Green)
                 };
-                let date = &share.create_time;
-                let date_short = date.get(..10).unwrap_or(date.as_str());
-                let meta = format!(
-                    "  views:{} saves:{}  {}  {}",
-                    share.view_count, share.restore_count, expiry, date_short
-                );
-                lines.push(Line::from(vec![
+                let expiry_str = share_expiry_short(&share.expiration_days);
+                let expiry_color = share_expiry_color(&share.expiration_days);
+
+                list_lines.push(Line::from(vec![
                     Span::styled(prefix, name_style),
-                    Span::styled(truncate_name(&share.title, title_max), name_style),
-                    Span::styled(meta, Style::default().fg(Color::DarkGray)),
-                ]));
-                lines.push(Line::from(vec![
-                    Span::raw("     "),
-                    Span::styled(
-                        truncate_name(&share.share_url, url_max),
-                        Style::default().fg(Color::DarkGray),
-                    ),
+                    Span::styled(truncate_name(&share.title, name_max), name_style),
+                    Span::styled(type_str, Style::default().fg(type_color)),
+                    Span::styled(expiry_str, Style::default().fg(expiry_color)),
                 ]));
             }
 
-            let remaining = shares.len().saturating_sub(scroll_offset + max_visible);
-            if remaining > 0 {
-                lines.push(Line::from(Span::styled(
-                    format!("   ... and {} more", remaining),
+            if shares.len() > scroll_offset + usable {
+                let n = shares.len() - scroll_offset - usable;
+                list_lines.push(Line::from(Span::styled(
+                    format!("  +{} more", n),
                     Style::default().fg(Color::DarkGray),
                 )));
             }
 
-            lines.push(Line::from(""));
-            if let Some(_) = confirm_delete {
-                lines.push(Line::from(vec![
-                    Span::styled("  Delete this share? ", Style::default().fg(Color::Red)),
-                    Span::styled("y/Enter = yes  ", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-                    Span::styled("n/Esc = cancel", Style::default().fg(Color::DarkGray)),
+            list_lines.push(Line::from(""));
+            if confirm_delete.is_some() {
+                list_lines.push(Line::from(vec![
+                    Span::styled("  Delete? ", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+                    Span::styled("y", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                    Span::styled(" yes  ", Style::default().fg(Color::DarkGray)),
+                    Span::styled("n", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                    Span::styled("/Esc no", Style::default().fg(Color::DarkGray)),
                 ]));
             } else {
-                lines.push(Self::hint_line(&[
+                list_lines.push(Self::hint_line(&[
                     ("j/k", "nav"),
-                    ("y", "copy URL"),
+                    ("y", "copy"),
                     ("d", "delete"),
                     ("r", "refresh"),
+                    ("l", "logs"),
                     ("Esc", "back"),
                 ]));
             }
-        }
 
-        let p = Paragraph::new(Text::from(lines)).block(
-            self.styled_block()
-                .title(title)
-                .title_style(Style::default().fg(tc))
-                .border_style(Style::default().fg(bc)),
-        );
-        f.render_widget(p, list_area);
+            f.render_widget(
+                Paragraph::new(Text::from(list_lines)).block(
+                    self.styled_block()
+                        .title(Span::styled(list_title, Style::default().fg(tc)))
+                        .border_style(Style::default().fg(bc)),
+                ),
+                list_area,
+            );
+
+            // --- Right pane: detail ---
+            let detail_lines = if let Some(share) = shares.get(selected) {
+                share_detail_lines(share, detail_area.width)
+            } else {
+                vec![Line::from("")]
+            };
+            f.render_widget(
+                Paragraph::new(Text::from(detail_lines)).block(
+                    self.styled_block()
+                        .title(Span::styled(" Detail ", Style::default().fg(Color::DarkGray)))
+                        .border_style(Style::default().fg(Color::DarkGray)),
+                ),
+                detail_area,
+            );
+        }
 
         if self.config.show_help_bar {
             let pairs = self.help_pairs();
@@ -3822,6 +3849,113 @@ impl App {
             f.render_widget(Paragraph::new(Line::from(spans)), outer[1]);
         }
     }
+}
+
+fn share_is_password(share: &crate::pikpak::MyShare) -> bool {
+    !share.pass_code.is_empty() || share.share_to.contains("encrypted")
+}
+
+fn share_expiry_short(days: &str) -> String {
+    match days {
+        "" | "-1" | "0" => "perm".to_string(),
+        d => format!("{:>3}d", d.parse::<i64>().unwrap_or(0)),
+    }
+}
+
+fn share_expiry_color(days: &str) -> Color {
+    match days {
+        "" | "-1" | "0" => Color::Green,
+        d => match d.parse::<i64>().unwrap_or(99) {
+            n if n <= 3 => Color::Red,
+            n if n <= 7 => Color::Yellow,
+            _ => Color::DarkGray,
+        },
+    }
+}
+
+fn share_detail_lines(share: &crate::pikpak::MyShare, width: u16) -> Vec<Line<'static>> {
+    let label = Style::default().fg(Color::DarkGray);
+    let value = Style::default().fg(Color::White);
+    let url_max = width.saturating_sub(14) as usize;
+
+    let is_pw = share_is_password(share);
+    let type_str = if is_pw { "Password protected" } else { "Public" }.to_string();
+    let type_color = if is_pw { Color::Yellow } else { Color::Green };
+
+    let expiry_str = match share.expiration_days.as_str() {
+        "" | "-1" | "0" => "Permanent".to_string(),
+        d => format!("{} days", d),
+    };
+    let expiry_color = share_expiry_color(&share.expiration_days);
+
+    let date = share.create_time.get(..10).unwrap_or(share.create_time.as_str()).to_string();
+    let views = share.view_count.parse::<u64>().unwrap_or(0);
+    let saves = share.restore_count.parse::<u64>().unwrap_or(0);
+    let files = share.file_num.parse::<u64>().unwrap_or(0);
+
+    let mut lines: Vec<Line<'static>> = vec![Line::from("")];
+
+    // Title
+    lines.push(Line::from(vec![
+        Span::styled("  Title   ", label),
+        Span::styled(share.title.clone(), value.add_modifier(Modifier::BOLD)),
+    ]));
+    lines.push(Line::from(""));
+
+    // URL (full, wraps visually by truncation)
+    lines.push(Line::from(vec![
+        Span::styled("  URL     ", label),
+        Span::styled(
+            truncate_name(&share.share_url, url_max),
+            Style::default().fg(Color::Cyan),
+        ),
+    ]));
+    lines.push(Line::from(""));
+
+    // Type + expiry on one row
+    lines.push(Line::from(vec![
+        Span::styled("  Type    ", label),
+        Span::styled(type_str, Style::default().fg(type_color)),
+        Span::styled("   Expiry  ", label),
+        Span::styled(expiry_str, Style::default().fg(expiry_color)),
+    ]));
+
+    // Password (if set)
+    if is_pw && !share.pass_code.is_empty() {
+        lines.push(Line::from(vec![
+            Span::styled("  Pass    ", label),
+            Span::styled(
+                share.pass_code.clone(),
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            ),
+        ]));
+    }
+
+    // Created
+    lines.push(Line::from(vec![
+        Span::styled("  Created ", label),
+        Span::styled(date, Style::default().fg(Color::Blue)),
+    ]));
+    lines.push(Line::from(""));
+
+    // Stats row
+    let stats = format!(
+        "{}   saves {}   files {}",
+        views, saves, files
+    );
+    lines.push(Line::from(vec![
+        Span::styled("  Views   ", label),
+        Span::styled(stats, value),
+    ]));
+    lines.push(Line::from(""));
+
+    // Share ID (dimmed, for copy/reference)
+    lines.push(Line::from(vec![
+        Span::styled("  ID      ", label),
+        Span::styled(share.share_id.clone(), Style::default().fg(Color::DarkGray)),
+    ]));
+
+    lines
 }
 
 fn clear_overlay_area(f: &mut Frame, area: ratatui::layout::Rect) {
