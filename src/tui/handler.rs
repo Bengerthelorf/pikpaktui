@@ -342,7 +342,7 @@ impl App {
                 mut selected,
                 mut confirm_delete,
             } => {
-                self.handle_my_shares_key(code, modifiers, &mut shares, &mut selected, &mut confirm_delete);
+                self.handle_my_shares_key(code, &mut shares, &mut selected, &mut confirm_delete);
                 Ok(false)
             }
             InputMode::ConfirmPlay { name, url } => {
@@ -1627,7 +1627,6 @@ impl App {
     fn handle_my_shares_key(
         &mut self,
         code: KeyCode,
-        _modifiers: KeyModifiers,
         shares: &mut Vec<crate::pikpak::MyShare>,
         selected: &mut usize,
         confirm_delete: &mut Option<String>,
