@@ -107,6 +107,8 @@ enum OpResult {
     GotoPath(Result<(String, Vec<(String, String)>)>),
     Quota(Result<crate::pikpak::QuotaInfo>),
     Upload(Result<String>),
+    ShareCreated { title: String, url: String, pass_code: String },
+    MyShares(Result<Vec<crate::pikpak::MyShare>>),
 }
 
 #[derive(Default)]
@@ -219,6 +221,16 @@ enum InputMode {
         entries: Vec<Entry>,
         selected: usize,
         expanded: bool,
+    },
+    // Share
+    SharePrompt,
+    ShareCreatedView {
+        shares: Vec<(String, String, String)>, // (title, url, pass_code)
+    },
+    MySharesView {
+        shares: Vec<crate::pikpak::MyShare>,
+        selected: usize,
+        confirm_delete: Option<String>, // share_id pending delete confirmation
     },
     ConfirmQuit,
     GotoPath {
@@ -785,6 +797,36 @@ impl App {
                     self.finish_loading();
                     self.push_log(format!("Upload failed: {e:#}"));
                 }
+                OpResult::ShareCreated { title, url, pass_code } => {
+                    self.push_log(format!("Share created: {url}"));
+                    if let InputMode::ShareCreatedView { ref mut shares } = self.input {
+                        shares.push((title, url, pass_code));
+                    } else {
+                        self.input = InputMode::ShareCreatedView {
+                            shares: vec![(title, url, pass_code)],
+                        };
+                    }
+                }
+                OpResult::MyShares(Ok(shares)) => {
+                    self.finish_loading();
+                    let selected = if let InputMode::MySharesView { selected, .. } = &self.input {
+                        (*selected).min(shares.len().saturating_sub(1))
+                    } else {
+                        0
+                    };
+                    self.input = InputMode::MySharesView {
+                        shares,
+                        selected,
+                        confirm_delete: None,
+                    };
+                }
+                OpResult::MyShares(Err(e)) => {
+                    self.finish_loading();
+                    self.push_log(format!("Failed to load shares: {e:#}"));
+                    if matches!(self.input, InputMode::MySharesView { .. }) {
+                        self.input = InputMode::Normal;
+                    }
+                }
             }
         }
 
@@ -1002,6 +1044,21 @@ impl App {
         let tx = self.result_tx.clone();
         std::thread::spawn(move || {
             let _ = tx.send(OpResult::TrashList(client.ls_trash(200)));
+        });
+    }
+
+    fn open_my_shares_view(&mut self) {
+        self.input = InputMode::MySharesView {
+            shares: vec![],
+            selected: 0,
+            confirm_delete: None,
+        };
+        self.loading = true;
+        self.loading_label = Some("Loading shares...".into());
+        let client = Arc::clone(&self.client);
+        let tx = self.result_tx.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(OpResult::MyShares(client.list_shares()));
         });
     }
 
