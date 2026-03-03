@@ -39,6 +39,7 @@ fn entry() -> Result<()> {
         "download" => cmd::download::run(&args[1..]),
         "upload" => cmd::upload::run(&args[1..]),
         "share" => cmd::share::run(&args[1..]),
+        "share-info" => cmd::share_info::run(&args[1..]),
         "save-share" => cmd::save_share::run(&args[1..]),
         "quota" => cmd::quota::run(&args[1..]),
         "offline" => cmd::offline::run(&args[1..]),

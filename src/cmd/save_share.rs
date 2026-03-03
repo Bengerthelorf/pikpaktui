@@ -11,11 +11,13 @@ pub fn run(args: &[String]) -> Result<()> {
     let mut pass_code = "";
     let mut to_path: Option<&str> = None;
     let mut dry_run = false;
+    let mut json = false;
 
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
             "-n" | "--dry-run" => dry_run = true,
+            "-J" | "--json" => json = true,
             "--pass-code" | "-p" => {
                 i += 1;
                 if i >= args.len() {
@@ -59,16 +61,20 @@ pub fn run(args: &[String]) -> Result<()> {
     };
 
     // Fetch share info
-    println!("Fetching share info for '{}'...", share_id);
+    if !json {
+        println!("Fetching share info for '{}'...", share_id);
+    }
     let info = client.share_info(share_id, pass_code)?;
 
     if info.files.is_empty() {
         return Err(anyhow!("share contains no files"));
     }
 
-    println!("Found {} item(s):", info.files.len());
-    for f in &info.files {
-        println!("  {}", f.name);
+    if !json {
+        println!("Found {} item(s):", info.files.len());
+        for f in &info.files {
+            println!("  {}", f.name);
+        }
     }
 
     if dry_run {
@@ -77,9 +83,23 @@ pub fn run(args: &[String]) -> Result<()> {
     }
 
     let file_ids: Vec<&str> = info.files.iter().map(|f| f.id.as_str()).collect();
-    println!("Saving to '{}'...", dest_display);
+    if !json {
+        println!("Saving to '{}'...", dest_display);
+    }
     client.save_share(share_id, &info.pass_code_token, &file_ids, &to_parent_id)?;
 
-    println!("Saved {} item(s) to '{}'", info.files.len(), dest_display);
+    if json {
+        let out = serde_json::json!({
+            "saved": info.files.len(),
+            "to": dest_display,
+            "files": info.files.iter().map(|f| serde_json::json!({
+                "id": f.id,
+                "name": f.name,
+            })).collect::<Vec<_>>(),
+        });
+        println!("{}", serde_json::to_string_pretty(&out)?);
+    } else {
+        println!("Saved {} item(s) to '{}'", info.files.len(), dest_display);
+    }
     Ok(())
 }
