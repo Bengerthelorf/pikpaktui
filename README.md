@@ -28,10 +28,10 @@ A TUI and CLI client for [PikPak](https://mypikpak.com) cloud storage, written i
 - **Mouse support** — Click to select, double-click to open, scroll wheel navigation
 
 ### CLI
-- **27 subcommands** — `ls`, `mv`, `cp`, `rename`, `rm`, `mkdir`, `info`, `link`, `cat`, `play`, `download`, `upload`, `share`, `save-share`, `offline`, `tasks`, `star`, `unstar`, `starred`, `events`, `trash`, `untrash`, `quota`, `vip`, `completions`, `help`, `version`
+- **26 subcommands** — `ls`, `mv`, `cp`, `rename`, `rm`, `mkdir`, `info`, `link`, `cat`, `play`, `download`, `upload`, `share`, `offline`, `tasks`, `star`, `unstar`, `starred`, `events`, `trash`, `untrash`, `quota`, `vip`, `completions`, `help`, `version`
 - **Colored output** — `ls` with multi-column grid layout (eza-style), `--sort`/`--reverse` flags, Nerd Font icons support
 - **JSON output** — `-J`/`--json` flag on `ls`, `info`, `quota`, `tasks`, `starred`, `trash`, `events` for machine-readable output; pipe to `jq` for scripting
-- **Dry run** — `-n`/`--dry-run` flag on mutating commands (`mv`, `cp`, `rename`, `rm`, `mkdir`, `star`, `unstar`, `untrash`, `download`, `upload`, `tasks retry/delete`, `save-share`) and `--dry-run` on `offline`; resolves paths and prints a plan without making any changes — safe for AI agent use
+- **Dry run** — `-n`/`--dry-run` flag on mutating commands (`mv`, `cp`, `rename`, `rm`, `mkdir`, `star`, `unstar`, `untrash`, `download`, `upload`, `tasks retry/delete`, `share -S`) and `--dry-run` on `offline`; resolves paths and prints a plan without making any changes — safe for AI agent use
 - **Resumable transfer** — Upload: dedup-aware instant upload on hash match, multipart resumable with 10 MB chunks via OSS. Download: HTTP Range resume for interrupted transfers
 - **Shell completions** — Zsh completion with dynamic cloud path completion (like `scp`)
 
@@ -173,10 +173,15 @@ pikpaktui download "/My Pack/folder"                  # Download entire folder r
 pikpaktui download -t ./videos/ /a.mp4 /b.mp4         # Batch download to directory
 pikpaktui upload ./local-file.txt "/My Pack"          # Upload (dedup + resumable)
 pikpaktui upload -t "/My Pack" ./a.txt ./b.txt        # Batch upload to target
-pikpaktui share "/My Pack/file.txt"                   # Print PikPak share links
-pikpaktui share "/My Pack" -o links.txt               # Save folder share links to file
-pikpaktui save-share "https://mypikpak.com/s/XXXX"   # Save shared link to your drive (root)
-pikpaktui save-share "https://mypikpak.com/s/XXXX" --pass-code PO --to "/My Pack"  # With password and destination
+pikpaktui share "/My Pack/file.txt"                   # Create share link
+pikpaktui share -p "/My Pack/file.txt"                # Create encrypted share (auto-generates password)
+pikpaktui share -d 7 "/My Pack/file.txt"              # Share that expires in 7 days
+pikpaktui share -J "/My Pack/file.txt"                # JSON output {share_id, share_url, pass_code}
+pikpaktui share -l                                    # List your own shares (id, title, views, saves)
+pikpaktui share -l -J                                 # JSON output
+pikpaktui share -D <share_id>                         # Delete a share
+pikpaktui share -S "https://mypikpak.com/s/XXXX"     # Save shared link to your drive (root)
+pikpaktui share -S -p PO -t "/My Pack" "https://mypikpak.com/s/XXXX"  # With password and destination
 
 # Offline / cloud download
 pikpaktui offline "magnet:?xt=..."                    # Submit magnet link
@@ -209,7 +214,7 @@ pikpaktui rename -n "/My Pack/old.txt" new.txt        # Show rename plan
 pikpaktui mkdir -n -p "/My Pack/a/b/c"                # Show which folders would be created
 pikpaktui download -n "/My Pack/folder"               # Show folder that would be downloaded
 pikpaktui upload -n ./file.txt "/My Pack"             # Show upload plan
-pikpaktui save-share "https://mypikpak.com/s/XXXX" -n --to "/My Pack"  # Show items that would be saved
+pikpaktui share -S -n "https://mypikpak.com/s/XXXX"                    # Show items that would be saved
 pikpaktui offline "magnet:?xt=..." --dry-run --to "/Downloads"          # Show task that would be submitted
 ```
 
@@ -401,8 +406,7 @@ src/
     mkdir.rs             mkdir — create folder
     download.rs          download — download to local
     upload.rs            upload — resumable dedup-aware upload
-    share.rs             share — generate PikPak:// share links
-    save_share.rs        save-share — save a shared link to your drive
+    share.rs             share — create/list/delete shares; save shared links (-S)
     quota.rs             quota — storage and bandwidth usage
     offline.rs           offline — submit URL/magnet download
     tasks.rs             tasks — manage offline tasks
