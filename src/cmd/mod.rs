@@ -164,6 +164,61 @@ pub fn format_date(iso: &str) -> String {
     }
 }
 
+/// A simple CLI loading spinner on stderr.
+pub struct Spinner {
+    running: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Spinner {
+    pub fn new(msg: &str) -> Self {
+        use std::io::Write;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        // Only show spinner if stderr is a terminal
+        if !std::io::stderr().is_terminal() {
+            return Self {
+                running: Arc::new(AtomicBool::new(false)),
+                handle: None,
+            };
+        }
+
+        let running = Arc::new(AtomicBool::new(true));
+        let r = running.clone();
+        let msg = msg.to_string();
+        let handle = std::thread::spawn(move || {
+            let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+            let mut i = 0;
+            while r.load(Ordering::Relaxed) {
+                eprint!("\r\x1b[36m{}\x1b[0m {}", frames[i % frames.len()], msg);
+                let _ = std::io::stderr().flush();
+                i += 1;
+                std::thread::sleep(std::time::Duration::from_millis(80));
+            }
+            let clear_len = msg.len() + 4;
+            eprint!("\r{}\r", " ".repeat(clear_len));
+            let _ = std::io::stderr().flush();
+        });
+        Self {
+            running,
+            handle: Some(handle),
+        }
+    }
+}
+
+impl Drop for Spinner {
+    fn drop(&mut self) {
+        self.running
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        if let Some(h) = self.handle.take() {
+            let _ = h.join();
+        }
+    }
+}
+
+use std::io::IsTerminal;
+
 pub fn format_size(bytes: u64) -> String {
     const KB: u64 = 1024;
     const MB: u64 = 1024 * KB;

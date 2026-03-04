@@ -17,7 +17,9 @@ pub fn run(args: &[String]) -> Result<()> {
         }
     }
 
+    let spinner = super::Spinner::new("Fetching events...");
     let resp = client.events(limit)?;
+    drop(spinner);
 
     if json {
         let out = serde_json::to_string_pretty(&resp.events).unwrap_or_else(|_| "[]".into());

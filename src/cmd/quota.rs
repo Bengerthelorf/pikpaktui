@@ -4,8 +4,11 @@ pub fn run(args: &[String]) -> Result<()> {
     let json = args.iter().any(|a| a == "-J" || a == "--json");
 
     let client = super::cli_client()?;
+
+    let spinner = super::Spinner::new("Fetching quota...");
     let quota = client.quota()?;
     let tq = client.transfer_quota().ok();
+    drop(spinner);
 
     if json {
         let storage = quota.quota.as_ref().map(|d| {
