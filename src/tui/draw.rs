@@ -85,7 +85,7 @@ impl App {
                     let name_style = if is_sel {
                         Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
                     } else {
-                        Style::default().fg(Color::White)
+                        Style::default().fg(Color::Reset)
                     };
                     lines.push(Line::from(vec![
                         Span::styled(prefix, name_style),
@@ -158,7 +158,7 @@ impl App {
                     let name_style = if is_sel {
                         Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
                     } else {
-                        Style::default().fg(Color::White)
+                        Style::default().fg(Color::Reset)
                     };
                     lines.push(Line::from(vec![
                         Span::styled(prefix, name_style),
@@ -283,7 +283,7 @@ impl App {
                     .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(Color::White)
+                Style::default().fg(Color::Reset)
             };
             let suffix = if !opt.available { " (cold)" } else { "" };
             lines.push(Line::from(vec![
@@ -478,7 +478,7 @@ impl App {
     }
 
     fn draw_login_screen(&self, f: &mut Frame) {
-        let bg = Block::default().style(Style::default().bg(Color::Black));
+        let bg = Block::default().style(Style::default().bg(Color::Reset));
         f.render_widget(bg, f.area());
         let area = centered_rect(50, 40, f.area());
 
@@ -493,11 +493,11 @@ impl App {
             clear_overlay_area(f, area);
             let email_style = match field {
                 LoginField::Email => Style::default().fg(Color::Yellow),
-                LoginField::Password => Style::default().fg(Color::White),
+                LoginField::Password => Style::default().fg(Color::Reset),
             };
             let pass_style = match field {
                 LoginField::Password => Style::default().fg(Color::Yellow),
-                LoginField::Email => Style::default().fg(Color::White),
+                LoginField::Email => Style::default().fg(Color::Reset),
             };
             let masked: String = "*".repeat(password.len());
             let cur = if self.cursor_visible { "\u{2588}" } else { " " };
@@ -942,7 +942,7 @@ impl App {
                     lines.extend(wrap_labeled_field(
                         "  Name:  ", &entry.name,
                         Style::default().fg(Color::Cyan),
-                        Style::default().fg(Color::White),
+                        Style::default().fg(Color::Reset),
                         wrap_w,
                     ));
                     if entry.kind == EntryKind::File {
@@ -950,7 +950,7 @@ impl App {
                             Span::styled("  Size:  ", Style::default().fg(Color::Cyan)),
                             Span::styled(
                                 format_size(entry.size),
-                                Style::default().fg(Color::White),
+                                Style::default().fg(Color::Reset),
                             ),
                         ]));
                     }
@@ -1017,7 +1017,7 @@ impl App {
                     info_lines.extend(wrap_labeled_field(
                         "  Name:  ", &entry.name,
                         Style::default().fg(Color::Cyan),
-                        Style::default().fg(Color::White),
+                        Style::default().fg(Color::Reset),
                         wrap_w,
                     ));
                     if entry.kind == EntryKind::File {
@@ -1025,7 +1025,7 @@ impl App {
                             Span::styled("  Size:  ", Style::default().fg(Color::Cyan)),
                             Span::styled(
                                 format_size(entry.size),
-                                Style::default().fg(Color::White),
+                                Style::default().fg(Color::Reset),
                             ),
                         ]));
                     }
@@ -1182,7 +1182,7 @@ impl App {
                 lines.extend(wrap_labeled_field(
                     "  Name:  ", &info.name,
                     Style::default().fg(Color::Cyan),
-                    Style::default().fg(Color::White),
+                    Style::default().fg(Color::Reset),
                     wrap_w,
                 ));
                 if let Some(size) = &info.size {
@@ -1191,7 +1191,7 @@ impl App {
                         Span::styled("  Size:  ", Style::default().fg(Color::Cyan)),
                         Span::styled(
                             format!("{} ({})", format_size(size_n), size),
-                            Style::default().fg(Color::White),
+                            Style::default().fg(Color::Reset),
                         ),
                     ]));
                 }
@@ -1757,7 +1757,7 @@ impl App {
         )));
         lines.push(Line::from(""));
         lines.push(Line::from(vec![
-            Span::styled("  Type 'yes' to confirm: ", Style::default().fg(Color::White)),
+            Span::styled("  Type 'yes' to confirm: ", Style::default().fg(Color::Reset)),
             Span::styled(format!("{}{}", value, cur), Style::default().fg(Color::Yellow)),
         ]));
         lines.push(Line::from(""));
@@ -2213,7 +2213,7 @@ impl App {
             .fg(Color::Cyan)
             .add_modifier(Modifier::BOLD);
         let key_style = Style::default().fg(Color::Yellow);
-        let desc_style = Style::default().fg(Color::White);
+        let desc_style = Style::default().fg(Color::Reset);
 
         let mut lines: Vec<Line> = Vec::new();
 
@@ -2349,7 +2349,7 @@ impl App {
                         .fg(Color::Cyan)
                         .add_modifier(Modifier::BOLD)
                 } else {
-                    Style::default().fg(Color::White)
+                    Style::default().fg(Color::Reset)
                 };
                 let size = format_size(entry.size);
                 lines.push(Line::from(vec![
@@ -2495,7 +2495,7 @@ impl App {
             Line::from(""),
             Line::from(vec![
                 Span::styled("  Upload to: ", Style::default().fg(Color::DarkGray)),
-                Span::styled(dest, Style::default().fg(Color::White)),
+                Span::styled(dest, Style::default().fg(Color::Reset)),
             ]),
             Line::from(vec![
                 Span::styled("  File:      ", Style::default().fg(Color::Cyan)),
@@ -2539,7 +2539,7 @@ impl App {
                 Line::from(""),
                 Line::from(Span::styled(
                     "  Enter URL or magnet link for cloud download:",
-                    Style::default().fg(Color::White),
+                    Style::default().fg(Color::Reset),
                 )),
                 Line::from(""),
                 Line::from(vec![
@@ -2600,7 +2600,7 @@ impl App {
                     "PHASE_TYPE_RUNNING" => ("\u{2193}", Color::Cyan),
                     "PHASE_TYPE_PENDING" => ("\u{2026}", Color::DarkGray),
                     "PHASE_TYPE_ERROR" => ("\u{2717}", Color::Red),
-                    _ => ("?", Color::White),
+                    _ => ("?", Color::Yellow),
                 };
 
                 let size = task
@@ -2615,7 +2615,7 @@ impl App {
                         .fg(Color::Cyan)
                         .add_modifier(Modifier::BOLD)
                 } else {
-                    Style::default().fg(Color::White)
+                    Style::default().fg(Color::Reset)
                 };
 
                 let mut spans = vec![
@@ -2624,7 +2624,7 @@ impl App {
                     Span::styled(truncate_name(&task.name, 35), name_style),
                     Span::styled(
                         format!("  {:>3}%", task.progress),
-                        Style::default().fg(Color::White),
+                        Style::default().fg(Color::Reset),
                     ),
                     Span::styled(format!("  {}", size), Style::default().fg(Color::DarkGray)),
                 ];
@@ -2724,14 +2724,14 @@ impl App {
         meta_lines.extend(wrap_labeled_field(
             "  Name:  ", &info.name,
             Style::default().fg(Color::Cyan),
-            Style::default().fg(Color::White),
+            Style::default().fg(Color::Reset),
             wrap_w,
         ));
 
         if let Some(kind) = &info.kind {
             meta_lines.push(Line::from(vec![
                 Span::styled("  Type:  ", Style::default().fg(Color::Cyan)),
-                Span::styled(kind.as_str(), Style::default().fg(Color::White)),
+                Span::styled(kind.as_str(), Style::default().fg(Color::Reset)),
             ]));
         }
 
@@ -2741,7 +2741,7 @@ impl App {
                 Span::styled("  Size:  ", Style::default().fg(Color::Cyan)),
                 Span::styled(
                     format!("{} ({})", format_size(size_n), size),
-                    Style::default().fg(Color::White),
+                    Style::default().fg(Color::Reset),
                 ),
             ]));
         }
@@ -2750,21 +2750,21 @@ impl App {
             let date = crate::cmd::format_date(ct);
             meta_lines.push(Line::from(vec![
                 Span::styled("  Created:", Style::default().fg(Color::Cyan)),
-                Span::styled(date, Style::default().fg(Color::White)),
+                Span::styled(date, Style::default().fg(Color::Reset)),
             ]));
         }
         if let Some(mt) = &info.modified_time {
             let date = crate::cmd::format_date(mt);
             meta_lines.push(Line::from(vec![
                 Span::styled("  Modified:", Style::default().fg(Color::Cyan)),
-                Span::styled(date, Style::default().fg(Color::White)),
+                Span::styled(date, Style::default().fg(Color::Reset)),
             ]));
         }
 
         if let Some(mime) = &info.mime_type {
             meta_lines.push(Line::from(vec![
                 Span::styled("  MIME:  ", Style::default().fg(Color::Cyan)),
-                Span::styled(mime.as_str(), Style::default().fg(Color::White)),
+                Span::styled(mime.as_str(), Style::default().fg(Color::Reset)),
             ]));
         }
 
@@ -3241,7 +3241,7 @@ impl App {
                         .fg(Color::Cyan)
                         .add_modifier(Modifier::BOLD)
                 } else {
-                    Style::default().fg(Color::White)
+                    Style::default().fg(Color::Reset)
                 };
 
                 let value_style = if is_selected && editing {
@@ -3374,7 +3374,7 @@ impl App {
                     .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(Color::White)
+                Style::default().fg(Color::Reset)
             };
 
             let value_str = format!("< {} >", proto.display_name());
@@ -3460,7 +3460,7 @@ impl App {
                     .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(Color::White)
+                Style::default().fg(Color::Reset)
             };
 
             // Show color preview and RGB values
@@ -3530,7 +3530,7 @@ impl App {
             Line::from(""),
             Line::from(Span::styled(
                 "  Create share for all cart items:",
-                Style::default().fg(Color::White),
+                Style::default().fg(Color::Reset),
             )),
             Line::from(""),
             Self::hint_line(&[("p", "public share"), ("P", "with password"), ("Esc", "cancel")]),
@@ -3578,7 +3578,7 @@ impl App {
                 Span::raw("  "),
                 Span::styled(
                     truncate_name(url, name_max),
-                    Style::default().fg(if is_top { Color::White } else { Color::DarkGray }),
+                    Style::default().fg(if is_top { Color::Reset } else { Color::DarkGray }),
                 ),
             ]));
             if !pass_code.is_empty() {
@@ -3667,7 +3667,7 @@ impl App {
                 let name_style = if is_sel {
                     Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
                 } else {
-                    Style::default().fg(Color::White)
+                    Style::default().fg(Color::Reset)
                 };
                 let is_pw = share_is_password(share);
                 let (type_str, type_color) = if is_pw {
@@ -3772,7 +3772,7 @@ fn share_expiry_color(days: &str) -> Color {
 
 fn share_detail_lines(share: &crate::pikpak::MyShare, width: u16) -> Vec<Line<'static>> {
     let label = Style::default().fg(Color::DarkGray);
-    let value = Style::default().fg(Color::White);
+    let value = Style::default().fg(Color::Reset);
     let url_max = width.saturating_sub(14) as usize;
 
     let is_pw = share_is_password(share);

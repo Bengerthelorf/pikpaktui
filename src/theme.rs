@@ -78,7 +78,7 @@ pub fn color_for_scheme(category: FileCategory, scheme: ColorScheme) -> Color {
             FileCategory::Audio => Color::LightCyan,
             FileCategory::Document => Color::Green,
             FileCategory::Code => Color::Yellow,
-            FileCategory::Default => Color::White,
+            FileCategory::Default => Color::Reset,
         },
         // Custom falls back to Vibrant (actual custom colors handled by TuiConfig::get_color())
         ColorScheme::Vibrant | ColorScheme::Custom => match category {
@@ -89,7 +89,7 @@ pub fn color_for_scheme(category: FileCategory, scheme: ColorScheme) -> Color {
             FileCategory::Audio => Color::Cyan,
             FileCategory::Document => Color::LightGreen,
             FileCategory::Code => Color::LightYellow,
-            FileCategory::Default => Color::White,
+            FileCategory::Default => Color::Reset,
         }
     }
 }
@@ -137,7 +137,7 @@ pub fn cli_colored(text: &str, category: FileCategory) -> String {
         FileCategory::Audio => "36",      // cyan
         FileCategory::Document => "1;33", // bold yellow
         FileCategory::Code => "1;32",     // bold green
-        FileCategory::Default => "0",     // reset
+        FileCategory::Default => return text.to_string(),
     };
     format!("\x1b[{}m{}\x1b[0m", code, text)
 }

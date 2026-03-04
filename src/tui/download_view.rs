@@ -91,7 +91,7 @@ impl App {
                 Span::styled("  Status: ", Style::default().fg(Color::Cyan)),
                 Span::styled(
                     format!("{} / {} completed", done, total),
-                    Style::default().fg(Color::White),
+                    Style::default().fg(Color::Reset),
                 ),
             ]),
             Line::from(""),
@@ -110,7 +110,7 @@ impl App {
         lines.push(Line::from(vec![
             Span::styled("  Progress: ", Style::default().fg(Color::Cyan)),
             Span::styled(bar, Style::default().fg(Color::Green)),
-            Span::styled(format!(" {}%", overall_pct), Style::default().fg(Color::White)),
+            Span::styled(format!(" {}%", overall_pct), Style::default().fg(Color::Reset)),
         ]));
         lines.push(Line::from(""));
 
@@ -119,7 +119,7 @@ impl App {
             Span::styled("  Downloaded: ", Style::default().fg(Color::Cyan)),
             Span::styled(
                 format!("{} / {}", format_size(total_downloaded), format_size(total_size)),
-                Style::default().fg(Color::White),
+                Style::default().fg(Color::Reset),
             ),
         ]));
         lines.push(Line::from(vec![
@@ -169,7 +169,7 @@ impl App {
                         Span::styled("    • ", Style::default().fg(Color::DarkGray)),
                         Span::styled(
                             truncate_name(&task.name, 35),
-                            Style::default().fg(Color::White),
+                            Style::default().fg(Color::Reset),
                         ),
                         Span::styled(
                             format!(" {}%", pct),
@@ -305,7 +305,7 @@ impl App {
                         .fg(Color::Cyan)
                         .add_modifier(Modifier::BOLD)
                 } else {
-                    Style::default().fg(Color::White)
+                    Style::default().fg(Color::Reset)
                 };
 
                 ListItem::new(Line::from(vec![
@@ -399,7 +399,7 @@ impl App {
             Line::from(""),
             Line::from(vec![
                 Span::styled("  Overall Progress: ", Style::default().fg(Color::Cyan)),
-                Span::styled(format!("{}%", overall_pct), Style::default().fg(Color::White)),
+                Span::styled(format!("{}%", overall_pct), Style::default().fg(Color::Reset)),
             ]),
             Line::from(""),
             Line::from(vec![
@@ -411,7 +411,7 @@ impl App {
                 Span::styled("  Downloaded: ", Style::default().fg(Color::Cyan)),
                 Span::styled(
                     format!("{} / {}", format_size(total_downloaded), format_size(total_size)),
-                    Style::default().fg(Color::White),
+                    Style::default().fg(Color::Reset),
                 ),
             ]),
             Line::from(vec![
@@ -549,7 +549,7 @@ impl App {
             // File name
             lines.push(Line::from(vec![
                 Span::styled("  File: ", Style::default().fg(Color::Cyan)),
-                Span::styled(&task.name, Style::default().fg(Color::White)),
+                Span::styled(&task.name, Style::default().fg(Color::Reset)),
             ]));
             lines.push(Line::from(""));
 
@@ -590,7 +590,7 @@ impl App {
                 Span::styled("  Size: ", Style::default().fg(Color::Cyan)),
                 Span::styled(
                     format_size(task.total_size),
-                    Style::default().fg(Color::White),
+                    Style::default().fg(Color::Reset),
                 ),
             ]));
 
@@ -604,7 +604,7 @@ impl App {
                 Span::styled("  Downloaded: ", Style::default().fg(Color::Cyan)),
                 Span::styled(
                     format!("{} ({}%)", format_size(task.downloaded), pct),
-                    Style::default().fg(Color::White),
+                    Style::default().fg(Color::Reset),
                 ),
             ]));
 
