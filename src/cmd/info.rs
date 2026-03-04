@@ -29,54 +29,57 @@ pub fn run(args: &[String]) -> Result<()> {
         return Ok(());
     }
 
-    println!("Name:     {}", info.name);
+    let cat = crate::theme::categorize(&entry);
+    let colored_name = crate::theme::cli_colored(&info.name, cat);
+    println!("\x1b[36mName:\x1b[0m     {}", colored_name);
 
     if let Some(kind) = &info.kind {
         let display = if kind.contains("folder") { "folder" } else { "file" };
-        println!("Type:     {}", display);
+        println!("\x1b[36mType:\x1b[0m     {}", display);
     }
 
     if let Some(size) = &info.size {
         if let Ok(bytes) = size.parse::<u64>() {
-            println!("Size:     {} ({})", super::format_size(bytes), size);
+            println!("\x1b[36mSize:\x1b[0m     \x1b[1;32m{}\x1b[0m ({})", super::format_size(bytes), size);
         } else {
-            println!("Size:     {}", size);
+            println!("\x1b[36mSize:\x1b[0m     {}", size);
         }
     }
 
     if let Some(hash) = &info.hash {
-        println!("Hash:     {}", hash);
+        println!("\x1b[36mHash:\x1b[0m     \x1b[2m{}\x1b[0m", hash);
     }
 
     if let Some(mime) = &info.mime_type {
-        println!("MIME:     {}", mime);
+        println!("\x1b[36mMIME:\x1b[0m     {}", mime);
     }
 
     if let Some(created) = &info.created_time {
-        println!("Created:  {}", created);
+        let date = super::format_date(created);
+        println!("\x1b[36mCreated:\x1b[0m  \x1b[34m{}\x1b[0m", date);
     }
 
     if let Some(medias) = &info.medias {
         for media in medias {
             if let Some(video) = &media.video {
                 println!();
-                println!("Media:    {}", media.media_name.as_deref().unwrap_or("-"));
+                println!("\x1b[36mMedia:\x1b[0m    {}", media.media_name.as_deref().unwrap_or("-"));
                 if let (Some(w), Some(h)) = (video.width, video.height) {
-                    println!("  Resolution: {}x{}", w, h);
+                    println!("  \x1b[36mResolution:\x1b[0m {}x{}", w, h);
                 }
                 if let Some(dur) = video.duration {
                     let mins = (dur / 60.0) as u64;
                     let secs = (dur % 60.0) as u64;
-                    println!("  Duration:   {}:{:02}", mins, secs);
+                    println!("  \x1b[36mDuration:\x1b[0m   {}:{:02}", mins, secs);
                 }
                 if let Some(br) = video.bit_rate {
-                    println!("  Bitrate:    {} kbps", br / 1000);
+                    println!("  \x1b[36mBitrate:\x1b[0m    {} kbps", br / 1000);
                 }
                 if let Some(vc) = &video.video_codec {
-                    println!("  Video:      {}", vc);
+                    println!("  \x1b[36mVideo:\x1b[0m      {}", vc);
                 }
                 if let Some(ac) = &video.audio_codec {
-                    println!("  Audio:      {}", ac);
+                    println!("  \x1b[36mAudio:\x1b[0m      {}", ac);
                 }
             }
         }

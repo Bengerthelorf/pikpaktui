@@ -45,7 +45,13 @@ pub fn run(args: &[String]) -> Result<()> {
 
         let date = super::format_date(time);
         let colored_date = format!("\x1b[34m{:16}\x1b[0m", date);
-        let colored_event = format!("\x1b[33m{:12}\x1b[0m", event_type);
+        let event_color = match event_type {
+            "create" | "upload" => "32",           // green
+            "delete" | "trash" | "batch_delete" => "31", // red
+            "rename" | "move" | "copy" => "33",    // yellow
+            _ => "33",                              // yellow default
+        };
+        let colored_event = format!("\x1b[{}m{:12}\x1b[0m", event_color, event_type);
 
         println!("{}  {}  {}", colored_event, colored_date, colored_name);
     }

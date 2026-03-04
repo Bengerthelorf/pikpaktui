@@ -48,12 +48,12 @@ pub fn run(args: &[String]) -> Result<()> {
                     .map(|n| super::format_size(n))
                     .unwrap_or_default();
 
-                let icon = match t.phase.as_str() {
-                    "PHASE_TYPE_COMPLETE" => "✓",
-                    "PHASE_TYPE_RUNNING" => "↓",
-                    "PHASE_TYPE_PENDING" => "…",
-                    "PHASE_TYPE_ERROR" => "✗",
-                    _ => "?",
+                let (icon, color) = match t.phase.as_str() {
+                    "PHASE_TYPE_COMPLETE" => ("✓", "32"),  // green
+                    "PHASE_TYPE_RUNNING" => ("↓", "36"),   // cyan
+                    "PHASE_TYPE_PENDING" => ("…", "2;37"), // dim gray
+                    "PHASE_TYPE_ERROR" => ("✗", "31"),     // red
+                    _ => ("?", "33"),                       // yellow
                 };
 
                 let extra = if t.phase == "PHASE_TYPE_ERROR" {
@@ -62,7 +62,8 @@ pub fn run(args: &[String]) -> Result<()> {
                     t.created_time.as_deref().unwrap_or("")
                 };
                 println!(
-                    "{} {:>3}%  {:>10}  {}  {}  {}",
+                    "\x1b[{}m{}\x1b[0m {:>3}%  {:>10}  {}  {}  {}",
+                    color,
                     icon,
                     t.progress,
                     size,
