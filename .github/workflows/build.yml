@@ -54,16 +54,25 @@ jobs:
             os: ubuntu-latest
             name: pikpaktui-x86_64-linux
             strip: true
+            ext: ""
 
           - target: x86_64-apple-darwin
             os: macos-latest
             name: pikpaktui-x86_64-macos
             strip: true
+            ext: ""
 
           - target: aarch64-apple-darwin
             os: macos-latest
             name: pikpaktui-aarch64-macos
             strip: true
+            ext: ""
+
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            name: pikpaktui-x86_64-windows
+            strip: false
+            ext: ".exe"
 
     steps:
       - name: Checkout
@@ -96,12 +105,13 @@ jobs:
 
       - name: Strip binary
         if: matrix.strip
-        run: strip target/${{ matrix.target }}/release/pikpaktui
+        run: strip target/${{ matrix.target }}/release/pikpaktui${{ matrix.ext }}
 
       - name: Prepare binary
+        shell: bash
         run: |
           mkdir -p dist
-          cp target/${{ matrix.target }}/release/pikpaktui dist/
+          cp target/${{ matrix.target }}/release/pikpaktui${{ matrix.ext }} dist/
 
       - name: Upload binary
         uses: actions/upload-artifact@v4
@@ -132,8 +142,13 @@ jobs:
         run: |
           cd dist
           for dir in */; do
+            name="${dir%/}"
             cd "$dir"
-            tar czf "../${dir%/}.tar.gz" pikpaktui
+            if ls *.exe 1>/dev/null 2>&1; then
+              zip "../${name}.zip" pikpaktui.exe
+            else
+              tar czf "../${name}.tar.gz" pikpaktui
+            fi
             cd ..
           done
 
@@ -162,11 +177,14 @@ jobs:
           echo "- **Linux x86_64**: pikpaktui-x86_64-linux.tar.gz (statically linked)" >> CHANGELOG.md
           echo "- **macOS Intel**: pikpaktui-x86_64-macos.tar.gz" >> CHANGELOG.md
           echo "- **macOS Apple Silicon**: pikpaktui-aarch64-macos.tar.gz" >> CHANGELOG.md
+          echo "- **Windows x86_64**: pikpaktui-x86_64-windows.zip" >> CHANGELOG.md
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: dist/*.tar.gz
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
           body_path: CHANGELOG.md
           draft: false
           prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
