@@ -24,6 +24,11 @@ fn entry() -> Result<()> {
         return run_tui();
     }
 
+    // Per-command help: `pikpaktui <cmd> --help`
+    if args.len() >= 2 && cmd::wants_help(&args[1..]) && !matches!(args[0].as_str(), "--help" | "-h" | "help" | "--version" | "-V") {
+        return cmd::print_command_help(&args[0]);
+    }
+
     match args[0].as_str() {
         "--version" | "-V" | "version" => {
             println!("pikpaktui {}", env!("CARGO_PKG_VERSION"));

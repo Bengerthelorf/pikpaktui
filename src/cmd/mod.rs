@@ -29,6 +29,342 @@ use crate::config::AppConfig;
 use crate::pikpak::{self, PikPak};
 use anyhow::{Result, anyhow};
 
+// ── Per-command help ────────────────────────────────────────────
+
+const G: &str = "\x1b[32m";  // green
+const _C: &str = "\x1b[36m"; // cyan (reserved)
+const D: &str = "\x1b[2m";   // dim
+const B: &str = "\x1b[1m";   // bold
+const R: &str = "\x1b[0m";   // reset
+
+/// Returns true if the arg slice contains `-h` or `--help`.
+pub fn wants_help(args: &[String]) -> bool {
+    args.iter().any(|a| a == "-h" || a == "--help")
+}
+
+/// Print per-command help. Returns `Ok(())` so it can be used as an early return.
+pub fn print_command_help(cmd: &str) -> Result<()> {
+    let (usage, desc, body) = command_help_text(cmd);
+    println!("{B}pikpaktui {G}{cmd}{R} {D}─{R} {desc}");
+    println!();
+    println!("{B}USAGE:{R}  {G}pikpaktui{R} {usage}");
+    println!();
+    print!("{body}");
+    Ok(())
+}
+
+fn command_help_text(cmd: &str) -> (&'static str, &'static str, String) {
+    match cmd {
+        "ls" => (
+            "ls [options] [path]",
+            "List files and folders",
+            format!(
+                "{B}OPTIONS:{R}\n\
+                 {opt}  -l, --long       {d}Long format (id, size, date, name){R}\n\
+                 {opt}  -J, --json       {d}Output as JSON{R}\n\
+                 {opt}  -s, --sort=FIELD {d}Sort by: name, size, created, type, extension, none{R}\n\
+                 {opt}  -r, --reverse    {d}Reverse sort order{R}\n\
+                 {opt}  --tree           {d}Tree view{R}\n\
+                 {opt}  --depth=N        {d}Max tree depth{R}\n\
+                 \n{B}EXAMPLES:{R}\n\
+                 {ex}  pikpaktui ls{R}\n\
+                 {ex}  pikpaktui ls -l /Movies{R}\n\
+                 {ex}  pikpaktui ls --tree --depth=2 /{R}\n",
+                opt = G, d = D, ex = D,
+            ),
+        ),
+        "mv" => (
+            "mv [options] <src> <dst>",
+            "Move (rename) files or folders",
+            format!(
+                "{B}OPTIONS:{R}\n\
+                 {opt}  -n, --dry-run    {d}Preview without executing{R}\n\
+                 {opt}  -t <dst>         {d}Batch mode: move multiple <src> into <dst>{R}\n\
+                 \n{B}EXAMPLES:{R}\n\
+                 {ex}  pikpaktui mv /file.txt /Archive/{R}\n\
+                 {ex}  pikpaktui mv -t /Dest /a.txt /b.txt{R}\n",
+                opt = G, d = D, ex = D,
+            ),
+        ),
+        "cp" => (
+            "cp [options] <src> <dst>",
+            "Copy files or folders",
+            format!(
+                "{B}OPTIONS:{R}\n\
+                 {opt}  -n, --dry-run    {d}Preview without executing{R}\n\
+                 {opt}  -t <dst>         {d}Batch mode: copy multiple <src> into <dst>{R}\n\
+                 \n{B}EXAMPLES:{R}\n\
+                 {ex}  pikpaktui cp /file.txt /Backup/{R}\n\
+                 {ex}  pikpaktui cp -t /Dest /a.txt /b.txt{R}\n",
+                opt = G, d = D, ex = D,
+            ),
+        ),
+        "rename" => (
+            "rename [options] <path> <new_name>",
+            "Rename a file or folder",
+            format!(
+                "{B}OPTIONS:{R}\n\
+                 {opt}  -n, --dry-run    {d}Preview without executing{R}\n\
+                 \n{B}EXAMPLES:{R}\n\
+                 {ex}  pikpaktui rename /old.txt new.txt{R}\n",
+                opt = G, d = D, ex = D,
+            ),
+        ),
+        "rm" => (
+            "rm [options] <path...>",
+            "Remove files or folders",
+            format!(
+                "{B}OPTIONS:{R}\n\
+                 {opt}  -r, --recursive  {d}Remove folders recursively{R}\n\
+                 {opt}  -f, --force      {d}Permanently delete (skip trash){R}\n\
+                 \n{B}EXAMPLES:{R}\n\
+                 {ex}  pikpaktui rm /file.txt{R}\n\
+                 {ex}  pikpaktui rm -rf /old-folder{R}\n",
+                opt = G, d = D, ex = D,
+            ),
+        ),
+        "mkdir" => (
+            "mkdir [options] <parent> <name>",
+            "Create a new folder",
+            format!(
+                "{B}OPTIONS:{R}\n\
+                 {opt}  -n, --dry-run    {d}Preview without executing{R}\n\
+                 {opt}  -p               {d}Create intermediate directories{R}\n\
+                 \n{B}EXAMPLES:{R}\n\
+                 {ex}  pikpaktui mkdir / NewFolder{R}\n\
+                 {ex}  pikpaktui mkdir -p / path/to/deep/folder{R}\n",
+                opt = G, d = D, ex = D,
+            ),
+        ),
+        "download" => (
+            "download [options] <path>",
+            "Download files or folders",
+            format!(
+                "{B}OPTIONS:{R}\n\
+                 {opt}  -o, --output <file> {d}Output file name{R}\n\
+                 {opt}  -t <local_dir>      {d}Batch: download multiple paths into dir{R}\n\
+                 {opt}  -j, --jobs <n>      {d}Concurrent downloads (default: 1){R}\n\
+                 {opt}  -n, --dry-run       {d}Preview without downloading{R}\n\
+                 \n{B}EXAMPLES:{R}\n\
+                 {ex}  pikpaktui download /movie.mkv{R}\n\
+                 {ex}  pikpaktui download -j4 -t ./local /Movies{R}\n",
+                opt = G, d = D, ex = D,
+            ),
+        ),
+        "upload" => (
+            "upload [options] <local_path>",
+            "Upload files to PikPak",
+            format!(
+                "{B}OPTIONS:{R}\n\
+                 {opt}  -t <remote_dir>  {d}Batch: upload multiple files into dir{R}\n\
+                 {opt}  -n, --dry-run    {d}Preview without uploading{R}\n\
+                 \n{B}EXAMPLES:{R}\n\
+                 {ex}  pikpaktui upload file.txt{R}\n\
+                 {ex}  pikpaktui upload -t /Remote a.txt b.txt{R}\n",
+                opt = G, d = D, ex = D,
+            ),
+        ),
+        "share" => (
+            "share [options] <path...>",
+            "Create, list, save, or delete share links",
+            format!(
+                "{B}MODES:{R}\n\
+                 {opt}  share <path...>        {d}Create a share link{R}\n\
+                 {opt}  share -l               {d}List your shares{R}\n\
+                 {opt}  share -S <url>         {d}Save a share to your drive{R}\n\
+                 {opt}  share -D <id...>       {d}Delete share(s){R}\n\
+                 \n{B}OPTIONS (create):{R}\n\
+                 {opt}  -p, --password   {d}Protect with a password{R}\n\
+                 {opt}  -d, --days <n>   {d}Expiry in days (-1 = permanent){R}\n\
+                 {opt}  -o <file>        {d}Write share URL to file{R}\n\
+                 {opt}  -J, --json       {d}Output as JSON{R}\n\
+                 \n{B}OPTIONS (save):{R}\n\
+                 {opt}  -p <code>        {d}Pass code for protected shares{R}\n\
+                 {opt}  -t <path>        {d}Destination folder{R}\n\
+                 {opt}  -n, --dry-run    {d}Preview without saving{R}\n\
+                 \n{B}EXAMPLES:{R}\n\
+                 {ex}  pikpaktui share /movie.mkv{R}\n\
+                 {ex}  pikpaktui share -p -d 7 /folder{R}\n\
+                 {ex}  pikpaktui share -l{R}\n\
+                 {ex}  pikpaktui share -S https://mypikpak.com/s/abc123{R}\n\
+                 {ex}  pikpaktui share -D abc123{R}\n",
+                opt = G, d = D, ex = D,
+            ),
+        ),
+        "offline" => (
+            "offline [options] <url>",
+            "Cloud download a URL or magnet link",
+            format!(
+                "{B}OPTIONS:{R}\n\
+                 {opt}  --to <path>      {d}Destination folder in PikPak{R}\n\
+                 {opt}  -n, --dry-run    {d}Preview without creating task{R}\n\
+                 \n{B}EXAMPLES:{R}\n\
+                 {ex}  pikpaktui offline https://example.com/file.zip{R}\n\
+                 {ex}  pikpaktui offline --to /Downloads magnet:?xt=...{R}\n",
+                opt = G, d = D, ex = D,
+            ),
+        ),
+        "tasks" => (
+            "tasks [subcommand] [options]",
+            "Manage offline download tasks",
+            format!(
+                "{B}SUBCOMMANDS:{R}\n\
+                 {opt}  list, ls         {d}List tasks (default){R}\n\
+                 {opt}  retry <id>       {d}Retry a failed task{R}\n\
+                 {opt}  delete, rm <id...> {d}Delete task(s){R}\n\
+                 \n{B}OPTIONS:{R}\n\
+                 {opt}  -J, --json       {d}Output as JSON{R}\n\
+                 {opt}  -n, --dry-run    {d}Preview without executing{R}\n\
+                 {opt}  <number>         {d}Limit results (default: 50){R}\n\
+                 \n{B}EXAMPLES:{R}\n\
+                 {ex}  pikpaktui tasks{R}\n\
+                 {ex}  pikpaktui tasks list 10{R}\n\
+                 {ex}  pikpaktui tasks retry abc12345{R}\n\
+                 {ex}  pikpaktui tasks delete abc12345{R}\n",
+                opt = G, d = D, ex = D,
+            ),
+        ),
+        "info" => (
+            "info [options] <path>",
+            "Show detailed file or folder info",
+            format!(
+                "{B}OPTIONS:{R}\n\
+                 {opt}  -J, --json       {d}Output as JSON{R}\n\
+                 \n{B}EXAMPLES:{R}\n\
+                 {ex}  pikpaktui info /movie.mkv{R}\n",
+                opt = G, d = D, ex = D,
+            ),
+        ),
+        "link" => (
+            "link [options] <path>",
+            "Get direct download URL",
+            format!(
+                "{B}OPTIONS:{R}\n\
+                 {opt}  -m, --media      {d}Show media stream URLs{R}\n\
+                 {opt}  -c, --copy       {d}Copy URL to clipboard{R}\n\
+                 {opt}  -J, --json       {d}Output as JSON{R}\n\
+                 \n{B}EXAMPLES:{R}\n\
+                 {ex}  pikpaktui link /movie.mkv{R}\n\
+                 {ex}  pikpaktui link -mc /movie.mkv{R}\n",
+                opt = G, d = D, ex = D,
+            ),
+        ),
+        "cat" => (
+            "cat <path>",
+            "Preview text file contents",
+            format!(
+                "{B}EXAMPLES:{R}\n\
+                 {ex}  pikpaktui cat /notes.txt{R}\n",
+                ex = D,
+            ),
+        ),
+        "play" => (
+            "play <path> [quality]",
+            "Play video with external player",
+            format!(
+                "{B}ARGUMENTS:{R}\n\
+                 {opt}  quality          {d}Stream quality (e.g. 720, 1080, original){R}\n\
+                 \n{B}EXAMPLES:{R}\n\
+                 {ex}  pikpaktui play /movie.mkv{R}\n\
+                 {ex}  pikpaktui play /movie.mkv 1080{R}\n",
+                opt = G, d = D, ex = D,
+            ),
+        ),
+        "quota" => (
+            "quota [options]",
+            "Show storage quota and bandwidth",
+            format!(
+                "{B}OPTIONS:{R}\n\
+                 {opt}  -J, --json       {d}Output as JSON{R}\n\
+                 \n{B}EXAMPLES:{R}\n\
+                 {ex}  pikpaktui quota{R}\n",
+                opt = G, d = D, ex = D,
+            ),
+        ),
+        "events" => (
+            "events [options] [limit]",
+            "List recent file events",
+            format!(
+                "{B}OPTIONS:{R}\n\
+                 {opt}  -J, --json       {d}Output as JSON{R}\n\
+                 {opt}  <number>         {d}Limit results (default: 20){R}\n\
+                 \n{B}EXAMPLES:{R}\n\
+                 {ex}  pikpaktui events{R}\n\
+                 {ex}  pikpaktui events 50{R}\n",
+                opt = G, d = D, ex = D,
+            ),
+        ),
+        "trash" => (
+            "trash [limit]",
+            "List trashed files",
+            format!(
+                "{B}EXAMPLES:{R}\n\
+                 {ex}  pikpaktui trash{R}\n\
+                 {ex}  pikpaktui trash 50{R}\n",
+                ex = D,
+            ),
+        ),
+        "untrash" => (
+            "untrash <name...>",
+            "Restore files from trash",
+            format!(
+                "{B}EXAMPLES:{R}\n\
+                 {ex}  pikpaktui untrash file.txt{R}\n",
+                ex = D,
+            ),
+        ),
+        "star" => (
+            "star <path...>",
+            "Star files",
+            format!(
+                "{B}EXAMPLES:{R}\n\
+                 {ex}  pikpaktui star /movie.mkv /photo.jpg{R}\n",
+                ex = D,
+            ),
+        ),
+        "unstar" => (
+            "unstar <path...>",
+            "Unstar files",
+            format!(
+                "{B}EXAMPLES:{R}\n\
+                 {ex}  pikpaktui unstar /movie.mkv{R}\n",
+                ex = D,
+            ),
+        ),
+        "starred" => (
+            "starred [limit]",
+            "List starred files",
+            format!(
+                "{B}EXAMPLES:{R}\n\
+                 {ex}  pikpaktui starred{R}\n\
+                 {ex}  pikpaktui starred 50{R}\n",
+                ex = D,
+            ),
+        ),
+        "vip" => (
+            "vip",
+            "Show VIP and account info",
+            String::new(),
+        ),
+        "completions" => (
+            "completions <shell>",
+            "Generate shell completions",
+            format!(
+                "{B}SUPPORTED SHELLS:{R}\n\
+                 {opt}  zsh{R}\n\
+                 \n{B}EXAMPLES:{R}\n\
+                 {ex}  pikpaktui completions zsh > _pikpaktui{R}\n",
+                opt = G, ex = D,
+            ),
+        ),
+        _ => (
+            "<command>",
+            "Unknown command",
+            format!("Run {G}pikpaktui --help{R} for a list of all commands.\n"),
+        ),
+    }
+}
+
 pub fn cli_config() -> crate::config::TuiConfig {
     crate::config::TuiConfig::load()
 }
