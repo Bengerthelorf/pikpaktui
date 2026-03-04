@@ -2031,14 +2031,26 @@ pub struct EventsResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventEntry {
+    #[serde(default, rename = "type")]
+    pub event_type: Option<String>,
     #[serde(default)]
-    pub event: Option<String>,
+    pub type_name: Option<String>,
     #[serde(default)]
     pub file_name: Option<String>,
     #[serde(default)]
-    pub file_kind: Option<String>,
-    #[serde(default)]
     pub created_time: Option<String>,
+    #[serde(default)]
+    pub reference_resource: Option<EventRefResource>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EventRefResource {
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub mime_type: Option<String>,
 }
 
 // --- VIP response types ---

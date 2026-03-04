@@ -1,4 +1,5 @@
 use anyhow::Result;
+use unicode_width::UnicodeWidthStr;
 
 pub fn run(args: &[String]) -> Result<()> {
     let client = super::cli_client()?;
@@ -32,31 +33,86 @@ pub fn run(args: &[String]) -> Result<()> {
         return Ok(());
     }
 
-    for ev in &resp.events {
-        let event_type = ev.event.as_deref().unwrap_or("unknown");
-        let name = ev.file_name.as_deref().unwrap_or("?");
-        let time = ev.created_time.as_deref().unwrap_or("");
-        let kind = ev.file_kind.as_deref().unwrap_or("");
+    struct Row {
+        event: String,
+        event_color: &'static str,
+        name: String,
+        kind_icon: &'static str,
+        date: String,
+    }
 
-        let is_folder = kind.contains("folder");
-        let colored_name = if is_folder {
-            format!("\x1b[1;34m{}\x1b[0m", name)
-        } else {
-            name.to_string()
-        };
+    let rows: Vec<Row> = resp
+        .events
+        .iter()
+        .map(|ev| {
+            // API returns "TYPE_RESTORE", "TYPE_DELETE", etc. — use type_name for display
+            let raw_type = ev.event_type.as_deref().unwrap_or("");
+            let display = ev.type_name.as_deref().unwrap_or(raw_type);
+            let event = if display.is_empty() { raw_type.to_string() } else { display.to_string() };
+            let event_color = match raw_type {
+                t if t.contains("CREATE") || t.contains("UPLOAD") || t.contains("RESTORE") => "32",
+                t if t.contains("DELETE") || t.contains("TRASH") => "31",
+                t if t.contains("RENAME") || t.contains("MOVE") || t.contains("COPY") => "33",
+                _ => "33",
+            };
+            let name = ev.file_name.as_deref().unwrap_or("?").to_string();
+            let is_folder = ev.reference_resource.as_ref()
+                .and_then(|r| r.kind.as_deref())
+                .map_or(false, |k| k.contains("folder"));
+            let kind_icon = if is_folder { "📁" } else { "  " };
+            let date = super::format_date(ev.created_time.as_deref().unwrap_or(""));
+            Row { event, event_color, name, kind_icon, date }
+        })
+        .collect();
 
-        let date = super::format_date(time);
-        let colored_date = format!("\x1b[34m{:16}\x1b[0m", date);
-        let event_color = match event_type {
-            "create" | "upload" => "32",           // green
-            "delete" | "trash" | "batch_delete" => "31", // red
-            "rename" | "move" | "copy" => "33",    // yellow
-            _ => "33",                              // yellow default
-        };
-        let colored_event = format!("\x1b[{}m{:12}\x1b[0m", event_color, event_type);
+    // Compute column widths
+    let w_event = rows.iter().map(|r| r.event.len()).max().unwrap_or(5).max(5);
+    let w_name = rows.iter().map(|r| UnicodeWidthStr::width(r.name.as_str())).max().unwrap_or(4).max(4);
+    let w_date = rows.iter().map(|r| r.date.len()).max().unwrap_or(7).max(7);
 
-        println!("{}  {}  {}", colored_event, colored_date, colored_name);
+    // Clamp name to terminal width
+    let term_width = crossterm::terminal::size()
+        .map(|(w, _)| w as usize)
+        .unwrap_or(120);
+    let fixed = w_event + 2 + 4 + w_date + 8;
+    let w_name = w_name.min(term_width.saturating_sub(fixed).max(12));
+
+    // Dim header
+    println!(
+        "\x1b[2m{:<w_event$}  {}  {:<w_name$}  {}\x1b[0m",
+        "EVENT", "  ", "NAME", "TIME",
+    );
+
+    for r in &rows {
+        let name = truncate(&r.name, w_name);
+        println!(
+            "\x1b[{ec}m{event:<w_event$}\x1b[0m  {icon}  {name:<w_name$}  {date}",
+            ec = r.event_color,
+            event = r.event,
+            icon = r.kind_icon,
+            name = name,
+            date = r.date,
+        );
     }
 
     Ok(())
+}
+
+fn truncate(s: &str, max: usize) -> String {
+    if UnicodeWidthStr::width(s) <= max {
+        s.to_string()
+    } else {
+        let mut w = 0;
+        let mut out = String::new();
+        for ch in s.chars() {
+            let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+            if w + cw + 1 > max {
+                break;
+            }
+            out.push(ch);
+            w += cw;
+        }
+        out.push('…');
+        out
+    }
 }
