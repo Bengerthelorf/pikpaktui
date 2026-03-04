@@ -37,6 +37,26 @@ const D: &str = "\x1b[2m";   // dim
 const B: &str = "\x1b[1m";   // bold
 const R: &str = "\x1b[0m";   // reset
 
+/// Single source of truth for command grouping. Used by both global --help
+/// and per-command --help.
+pub const COMMAND_GROUPS: &[(&str, &[&str])] = &[
+    ("File Management",   &["ls", "mv", "cp", "rename", "rm", "mkdir", "info", "link", "cat"]),
+    ("Playback",          &["play"]),
+    ("Transfer",          &["download", "upload", "share"]),
+    ("Cloud Download",    &["offline", "tasks"]),
+    ("Trash",             &["trash", "untrash"]),
+    ("Starred & Activity",&["star", "unstar", "starred", "events"]),
+    ("Account",           &["quota", "vip"]),
+    ("Utility",           &["completions"]),
+];
+
+/// Returns (usage_line, short_description, detailed_body) for a command.
+/// This is the **single source of truth** — both `pikpaktui --help` and
+/// `pikpaktui <cmd> --help` read from here.
+pub fn command_help_text(cmd: &str) -> (&'static str, &'static str, String) {
+    command_help_text_inner(cmd)
+}
+
 /// Returns true if the arg slice contains `-h` or `--help`.
 pub fn wants_help(args: &[String]) -> bool {
     args.iter().any(|a| a == "-h" || a == "--help")
@@ -53,7 +73,7 @@ pub fn print_command_help(cmd: &str) -> Result<()> {
     Ok(())
 }
 
-fn command_help_text(cmd: &str) -> (&'static str, &'static str, String) {
+fn command_help_text_inner(cmd: &str) -> (&'static str, &'static str, String) {
     match cmd {
         "ls" => (
             "ls [options] [path]",
