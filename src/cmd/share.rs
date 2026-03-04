@@ -194,10 +194,15 @@ fn run_save(args: &[String]) -> Result<()> {
 }
 
 fn run_list(args: &[String]) -> Result<()> {
+    use unicode_width::UnicodeWidthStr;
+
     let json = args.iter().any(|a| a == "-J" || a == "--json");
 
     let client = super::cli_client()?;
+
+    let spinner = super::Spinner::new("Fetching shares...");
     let shares = client.list_shares()?;
+    drop(spinner);
 
     if shares.is_empty() {
         if json {
@@ -226,39 +231,110 @@ fn run_list(args: &[String]) -> Result<()> {
         return Ok(());
     }
 
-    // Compute column widths for alignment
-    let title_w = shares.iter().map(|s| s.title.chars().count()).max().unwrap_or(0).min(40);
+    // Prepare row data
+    struct Row {
+        type_str: &'static str,
+        type_color: &'static str,
+        title: String,
+        expiry: String,
+        files: String,
+        views: String,
+        saves: String,
+        date: String,
+        url: String,
+    }
 
-    for s in &shares {
-        let is_pw = !s.pass_code.is_empty() || s.share_to.contains("encrypted");
-        let (type_str, type_ansi) = if is_pw {
-            ("private  ", "\x1b[33m")   // yellow
-        } else {
-            ("public   ", "\x1b[32m")   // green
-        };
-        let (expiry_str, expiry_ansi) = match s.expiration_days.as_str() {
-            "-1" | "" | "0" => ("permanent".to_string(), "\x1b[32m"),
-            d => {
-                let n = d.parse::<i64>().unwrap_or(99);
-                let color = if n <= 3 { "\x1b[31m" } else if n <= 7 { "\x1b[33m" } else { "\x1b[2m" };
-                (format!("{} days", n), color)
+    let rows: Vec<Row> = shares
+        .iter()
+        .map(|s| {
+            let is_pw = !s.pass_code.is_empty() || s.share_to.contains("encrypted");
+            let (type_str, type_color) = if is_pw {
+                ("private", "33") // yellow
+            } else {
+                ("public", "32") // green
+            };
+            let expiry = match s.expiration_days.as_str() {
+                "-1" | "" | "0" => "permanent".to_string(),
+                d => format!("{}d", d),
+            };
+            let files = s.file_num.clone();
+            let views = s.view_count.clone();
+            let saves = s.restore_count.clone();
+            let date = super::format_date(&s.create_time);
+            Row {
+                type_str,
+                type_color,
+                title: s.title.clone(),
+                expiry,
+                files,
+                views,
+                saves,
+                date,
+                url: s.share_url.clone(),
             }
-        };
-        let views = s.view_count.parse::<u64>().unwrap_or(0);
-        let saves = s.restore_count.parse::<u64>().unwrap_or(0);
-        let date  = super::format_date(&s.create_time);
+        })
+        .collect();
 
-        // Pad title to align columns
-        let title_padded = format!("{:<width$}", s.title.chars().take(title_w).collect::<String>(), width = title_w);
+    // Compute column widths
+    let w_type = 7usize; // "private"
+    let w_title = rows.iter().map(|r| UnicodeWidthStr::width(r.title.as_str())).max().unwrap_or(5).max(5);
+    let w_expiry = rows.iter().map(|r| r.expiry.len()).max().unwrap_or(6).max(6);
+    let w_files = rows.iter().map(|r| r.files.len()).max().unwrap_or(5).max(5);
+    let w_views = rows.iter().map(|r| r.views.len()).max().unwrap_or(5).max(5);
+    let w_saves = rows.iter().map(|r| r.saves.len()).max().unwrap_or(5).max(5);
+    let w_date = rows.iter().map(|r| r.date.len()).max().unwrap_or(7).max(7);
 
+    // Clamp title to terminal width
+    let term_width = crossterm::terminal::size()
+        .map(|(w, _)| w as usize)
+        .unwrap_or(120);
+    let fixed = w_type + 2 + w_expiry + 2 + w_files + 2 + w_views + 2 + w_saves + 2 + w_date + 12;
+    let w_title = w_title.min(term_width.saturating_sub(fixed).max(12));
+
+    // Header (dim, gh-style)
+    println!(
+        "\x1b[2mTYPE     {:<w_title$}  {:<w_expiry$}  {:>w_files$}  {:>w_views$}  {:>w_saves$}  {}\x1b[0m",
+        "TITLE", "EXPIRY", "FILES", "VIEWS", "SAVES", "CREATED",
+    );
+
+    for r in &rows {
+        let title = truncate(&r.title, w_title);
         println!(
-            "\x1b[2m{}\x1b[0m  \x1b[1m{}\x1b[0m  {}{}\x1b[0m  {}{}\x1b[0m  \x1b[2mviews\x1b[0m {:>3}  \x1b[2msaves\x1b[0m {:>3}  \x1b[34m{}\x1b[0m",
-            s.share_id, title_padded, type_ansi, type_str, expiry_ansi, expiry_str, views, saves, date
+            "\x1b[{tc}m{t:<w_type$}\x1b[0m  {:<w_title$}  {:<w_expiry$}  {:>w_files$}  {:>w_views$}  {:>w_saves$}  {}",
+            title,
+            r.expiry,
+            r.files,
+            r.views,
+            r.saves,
+            r.date,
+            tc = r.type_color,
+            t = r.type_str,
         );
-        println!("  \x1b[2;36m{}\x1b[0m", s.share_url);
+        // URL on second line, dimmed
+        println!("         \x1b[2m{}\x1b[0m", r.url);
     }
 
     Ok(())
+}
+
+fn truncate(s: &str, max: usize) -> String {
+    use unicode_width::UnicodeWidthStr;
+    if UnicodeWidthStr::width(s) <= max {
+        s.to_string()
+    } else {
+        let mut w = 0;
+        let mut out = String::new();
+        for ch in s.chars() {
+            let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+            if w + cw + 1 > max {
+                break;
+            }
+            out.push(ch);
+            w += cw;
+        }
+        out.push('…');
+        out
+    }
 }
 
 fn run_delete(args: &[String]) -> Result<()> {

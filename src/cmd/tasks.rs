@@ -1,4 +1,5 @@
 use anyhow::Result;
+use unicode_width::UnicodeWidthStr;
 
 pub fn run(args: &[String]) -> Result<()> {
     let client = super::cli_client()?;
@@ -44,64 +45,80 @@ pub fn run(args: &[String]) -> Result<()> {
                 return Ok(());
             }
 
+            // Prepare row data for column-width calculation
+            struct Row {
+                icon: &'static str,
+                color: &'static str,
+                progress: String,
+                name: String,
+                size: String,
+                id: String,
+                last: String,
+            }
+
+            let rows: Vec<Row> = resp
+                .tasks
+                .iter()
+                .map(|t| {
+                    let (icon, color) = match t.phase.as_str() {
+                        "PHASE_TYPE_COMPLETE" => ("✓", "32"),
+                        "PHASE_TYPE_RUNNING" => ("↓", "36"),
+                        "PHASE_TYPE_PENDING" => ("…", "2;37"),
+                        "PHASE_TYPE_ERROR" => ("✗", "31"),
+                        _ => ("?", "33"),
+                    };
+                    let progress = if t.phase == "PHASE_TYPE_RUNNING" {
+                        format!("{}%", t.progress)
+                    } else {
+                        String::new()
+                    };
+                    let size = t
+                        .file_size
+                        .as_deref()
+                        .and_then(|s| s.parse::<u64>().ok())
+                        .map(super::format_size)
+                        .unwrap_or_default();
+                    let id = t.id[..8.min(t.id.len())].to_string();
+                    let last = if t.phase == "PHASE_TYPE_ERROR" {
+                        t.message.as_deref().unwrap_or("").to_string()
+                    } else {
+                        super::format_date(t.created_time.as_deref().unwrap_or(""))
+                    };
+                    Row { icon, color, progress, name: t.name.clone(), size, id, last }
+                })
+                .collect();
+
+            // Compute column widths
+            let w_name = rows.iter().map(|r| UnicodeWidthStr::width(r.name.as_str())).max().unwrap_or(4).max(4);
+            let w_prog = rows.iter().map(|r| r.progress.len()).max().unwrap_or(0).max(4);
+            let w_size = rows.iter().map(|r| r.size.len()).max().unwrap_or(4).max(4);
+            let w_id = 8usize;
+            let w_last = rows.iter().map(|r| UnicodeWidthStr::width(r.last.as_str())).max().unwrap_or(7).max(7);
+
+            // Clamp name width to terminal
             let term_width = crossterm::terminal::size()
                 .map(|(w, _)| w as usize)
-                .unwrap_or(80);
-            // NAME column gets remaining space after fixed columns
-            // STATUS(6) + SIZE(10) + ID(10) + DATE(18) + gaps(8) = ~52
-            let name_max = term_width.saturating_sub(52).max(16);
+                .unwrap_or(120);
+            let fixed = 8 + w_prog + 2 + w_size + 2 + w_id + 2 + w_last + 8;
+            let w_name = w_name.min(term_width.saturating_sub(fixed).max(12));
 
-            // Header
+            // Header (dim, like gh)
             println!(
-                "\x1b[1mSTATUS  {:<name_max$}  {:>10}  {:>8}  {}\x1b[0m",
-                "NAME", "SIZE", "ID", "CREATED",
-                name_max = name_max,
+                "\x1b[2mSTATUS  {:<w_prog$}  {:<w_name$}  {:>w_size$}  {:>w_id$}  {}\x1b[0m",
+                "PROGRESS", "NAME", "SIZE", "ID", "CREATED",
             );
 
-            for t in &resp.tasks {
-                let size = t
-                    .file_size
-                    .as_deref()
-                    .and_then(|s| s.parse::<u64>().ok())
-                    .map(|n| super::format_size(n))
-                    .unwrap_or("-".to_string());
-
-                let (icon, color) = match t.phase.as_str() {
-                    "PHASE_TYPE_COMPLETE" => ("✓", "32"),  // green
-                    "PHASE_TYPE_RUNNING" => ("↓", "36"),   // cyan
-                    "PHASE_TYPE_PENDING" => ("…", "2;37"), // dim
-                    "PHASE_TYPE_ERROR" => ("✗", "31"),     // red
-                    _ => ("?", "33"),                       // yellow
-                };
-
-                // Status column: icon + optional progress for non-complete
-                let status = if t.phase == "PHASE_TYPE_RUNNING" {
-                    format!("\x1b[{}m{}\x1b[0m {:>3}%", color, icon, t.progress)
-                } else if t.phase == "PHASE_TYPE_COMPLETE" {
-                    format!("\x1b[{}m{}\x1b[0m     ", color, icon)
-                } else {
-                    format!("\x1b[{}m{}\x1b[0m     ", color, icon)
-                };
-
-                let name = truncate_name(&t.name, name_max);
-                let id_short = &t.id[..8.min(t.id.len())];
-
-                let last_col = if t.phase == "PHASE_TYPE_ERROR" {
-                    let msg = t.message.as_deref().unwrap_or("");
-                    format!("\x1b[31m{}\x1b[0m", truncate_name(msg, 20))
-                } else {
-                    let date = t.created_time.as_deref().unwrap_or("");
-                    format!("\x1b[34m{}\x1b[0m", super::format_date(date))
-                };
-
+            for r in &rows {
+                let name = truncate(&r.name, w_name);
                 println!(
-                    "{}  {:<name_max$}  {:>10}  \x1b[2m{:>8}\x1b[0m  {}",
-                    status,
+                    "\x1b[{color}m{icon}\x1b[0m       {:<w_prog$}  {:<w_name$}  {:>w_size$}  {:>w_id$}  {}",
+                    r.progress,
                     name,
-                    size,
-                    id_short,
-                    last_col,
-                    name_max = name_max,
+                    r.size,
+                    r.id,
+                    r.last,
+                    color = r.color,
+                    icon = r.icon,
                 );
             }
 
@@ -159,11 +176,21 @@ pub fn run(args: &[String]) -> Result<()> {
     }
 }
 
-fn truncate_name(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
+fn truncate(s: &str, max: usize) -> String {
+    if UnicodeWidthStr::width(s) <= max {
         s.to_string()
     } else {
-        let truncated: String = s.chars().take(max.saturating_sub(1)).collect();
-        format!("{}…", truncated)
+        let mut w = 0;
+        let mut out = String::new();
+        for ch in s.chars() {
+            let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+            if w + cw + 1 > max {
+                break;
+            }
+            out.push(ch);
+            w += cw;
+        }
+        out.push('…');
+        out
     }
 }
