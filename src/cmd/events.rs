@@ -3,6 +3,8 @@ use unicode_width::UnicodeWidthStr;
 
 pub fn run(args: &[String]) -> Result<()> {
     let client = super::cli_client()?;
+    let config = super::cli_config();
+    let nerd_font = config.cli_nerd_font;
 
     let mut json = false;
     let mut limit = 20u32;
@@ -59,7 +61,9 @@ pub fn run(args: &[String]) -> Result<()> {
             let is_folder = ev.reference_resource.as_ref()
                 .and_then(|r| r.kind.as_deref())
                 .map_or(false, |k| k.contains("folder"));
-            let kind_icon = if is_folder { "📁" } else { "  " };
+            let kind_icon = if is_folder {
+                if nerd_font { "\u{f07b} " } else { "[D]" }
+            } else if nerd_font { "\u{f15b} " } else { "[F]" };
             let date = super::format_date(ev.created_time.as_deref().unwrap_or(""));
             Row { event, event_color, name, kind_icon, date }
         })
@@ -67,6 +71,7 @@ pub fn run(args: &[String]) -> Result<()> {
 
     // Compute column widths
     let w_event = rows.iter().map(|r| r.event.len()).max().unwrap_or(5).max(5);
+    let w_icon = rows.iter().map(|r| UnicodeWidthStr::width(r.kind_icon)).max().unwrap_or(3).max(3);
     let w_name = rows.iter().map(|r| UnicodeWidthStr::width(r.name.as_str())).max().unwrap_or(4).max(4);
     let w_date = rows.iter().map(|r| r.date.len()).max().unwrap_or(7).max(7);
 
@@ -74,19 +79,19 @@ pub fn run(args: &[String]) -> Result<()> {
     let term_width = crossterm::terminal::size()
         .map(|(w, _)| w as usize)
         .unwrap_or(120);
-    let fixed = w_event + 2 + 4 + w_date + 8;
+    let fixed = w_event + 2 + w_icon + 2 + w_date + 8;
     let w_name = w_name.min(term_width.saturating_sub(fixed).max(12));
 
     // Dim header
     println!(
-        "\x1b[2m{:<w_event$}  {}  {:<w_name$}  {}\x1b[0m",
-        "EVENT", "  ", "NAME", "TIME",
+        "\x1b[2m{:<w_event$}  {:<w_icon$}  {:<w_name$}  {}\x1b[0m",
+        "EVENT", "", "NAME", "TIME",
     );
 
     for r in &rows {
         let name = truncate(&r.name, w_name);
         println!(
-            "\x1b[{ec}m{event:<w_event$}\x1b[0m  {icon}  {name:<w_name$}  {date}",
+            "\x1b[{ec}m{event:<w_event$}\x1b[0m  {icon:<w_icon$}  {name:<w_name$}  {date}",
             ec = r.event_color,
             event = r.event,
             icon = r.kind_icon,
