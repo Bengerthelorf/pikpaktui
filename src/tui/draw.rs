@@ -3252,8 +3252,7 @@ impl App {
                     Style::default().fg(Color::Green)
                 };
 
-                // Item 14 = Player Command: show as inline text input with cursor when editing
-                let is_text_input_item = global_idx == 14;
+                let is_text_input_item = name == "Player Command";
                 let cur = if self.cursor_visible { "\u{2588}" } else { " " };
 
                 let mut name_value_spans = vec![
@@ -3271,7 +3270,7 @@ impl App {
                     ));
                 } else {
                     // Right-align value with padding
-                    let terminal_width = (f.area().width * 70 / 100).saturating_sub(4) as usize;
+                    let terminal_width = area.width.saturating_sub(4) as usize;
                     let name_len = prefix.len() + name.len();
                     let value_len = value.len();
                     let padding = terminal_width.saturating_sub(name_len + value_len + 1);
@@ -3386,7 +3385,7 @@ impl App {
                 Style::default().fg(Color::Green)
             };
 
-            let terminal_width = (f.area().width * 70 / 100).saturating_sub(4) as usize;
+            let terminal_width = area.width.saturating_sub(4) as usize;
             let name_with_marker = format!("{}{}{}", prefix, term, marker);
             let name_len = name_with_marker.len();
             let value_len = value_str.len();

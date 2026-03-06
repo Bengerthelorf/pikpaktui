@@ -631,6 +631,44 @@ impl App {
                     self.on_cursor_move();
                 }
             }
+            KeyCode::PageDown => {
+                if !self.entries.is_empty() {
+                    let page = self.list_area_height.get().max(1) as usize;
+                    self.selected = (self.selected + page).min(self.entries.len() - 1);
+                    self.on_cursor_move();
+                }
+            }
+            KeyCode::PageUp => {
+                if !self.entries.is_empty() {
+                    let page = self.list_area_height.get().max(1) as usize;
+                    self.selected = self.selected.saturating_sub(page);
+                    self.on_cursor_move();
+                }
+            }
+            KeyCode::Home => {
+                if !self.entries.is_empty() {
+                    self.selected = 0;
+                    self.on_cursor_move();
+                }
+            }
+            KeyCode::End => {
+                if !self.entries.is_empty() {
+                    self.selected = self.entries.len() - 1;
+                    self.on_cursor_move();
+                }
+            }
+            KeyCode::Char('g') if !modifiers.contains(KeyModifiers::CONTROL) => {
+                if !self.entries.is_empty() {
+                    self.selected = 0;
+                    self.on_cursor_move();
+                }
+            }
+            KeyCode::Char('G') => {
+                if !self.entries.is_empty() {
+                    self.selected = self.entries.len() - 1;
+                    self.on_cursor_move();
+                }
+            }
             KeyCode::Enter => {
                 if let Some(entry) = self.current_entry().cloned() {
                     if entry.kind == EntryKind::Folder {
@@ -952,19 +990,6 @@ impl App {
                         EntryKind::File => self.open_info_popup(entry),
                         EntryKind::Folder => self.open_folder_info_popup(entry),
                     }
-                }
-            }
-            // --- Navigation enhancements ---
-            KeyCode::Char('g') => {
-                if !self.entries.is_empty() {
-                    self.selected = 0;
-                    self.on_cursor_move();
-                }
-            }
-            KeyCode::Char('G') => {
-                if !self.entries.is_empty() {
-                    self.selected = self.entries.len() - 1;
-                    self.on_cursor_move();
                 }
             }
             KeyCode::Char(':') => {

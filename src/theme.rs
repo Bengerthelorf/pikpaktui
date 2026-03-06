@@ -63,7 +63,13 @@ pub fn icon(category: FileCategory, nerd_font: bool) -> &'static str {
     } else {
         match category {
             FileCategory::Folder => "[D]",
-            _ => "[F]",
+            FileCategory::Archive => "[A]",
+            FileCategory::Image => "[I]",
+            FileCategory::Video => "[V]",
+            FileCategory::Audio => "[M]",
+            FileCategory::Document => "[T]",
+            FileCategory::Code => "[C]",
+            FileCategory::Default => "[F]",
         }
     }
 }
