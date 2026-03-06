@@ -7,6 +7,10 @@ Launch with `pikpaktui` (no arguments). On first run a login form will appear. A
 | Key | Action |
 |-----|--------|
 | `j` / `k` / `↑` / `↓` | Navigate |
+| `g` / `Home` | Jump to top |
+| `G` / `End` | Jump to bottom |
+| `PageUp` / `PageDown` | Page scroll |
+| `Ctrl+U` / `Ctrl+D` | Half-page scroll |
 | `Enter` | Open folder / play video |
 | `Backspace` | Go to parent |
 | `w` | Watch video (external player) |
@@ -29,7 +33,7 @@ Launch with `pikpaktui` (no arguments). On first run a login form will appear. A
 | `Space` | Preview / file info |
 | `p` | Text content preview |
 | `l` | Toggle log overlay |
-| `/` | Search |
+| `:` | Go to path |
 | `,` | Settings |
 | `h` | Help sheet |
 | `q` | Quit |

@@ -2112,6 +2112,9 @@ impl App {
                 let mut nav: Vec<(&str, &str)> = vec![
                     ("j / \u{2193}", "Move down"),
                     ("k / \u{2191}", "Move up"),
+                    ("g / Home", "Jump to top"),
+                    ("G / End", "Jump to bottom"),
+                    ("PgDn/Up", "Page scroll"),
                     ("Enter", "Open / Play"),
                     ("Bksp", "Go to parent"),
                     ("r", "Refresh"),
