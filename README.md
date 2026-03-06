@@ -1,45 +1,19 @@
 # pikpaktui
 
-A TUI and CLI client for [PikPak](https://mypikpak.com) cloud storage, written in pure Rust with no external runtime dependencies.
+A terminal-based client for [PikPak](https://mypikpak.com) cloud storage — browse, manage, and download your files without leaving the terminal. Written in pure Rust, no external runtime dependencies.
 
 | ![main](assets/main.jpeg) | ![settings](assets/settings.png) | ![help](assets/help.png) |
 | --- | --- | --- |
 | ![cart](assets/cart.png) | ![downloads](assets/downloads.jpeg) | ![downloads](assets/downloads_mian.png) |
 | ![copy](assets/copy.png) | ![trash](assets/trash.png) | ![play](assets/play.png) |
 
-## Features
+## What It Does
 
-### Interactive TUI
-- **Three-column Miller layout** — Parent / current / preview panes (Yazi-style), with optional two-column mode
-- **Thumbnail preview** — Media files display thumbnail images directly in the terminal via native image protocols (Kitty, iTerm2, Sixel) using [ratatui-image](https://github.com/benjajaja/ratatui-image). Fallback modes: colored half-block rendering and grayscale ASCII art. Per-terminal protocol auto-detection with manual override
-- **Text preview** — Syntax-highlighted code/text preview powered by [syntect](https://github.com/trishume/syntect) (base16-ocean.dark theme), supporting 50+ languages with line numbers
-- **Folder preview** — Instant children listing in the preview pane; cached entries are reused when opening folders (zero extra API calls)
-- **File operations** — Move, copy, rename, delete (trash or permanent), create folder, star/unstar
-- **Direct link copy** — Press `y` on any file to fetch its direct download URL and copy it to the system clipboard (pbcopy / wl-copy / xclip)
-- **Video playback** — Stream video files directly from PikPak using a configurable external player (mpv, vlc, etc.)
-- **Folder picker** — Visual two-pane picker for move/copy destinations, with tab-completion text input as alternative
-- **Cart & batch download** — Add files to cart, batch download with pause/resume/cancel, HTTP Range resume for interrupted transfers, download state persisted across sessions
-- **Download dashboard** — Collapsed popup or expanded full-screen view with braille-character network activity graph, per-file progress, speed, ETA
-- **Offline download** — Submit URLs/magnets for PikPak cloud download, view and manage tasks
-- **Trash view** — Browse trashed files in collapsed overlay or expanded full-screen, restore or permanently delete
-- **Search** — Press `/` to search files by name across the entire drive; results shown in a navigable overlay with cart integration
-- **Sorting** — eza-style `--sort` support (name, size, created, type, extension, none) with `--reverse`; TUI keybindings `S`/`R` to cycle sort field and toggle order, persisted in config
-- **Interactive settings** — In-app settings editor (`,`), custom RGB colors per file category, per-terminal image protocol configuration, sort settings
-- **Mouse support** — Click to select, double-click to open, scroll wheel navigation
+**Interactive TUI** — A three-column Miller layout (like Yazi) that lets you navigate your PikPak drive visually. Preview thumbnails, syntax-highlighted code, and folder contents right in the terminal. Move, copy, rename, delete, star files, stream videos, manage offline downloads — all from the keyboard.
 
-### CLI
-- **26 subcommands** — `ls`, `mv`, `cp`, `rename`, `rm`, `mkdir`, `info`, `link`, `cat`, `play`, `download`, `upload`, `share`, `offline`, `tasks`, `star`, `unstar`, `starred`, `events`, `trash`, `untrash`, `quota`, `vip`, `completions`, `help`, `version`
-- **Colored output** — `ls` with multi-column grid layout (eza-style), `--sort`/`--reverse` flags, Nerd Font icons support
-- **JSON output** — `-J`/`--json` flag on `ls`, `info`, `quota`, `tasks`, `starred`, `trash`, `events` for machine-readable output; pipe to `jq` for scripting
-- **Dry run** — `-n`/`--dry-run` flag on mutating commands (`mv`, `cp`, `rename`, `rm`, `mkdir`, `star`, `unstar`, `untrash`, `download`, `upload`, `tasks retry/delete`, `share -S`) and `--dry-run` on `offline`; resolves paths and prints a plan without making any changes — safe for AI agent use
-- **Resumable transfer** — Upload: dedup-aware instant upload on hash match, multipart resumable with 10 MB chunks via OSS. Download: HTTP Range resume for interrupted transfers
-- **Shell completions** — Zsh completion with dynamic cloud path completion (like `scp`)
+**Full CLI** — 26 subcommands (`ls`, `mv`, `cp`, `rm`, `download`, `upload`, `share`, and more) with colored output, JSON mode for scripting, and dry-run support so you can preview changes before committing them.
 
-### General
-- **Pure Rust** — Built with `ratatui` + `crossterm` + `reqwest` (rustls-tls), no OpenSSL or C dependencies
-- **Persistent sessions** — Login once, session auto-refreshes via token refresh
-- **Cross-platform** — Linux (x86_64 musl static), macOS Intel, macOS Apple Silicon
-- **Full pagination** — Directories of any size are fully loaded automatically via page iteration
+**Pure Rust** — Built on `ratatui` + `crossterm` + `reqwest` (rustls-tls). No OpenSSL, no C dependencies. Runs on Linux (x86_64 musl static), macOS Intel, and macOS Apple Silicon.
 
 ## Install
 
@@ -55,7 +29,7 @@ brew install Bengerthelorf/tap/pikpaktui
 cargo install pikpaktui
 ```
 
-### From source
+### From Source
 
 ```bash
 git clone https://github.com/Bengerthelorf/pikpaktui.git
@@ -64,318 +38,33 @@ cargo build --release
 ./target/release/pikpaktui
 ```
 
-### GitHub Releases
+Pre-built binaries are also available on the [Releases](https://github.com/Bengerthelorf/pikpaktui/releases) page.
 
-Pre-built binaries for Linux (x86_64, static musl), macOS Intel, and macOS Apple Silicon are available on the [Releases](https://github.com/Bengerthelorf/pikpaktui/releases) page.
+## Quick Start
 
-## Shell Completions
-
-### Zsh
-
-Supports dynamic cloud path completion — press `Tab` to list remote files/folders, like `scp`. Works with [fzf-tab](https://github.com/Aloxaf/fzf-tab).
-
-```bash
-# Option 1: Add to .zshrc
-eval "$(pikpaktui completions zsh)"
-
-# Option 2: Save to fpath
-pikpaktui completions zsh > ~/.zfunc/_pikpaktui
-# Then in .zshrc: fpath=(~/.zfunc $fpath); autoload -Uz compinit; compinit
-
-# Option 3: Oh My Zsh
-pikpaktui completions zsh > ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/completions/_pikpaktui
-```
-
-What gets completed:
-
-| Context | Completion |
-|---------|------------|
-| `pikpaktui <Tab>` | Subcommands with descriptions |
-| `pikpaktui ls /<Tab>` | Remote directory listing |
-| `pikpaktui ls -<Tab>` | `-l`, `--long`, `-J`, `--json`, `-s`, `--sort`, `-r`, `--reverse`, `--tree`, `--depth` |
-| `pikpaktui ls --sort <Tab>` | `name`, `size`, `created`, `type`, `extension`, `none` |
-| `pikpaktui mv -<Tab>` | `-t` flag |
-| `pikpaktui mv /src<Tab> /dst<Tab>` | Cloud paths for both arguments |
-| `pikpaktui download /cloud<Tab> ./<Tab>` | Cloud path, then local path |
-| `pikpaktui upload -<Tab>` | `-t` flag |
-| `pikpaktui upload ./<Tab> /<Tab>` | Local path, then cloud path |
-| `pikpaktui tasks <Tab>` | `list`, `retry`, `delete` subcommands |
-| `pikpaktui rm -<Tab>` | `-r`, `-f`, `-rf`, `-fr` |
-| `pikpaktui mkdir -<Tab>` | `-p` flag |
-| `pikpaktui download -<Tab>` | `-o` flag |
-| `pikpaktui info /path<Tab>` | Cloud path completion |
-| `pikpaktui cat /path<Tab>` | Cloud path completion |
-| `pikpaktui play /path<Tab>` | Cloud path completion |
-
-## Usage
-
-### TUI mode
-
-Run without arguments to launch the interactive file browser:
+Launch the TUI with no arguments. On first run a login form will appear — after that your session is saved and auto-refreshes.
 
 ```bash
 pikpaktui
 ```
 
-If no valid session exists, a login form will appear. After login, credentials are saved to `~/.config/pikpaktui/login.yaml` and the session is persisted to `~/.config/pikpaktui/session.json`.
-
-Press `,` to open the settings editor. Press `h` for the help sheet.
-
-### CLI mode
+For CLI usage, add a subcommand:
 
 ```bash
-# File management
-pikpaktui ls /                                        # Colored multi-column grid
-pikpaktui ls -l "/My Pack"                            # Long format (id + size + date + name)
-pikpaktui ls --sort=size -r /                         # Sort by size, largest last
-pikpaktui ls -s created "/My Pack"                    # Sort by creation time, newest first
-pikpaktui ls --tree /                                 # Recursive tree view
-pikpaktui ls --tree --depth=2 "/My Pack"              # Tree limited to 2 levels deep
-pikpaktui ls --tree -l /Movies                        # Tree with size and date columns
-pikpaktui ls /Movies --json                           # JSON output (pipe to jq)
-pikpaktui ls /Movies --json | jq '.[] | select(.size > 1073741824)'
-pikpaktui mv "/My Pack/file.txt" /Archive             # Move file
-pikpaktui mv -t /Archive /a.txt /b.txt /c.txt        # Batch move to target
-pikpaktui cp "/My Pack/file.txt" /Backup              # Copy file
-pikpaktui cp -t /Backup /a.txt /b.txt                 # Batch copy to target
-pikpaktui rename "/My Pack/old.txt" new.txt           # Rename
-pikpaktui rm "/My Pack/file.txt"                      # Delete file (to trash)
-pikpaktui rm /a.txt /b.txt /c.txt                     # Batch delete (to trash)
-pikpaktui rm -r "/My Pack/folder"                     # Delete folder (to trash)
-pikpaktui rm -rf "/My Pack/folder"                    # Delete folder permanently
-pikpaktui mkdir "/My Pack" newfolder                  # Create folder
-pikpaktui mkdir -p "/My Pack/a/b/c"                   # Create nested folders recursively
-pikpaktui info "/My Pack/video.mp4"                   # Detailed file info (media metadata)
-pikpaktui info "/My Pack/video.mp4" --json            # JSON (includes hash, links, media tracks)
-pikpaktui link "/My Pack/file.zip"                    # Print direct download URL
-pikpaktui link "/My Pack/file.zip" --copy             # Copy URL to clipboard (pbcopy/wl-copy/xclip)
-pikpaktui link "/My Pack/video.mp4" -m                # Also print video streaming URLs
-pikpaktui link "/My Pack/file.zip" --json             # JSON output {name, url, size}
-pikpaktui cat "/My Pack/notes.txt"                    # Preview text file contents
-
-# Video playback
-pikpaktui play "/My Pack/video.mp4"                   # List available streams (720p, 1080p, etc.)
-pikpaktui play "/My Pack/video.mp4" 1080p             # Play 1080p stream with configured player
-pikpaktui play "/My Pack/video.mp4" original          # Play original quality
-pikpaktui play "/My Pack/video.mp4" 2                 # Play by stream number
-
-# Trash
-pikpaktui trash                                       # List trashed files
-pikpaktui trash -l                                    # Long format (id, size, date)
-pikpaktui trash --json                                # JSON output
-pikpaktui untrash "file.txt"                          # Restore file from trash
-
-# Transfer
-pikpaktui download "/My Pack/file.txt"                # Download to current dir
-pikpaktui download "/My Pack/file.txt" /tmp/file.txt  # Download to specific path
-pikpaktui download -o output.mp4 "/My Pack/video.mp4" # Download with custom output name
-pikpaktui download "/My Pack/folder"                  # Download entire folder recursively
-pikpaktui download -t ./videos/ /a.mp4 /b.mp4         # Batch download to directory
-pikpaktui upload ./local-file.txt "/My Pack"          # Upload (dedup + resumable)
-pikpaktui upload -t "/My Pack" ./a.txt ./b.txt        # Batch upload to target
-pikpaktui share "/My Pack/file.txt"                   # Create share link
-pikpaktui share -p "/My Pack/file.txt"                # Create encrypted share (auto-generates password)
-pikpaktui share -d 7 "/My Pack/file.txt"              # Share that expires in 7 days
-pikpaktui share -J "/My Pack/file.txt"                # JSON output {share_id, share_url, pass_code}
-pikpaktui share -l                                    # List your own shares (id, title, views, saves)
-pikpaktui share -l -J                                 # JSON output
-pikpaktui share -D <share_id>                         # Delete a share
-pikpaktui share -S "https://mypikpak.com/s/XXXX"     # Save shared link to your drive (root)
-pikpaktui share -S -p PO -t "/My Pack" "https://mypikpak.com/s/XXXX"  # With password and destination
-
-# Offline / cloud download
-pikpaktui offline "magnet:?xt=..."                    # Submit magnet link
-pikpaktui offline "https://example.com/file.zip" --to "/Downloads" --name "file.zip"
-pikpaktui tasks                                       # List offline tasks
-pikpaktui tasks list --json                           # JSON output
-pikpaktui tasks retry <task_id>                       # Retry failed task
-pikpaktui tasks rm <task_id>                          # Delete task
-
-# Star & activity
-pikpaktui star "/My Pack/file.txt"                    # Star a file
-pikpaktui unstar "/My Pack/file.txt"                  # Unstar
-pikpaktui starred                                     # List starred files
-pikpaktui starred -l                                  # Long format (id, size, date)
-pikpaktui starred --json                              # JSON output
-pikpaktui events                                      # Recent file events
-pikpaktui events --json                               # JSON output
-
-# Account
-pikpaktui quota                                       # Storage and bandwidth quota
-pikpaktui quota --json                                # JSON output {storage: {limit,used,trash,free}, bandwidth: {download,upload,offline}}
-pikpaktui vip                                         # VIP status, invite code, transfer quota
-
-# Dry run (preview without making changes; -n works on all mutating commands)
-pikpaktui rm -n "/My Pack/file.txt"                   # Show what would be trashed
-pikpaktui rm -n -rf "/My Pack/folder"                 # Show what would be permanently deleted
-pikpaktui mv -n "/My Pack/a.txt" /Archive             # Show move plan
-pikpaktui cp -n -t /Backup /a.txt /b.txt              # Show batch copy plan
-pikpaktui rename -n "/My Pack/old.txt" new.txt        # Show rename plan
-pikpaktui mkdir -n -p "/My Pack/a/b/c"                # Show which folders would be created
-pikpaktui download -n "/My Pack/folder"               # Show folder that would be downloaded
-pikpaktui upload -n ./file.txt "/My Pack"             # Show upload plan
-pikpaktui share -S -n "https://mypikpak.com/s/XXXX"                    # Show items that would be saved
-pikpaktui offline "magnet:?xt=..." --dry-run --to "/Downloads"          # Show task that would be submitted
+pikpaktui ls /
+pikpaktui download "/My Pack/video.mp4"
+pikpaktui upload ./local.txt "/My Pack"
 ```
 
-CLI mode requires login: it checks for a valid session first, then falls back to `login.yaml` credentials. If neither exists, run `pikpaktui` (TUI) to login.
+Press `,` for settings, `h` for help, `q` to quit.
 
-## TUI Keybindings
+For more details, see the docs:
 
-### File Browser
-
-| Key | Action |
-|-----|--------|
-| `j` / `k` / `↑` / `↓` | Navigate |
-| `Enter` | Open folder / play video |
-| `Backspace` | Go back to parent |
-| `w` | Watch video (open in external player) |
-| `r` | Refresh |
-| `m` | Move |
-| `c` | Copy |
-| `n` | Rename |
-| `d` | Delete (trash / permanent) |
-| `f` | New folder |
-| `s` | Star / unstar |
-| `y` | Copy direct download link to clipboard |
-| `a` | Toggle in cart |
-| `S` | Cycle sort field (name → size → created → type → extension → none) |
-| `R` | Toggle reverse sort order |
-| `A` | View cart |
-| `D` | Downloads view |
-| `o` | Offline download (URL/magnet) |
-| `O` | Offline tasks |
-| `t` | Trash view |
-| `Space` | Preview / file info |
-| `p` | Text content preview |
-| `l` | Toggle log overlay |
-| `,` | Settings |
-| `h` | Help sheet |
-| `q` | Quit |
-
-### Folder Picker (Move / Copy)
-
-| Key | Action |
-|-----|--------|
-| `j` / `k` | Navigate |
-| `Enter` | Open folder |
-| `Backspace` | Go back |
-| `Space` | Confirm destination |
-| `/` | Switch to text input |
-| `Esc` | Cancel |
-
-### Text Input (Move / Copy)
-
-| Key | Action |
-|-----|--------|
-| `Tab` | Autocomplete cloud path |
-| `Enter` | Select candidate / confirm |
-| `Ctrl+B` | Switch to picker |
-| `Esc` | Close candidates / cancel |
-
-### Cart View
-
-| Key | Action |
-|-----|--------|
-| `j` / `k` | Navigate |
-| `x` / `d` | Remove from cart |
-| `a` | Clear all |
-| `Enter` | Download all |
-| `Esc` | Close |
-
-### Download View
-
-| Key | Action |
-|-----|--------|
-| `j` / `k` | Navigate tasks |
-| `Enter` | Toggle collapsed / expanded view |
-| `p` | Pause / resume |
-| `x` | Cancel task |
-| `r` | Retry failed task |
-| `Esc` | Close (or collapse) |
-
-### Trash View
-
-| Key | Action |
-|-----|--------|
-| `j` / `k` | Navigate |
-| `Enter` | Toggle collapsed / expanded |
-| `u` | Restore (untrash) |
-| `x` | Permanent delete |
-| `r` | Refresh |
-| `Esc` | Close (or collapse) |
-
-### Settings
-
-| Key | Action |
-|-----|--------|
-| `j` / `k` | Navigate items |
-| `Space` / `Enter` | Edit setting |
-| `Left` / `Right` | Cycle value |
-| `s` | Save to `config.toml` |
-| `Esc` | Discard and close |
-
-### Mouse
-
-- **Click** — Select entry in parent or current pane
-- **Double-click** — Open folder
-- **Scroll wheel** — Navigate entries or scroll preview
-
-## Configuration
-
-All configuration files live under `~/.config/pikpaktui/`.
-
-### Credentials — `login.yaml`
-
-```yaml
-username: "you@example.com"
-password: "your-password"
-```
-
-### TUI Settings — `config.toml`
-
-```toml
-[tui]
-nerd_font = false         # Nerd Font icons in TUI
-cli_nerd_font = false     # Nerd Font icons in CLI output
-move_mode = "picker"      # "picker" (two-pane) or "input" (text input)
-show_help_bar = true      # Bottom help bar
-border_style = "thick"    # "rounded" | "thick" | "thick-rounded" | "double"
-color_scheme = "vibrant"  # "vibrant" | "classic" | "custom"
-show_preview = true       # Three-column layout (false = two-column)
-lazy_preview = false      # Auto-load preview on cursor move
-preview_max_size = 65536  # Max bytes for text preview (default 64 KB)
-thumbnail_mode = "auto"   # "auto" | "off" | "force-color" | "force-grayscale"
-sort_field = "name"       # "name" | "size" | "created" | "type" | "extension" | "none"
-sort_reverse = false      # Reverse sort direction
-player = "mpv"           # External video player command (mpv, vlc, iina, etc.)
-
-# Per-terminal image protocol configuration
-# Detected via $TERM_PROGRAM environment variable
-[tui.image_protocols]
-ghostty = "kitty"
-"iTerm.app" = "iterm2"
-WezTerm = "auto"          # "auto" | "kitty" | "iterm2" | "sixel"
-
-# Custom colors (only used when color_scheme = "custom")
-[tui.custom_colors]
-folder = [92, 176, 255]
-archive = [255, 102, 102]
-image = [255, 102, 255]
-video = [102, 255, 255]
-audio = [0, 255, 255]
-document = [102, 255, 102]
-code = [255, 255, 102]
-default = [255, 255, 255]
-```
-
-### Session — `session.json`
-
-Auto-managed. Stores access/refresh tokens. No manual editing needed.
-
-### Download State — `downloads.json`
-
-Auto-managed. Persists incomplete download tasks (pending / paused / failed) across sessions.
+- [CLI Reference](docs/cli.md) — All 26 subcommands with examples
+- [TUI Guide](docs/tui.md) — Keybindings for every view
+- [Configuration](docs/configuration.md) — Config files, settings, environment variables
+- [Shell Completions](docs/shell-completions.md) — Zsh setup with dynamic cloud path completion
+- [Project Structure](docs/project-structure.md) — Source code layout
 
 ## Environment Variables
 
@@ -386,52 +75,6 @@ Auto-managed. Persists incomplete download tasks (pending / paused / failed) acr
 | `PIKPAK_CLIENT_ID` | Override OAuth client ID |
 | `PIKPAK_CLIENT_SECRET` | Override OAuth client secret |
 | `PIKPAK_CAPTCHA_TOKEN` | Provide CAPTCHA token for login |
-
-## Project Structure
-
-```
-src/
-  main.rs                Entry point, CLI dispatch or TUI launch
-  config.rs              Credentials (login.yaml), TUI settings (config.toml)
-  pikpak.rs              PikPak REST API client (auth, drive ops, upload, offline, VIP)
-  theme.rs               File categorization, icons, color schemes
-  cmd/
-    mod.rs               Shared CLI helpers (client init, path resolution)
-    help.rs              Colored ASCII-art help banner
-    ls.rs                ls — colored grid / long format
-    mv.rs                mv — move files
-    cp.rs                cp — copy files
-    rename.rs            rename — rename files
-    rm.rs                rm — trash / permanent delete
-    mkdir.rs             mkdir — create folder
-    download.rs          download — download to local
-    upload.rs            upload — resumable dedup-aware upload
-    share.rs             share — create/list/delete shares; save shared links (-S)
-    quota.rs             quota — storage and bandwidth usage
-    offline.rs           offline — submit URL/magnet download
-    tasks.rs             tasks — manage offline tasks
-    star.rs              star — star files
-    unstar.rs            unstar — unstar files
-    starred.rs           starred — list starred files
-    events.rs            events — recent activity
-    trash.rs             trash — list trashed files
-    untrash.rs           untrash — restore from trash
-    info.rs              info — detailed file/folder info
-    link.rs              link — get direct download URL, copy to clipboard
-    cat.rs               cat — text file preview
-    play.rs              play — video playback via external player
-    vip.rs               vip — VIP status and invite code
-    completions.rs       completions — shell completion script generator
-    complete_path.rs     __complete_path — internal dynamic path completion helper
-  tui/
-    mod.rs               App state, event loop, Miller columns, syntax highlighting
-    draw.rs              All rendering (login, 3-column layout, overlays, settings)
-    handler.rs           Keyboard and mouse input handling
-    completion.rs        Remote cloud path tab-completion (for move/copy input)
-    local_completion.rs  Local filesystem path tab-completion (for download destination)
-    download.rs          Download manager (task queue, workers, pause/resume, persistence)
-    download_view.rs     Download UI (collapsed popup / expanded full-screen with network graph)
-```
 
 ## License
 
