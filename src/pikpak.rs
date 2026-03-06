@@ -362,8 +362,9 @@ impl PikPak {
             return Ok(cached.clone());
         }
         let entries = self.ls(parent_id)?;
-        self.ls_cache.lock().unwrap_or_else(|e| e.into_inner()).insert(parent_id.to_string(), entries.clone());
-        Ok(entries)
+        let result = entries.clone();
+        self.ls_cache.lock().unwrap_or_else(|e| e.into_inner()).insert(parent_id.to_string(), entries);
+        Ok(result)
     }
 
     /// Resolve a cloud path like `/My Files/Movies` to a folder ID and breadcrumb.

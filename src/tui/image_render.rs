@@ -57,15 +57,18 @@ pub(super) fn render_image_to_colored_lines(
     use image::GenericImageView;
 
     let (orig_w, orig_h) = img.dimensions();
+    if orig_w == 0 || orig_h == 0 || max_width == 0 || max_height == 0 {
+        return vec![];
+    }
     let orig_aspect = orig_w as f32 / orig_h as f32;
 
     // Terminal characters are ~2x taller than wide
     let target_width = max_width;
-    let target_height_chars = ((target_width as f32 / orig_aspect) / 2.0) as u32;
+    let target_height_chars = ((target_width as f32 / orig_aspect) / 2.0).max(1.0) as u32;
 
     let (final_width, final_height_chars) = if target_height_chars > max_height {
         let h = max_height;
-        let w = (h as f32 * 2.0 * orig_aspect) as u32;
+        let w = ((h as f32 * 2.0 * orig_aspect) as u32).max(1);
         (w, h)
     } else {
         (target_width, target_height_chars)
@@ -120,15 +123,18 @@ pub(super) fn render_image_to_grayscale_lines(
     const ASCII_CHARS: &[char] = &[' ', '.', ':', '-', '=', '+', '*', '#', '%', '@'];
 
     let (orig_w, orig_h) = img.dimensions();
+    if orig_w == 0 || orig_h == 0 || max_width == 0 || max_height == 0 {
+        return vec![];
+    }
     let orig_aspect = orig_w as f32 / orig_h as f32;
 
     // Terminal characters are ~2x taller than wide
     let target_width = max_width;
-    let target_height_chars = ((target_width as f32 / orig_aspect) / 2.0) as u32;
+    let target_height_chars = ((target_width as f32 / orig_aspect) / 2.0).max(1.0) as u32;
 
     let (final_width, final_height_chars) = if target_height_chars > max_height {
         let h = max_height;
-        let w = (h as f32 * 2.0 * orig_aspect) as u32;
+        let w = ((h as f32 * 2.0 * orig_aspect) as u32).max(1);
         (w, h)
     } else {
         (target_width, target_height_chars)
