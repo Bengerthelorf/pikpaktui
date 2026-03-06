@@ -570,7 +570,13 @@ impl TuiConfig {
             Ok(r) => r,
             Err(_) => return Self::default(),
         };
-        let mut cfg: TuiConfig = toml::from_str(&raw).unwrap_or_default();
+        let mut cfg: TuiConfig = match toml::from_str(&raw) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("warning: failed to parse config.toml, using defaults: {e}");
+                Self::default()
+            }
+        };
         // Migrate legacy single-value `image_protocol` into per-terminal map
         if let Some(proto) = cfg.image_protocol.take()
             && cfg.image_protocols.is_empty() {

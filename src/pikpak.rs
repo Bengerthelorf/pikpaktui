@@ -60,6 +60,7 @@ pub struct PikPak {
     captcha_token: String,
     pub thumbnail_size: String,
     ls_cache: Mutex<HashMap<String, Vec<Entry>>>,
+    refresh_lock: Mutex<()>,
 }
 
 impl PikPak {
@@ -67,6 +68,7 @@ impl PikPak {
         Ok(Self {
             http: reqwest::blocking::Client::builder()
                 .user_agent(USER_AGENT)
+                .connect_timeout(std::time::Duration::from_secs(10))
                 .build()
                 .context("failed to build http client")?,
             drive_base_url: env::var("PIKPAK_DRIVE_BASE_URL")
@@ -82,6 +84,7 @@ impl PikPak {
             captcha_token: String::new(),
             thumbnail_size: "SIZE_MEDIUM".to_string(),
             ls_cache: Mutex::new(HashMap::new()),
+            refresh_lock: Mutex::new(()),
         })
     }
 
@@ -104,8 +107,12 @@ impl PikPak {
                 .with_context(|| format!("failed to create dir {}", parent.display()))?;
         }
         let raw = serde_json::to_string_pretty(token).context("failed to encode session")?;
-        fs::write(&self.session_path, raw)
-            .with_context(|| format!("failed to write session {}", self.session_path.display()))
+        // Atomic write: write to temp file then rename to avoid corruption on crash
+        let tmp_path = self.session_path.with_extension("tmp");
+        fs::write(&tmp_path, &raw)
+            .with_context(|| format!("failed to write temp session {}", tmp_path.display()))?;
+        fs::rename(&tmp_path, &self.session_path)
+            .with_context(|| format!("failed to rename session {}", self.session_path.display()))
     }
 
     pub fn has_valid_session(&self) -> bool {
@@ -218,14 +225,23 @@ impl PikPak {
 
         // Refresh proactively if the token expires within 5 minutes.
         if session.is_expired(now_unix() + 300) {
-            match self.refresh_session(&session.refresh_token) {
-                Ok(new_token) => return Ok(new_token),
-                Err(e) => {
-                    return Err(anyhow!(
-                        "session expired and token refresh failed: {e:#}\nPlease log in again."
-                    ));
+            // Serialize refresh attempts — only one thread refreshes at a time.
+            let _guard = self.refresh_lock.lock().unwrap_or_else(|e| e.into_inner());
+            // Re-check after acquiring lock: another thread may have refreshed already.
+            let session = self
+                .load_session()?
+                .ok_or_else(|| anyhow!("not logged in, please login first"))?;
+            if session.is_expired(now_unix() + 300) {
+                match self.refresh_session(&session.refresh_token) {
+                    Ok(new_token) => return Ok(new_token),
+                    Err(e) => {
+                        return Err(anyhow!(
+                            "session expired and token refresh failed: {e:#}\nPlease log in again."
+                        ));
+                    }
                 }
             }
+            return Ok(session.access_token);
         }
 
         Ok(session.access_token)
@@ -342,11 +358,11 @@ impl PikPak {
     /// folder appearing in every argument of a batch command) only hit the API once.
     /// TUI code that needs a fresh listing should call `ls()` directly.
     pub fn ls_cached(&self, parent_id: &str) -> Result<Vec<Entry>> {
-        if let Some(cached) = self.ls_cache.lock().unwrap().get(parent_id) {
+        if let Some(cached) = self.ls_cache.lock().unwrap_or_else(|e| e.into_inner()).get(parent_id) {
             return Ok(cached.clone());
         }
         let entries = self.ls(parent_id)?;
-        self.ls_cache.lock().unwrap().insert(parent_id.to_string(), entries.clone());
+        self.ls_cache.lock().unwrap_or_else(|e| e.into_inner()).insert(parent_id.to_string(), entries.clone());
         Ok(entries)
     }
 
@@ -1179,7 +1195,7 @@ impl PikPak {
                 let ok = Arc::clone(&ok);
                 let failed = Arc::clone(&failed);
                 s.spawn(move || {
-                    while let Ok(entry) = rx.lock().unwrap().recv() {
+                    while let Ok(entry) = rx.lock().unwrap_or_else(|e| e.into_inner()).recv() {
                         let dest = local_dir.join(&entry.name);
                         let local_size = dest.metadata().map(|m| m.len()).unwrap_or(0);
                         if local_size > 0 && local_size == entry.size {
