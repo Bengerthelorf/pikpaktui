@@ -331,7 +331,10 @@ pub fn save_download_state(tasks: &[DownloadTask]) {
         let _ = fs::create_dir_all(parent);
     }
     if let Ok(json) = serde_json::to_string_pretty(&persisted) {
-        let _ = fs::write(&path, json);
+        let tmp_path = path.with_extension("tmp");
+        if fs::write(&tmp_path, &json).is_ok() {
+            let _ = fs::rename(&tmp_path, &path);
+        }
     }
 }
 

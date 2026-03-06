@@ -46,8 +46,11 @@ impl AppConfig {
         }
 
         let raw = serde_yaml::to_string(&cfg).context("failed to serialize config")?;
-        fs::write(&path, raw)
-            .with_context(|| format!("failed to write config {}", path.display()))?;
+        let tmp_path = path.with_extension("tmp");
+        fs::write(&tmp_path, &raw)
+            .with_context(|| format!("failed to write config {}", tmp_path.display()))?;
+        fs::rename(&tmp_path, &path)
+            .with_context(|| format!("failed to rename config {}", path.display()))?;
         Ok(())
     }
 }
@@ -599,8 +602,11 @@ impl TuiConfig {
 
         let raw = toml::to_string_pretty(self)
             .context("failed to serialize config")?;
-        fs::write(&path, raw)
-            .with_context(|| format!("failed to write config {}", path.display()))?;
+        let tmp_path = path.with_extension("tmp");
+        fs::write(&tmp_path, &raw)
+            .with_context(|| format!("failed to write config {}", tmp_path.display()))?;
+        fs::rename(&tmp_path, &path)
+            .with_context(|| format!("failed to rename config {}", path.display()))?;
         Ok(())
     }
 }
