@@ -1029,15 +1029,13 @@ impl PikPak {
 
         let init: UploadInitResponse = response.json().context("invalid upload init json")?;
 
-        if init.upload_type == "UPLOAD_TYPE_RESUMABLE" {
-            if let Some(resumable) = &init.resumable {
-                if resumable.kind == "drive#uploadContext"
+        if init.upload_type == "UPLOAD_TYPE_RESUMABLE"
+            && let Some(resumable) = &init.resumable
+                && resumable.kind == "drive#uploadContext"
                     && init.file.phase.as_deref() == Some("PHASE_TYPE_COMPLETE")
                 {
                     return Ok((file_name, true)); // dedup
                 }
-            }
-        }
 
         if init.file.phase.as_deref() == Some("PHASE_TYPE_COMPLETE") {
             return Ok((file_name, true)); // dedup
@@ -1409,7 +1407,7 @@ impl PikPak {
         let num_parts = if file_size == 0 {
             1
         } else {
-            (file_size + CHUNK_SIZE - 1) / CHUNK_SIZE
+            file_size.div_ceil(CHUNK_SIZE)
         };
 
         let mut etags = Vec::new();
@@ -1796,7 +1794,7 @@ fn days_to_ymd(days: u64) -> (u64, u64, u64) {
 }
 
 fn is_leap(y: u64) -> bool {
-    (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
+    (y.is_multiple_of(4) && !y.is_multiple_of(100)) || y.is_multiple_of(400)
 }
 
 fn extract_xml_tag(xml: &str, tag: &str) -> Option<String> {

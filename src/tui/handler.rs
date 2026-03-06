@@ -157,14 +157,13 @@ impl App {
             InputMode::Normal => self.handle_normal_key(code, modifiers),
             InputMode::Rename { mut value } => {
                 if let Some(done) = handle_text_input(&mut value, code) {
-                    if done {
-                        if let Some(entry) = self.current_entry().cloned() {
+                    if done
+                        && let Some(entry) = self.current_entry().cloned() {
                             let new_name = value.trim().to_string();
                             if !new_name.is_empty() {
                                 self.spawn_rename(entry, new_name);
                             }
                         }
-                    }
                 } else {
                     self.input = InputMode::Rename { value };
                 }
@@ -828,8 +827,8 @@ impl App {
             }
             KeyCode::Char('y') => {
                 // Copy direct download link to clipboard
-                if let Some(entry) = self.current_entry().cloned() {
-                    if entry.kind == EntryKind::File {
+                if let Some(entry) = self.current_entry().cloned()
+                    && entry.kind == EntryKind::File {
                         let client = Arc::clone(&self.client);
                         let tx = self.result_tx.clone();
                         let eid = entry.id;
@@ -844,7 +843,6 @@ impl App {
                             });
                         });
                     }
-                }
             }
             KeyCode::Char('u') => {
                 if modifiers.contains(KeyModifiers::CONTROL) {
@@ -887,8 +885,8 @@ impl App {
             }
             KeyCode::Char('w') => {
                 // Watch: open video stream/resolution picker
-                if let Some(entry) = self.current_entry().cloned() {
-                    if entry.kind == EntryKind::File
+                if let Some(entry) = self.current_entry().cloned()
+                    && entry.kind == EntryKind::File
                         && theme::categorize(&entry) == theme::FileCategory::Video
                     {
                         self.loading = true;
@@ -901,8 +899,8 @@ impl App {
                                 Ok(info) => {
                                     let mut options = Vec::new();
                                     // Original is always available via web_content_link
-                                    if let Some(ref url) = info.web_content_link {
-                                        if !url.is_empty() {
+                                    if let Some(ref url) = info.web_content_link
+                                        && !url.is_empty() {
                                             let size_str = info
                                                 .size
                                                 .as_deref()
@@ -915,7 +913,6 @@ impl App {
                                                 available: true,
                                             });
                                         }
-                                    }
                                     // Transcoded streams from medias
                                     if let Some(ref medias) = info.medias {
                                         for m in medias {
@@ -951,7 +948,6 @@ impl App {
                             });
                         });
                     }
-                }
             }
             KeyCode::Char('p') => {
                 if let Some(entry) = self.current_entry().cloned() {
@@ -2087,8 +2083,8 @@ impl App {
             KeyCode::Char('x') => {
                 // Cancel selected
                 let sel = self.download_state.selected;
-                if let Some(task) = self.download_state.tasks.get_mut(sel) {
-                    if matches!(
+                if let Some(task) = self.download_state.tasks.get_mut(sel)
+                    && matches!(
                         task.status,
                         TaskStatus::Downloading | TaskStatus::Paused | TaskStatus::Pending
                     ) {
@@ -2103,7 +2099,6 @@ impl App {
                         self.push_log(format!("Cancelled '{}'", name));
                         self.download_state.start_next(&self.client);
                     }
-                }
                 self.input = InputMode::DownloadView;
             }
             KeyCode::Char('r') => {
@@ -2111,15 +2106,14 @@ impl App {
                 let sel = self.download_state.selected;
                 let mut log_msg = None;
                 let mut need_start = false;
-                if let Some(task) = self.download_state.tasks.get_mut(sel) {
-                    if matches!(task.status, TaskStatus::Failed(_)) {
+                if let Some(task) = self.download_state.tasks.get_mut(sel)
+                    && matches!(task.status, TaskStatus::Failed(_)) {
                         task.status = TaskStatus::Pending;
                         task.cancel_flag.store(false, Ordering::Relaxed);
                         task.pause_flag.store(false, Ordering::Relaxed);
                         log_msg = Some(format!("Retrying '{}'", task.name));
                         need_start = true;
                     }
-                }
                 if let Some(msg) = log_msg {
                     self.push_log(msg);
                 }
@@ -2274,8 +2268,8 @@ impl App {
             }
             KeyCode::Char('R') => {
                 // Retry selected task
-                if let Some(task) = tasks.get(*selected) {
-                    if task.phase == "PHASE_TYPE_ERROR" {
+                if let Some(task) = tasks.get(*selected)
+                    && task.phase == "PHASE_TYPE_ERROR" {
                         let client = Arc::clone(&self.client);
                         let tx = self.result_tx.clone();
                         let task_id = task.id.clone();
@@ -2294,7 +2288,6 @@ impl App {
                         });
                         return;
                     }
-                }
                 self.input = InputMode::OfflineTasksView {
                     tasks: std::mem::take(tasks),
                     selected: *selected,
@@ -2776,7 +2769,7 @@ impl App {
                         ("Download Settings", 1),
                     ];
 
-                    let bool_items = vec![0, 3, 5, 6, 11, 13];
+                    let bool_items = [0, 3, 5, 6, 11, 13];
                     let mut current_line = 0;
                     let mut item_idx = 0;
                     let terminal_width = (area.width.saturating_sub(4)) as usize;

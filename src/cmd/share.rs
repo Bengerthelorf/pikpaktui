@@ -293,8 +293,8 @@ fn run_list(args: &[String]) -> Result<()> {
 
     // Header (dim, gh-style)
     println!(
-        "\x1b[2mTYPE     {:<w_title$}  {:<w_expiry$}  {:>w_files$}  {:>w_views$}  {:>w_saves$}  {}\x1b[0m",
-        "TITLE", "EXPIRY", "FILES", "VIEWS", "SAVES", "CREATED",
+        "\x1b[2mTYPE     {:<w_title$}  {:<w_expiry$}  {:>w_files$}  {:>w_views$}  {:>w_saves$}  CREATED\x1b[0m",
+        "TITLE", "EXPIRY", "FILES", "VIEWS", "SAVES",
     );
 
     for r in &rows {

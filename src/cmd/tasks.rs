@@ -104,8 +104,8 @@ pub fn run(args: &[String]) -> Result<()> {
 
             // Header (dim, like gh)
             println!(
-                "\x1b[2mSTATUS  {:<w_prog$}  {:<w_name$}  {:>w_size$}  {:>w_id$}  {}\x1b[0m",
-                "PROGRESS", "NAME", "SIZE", "ID", "CREATED",
+                "\x1b[2mSTATUS  {:<w_prog$}  {:<w_name$}  {:>w_size$}  {:>w_id$}  CREATED\x1b[0m",
+                "PROGRESS", "NAME", "SIZE", "ID",
             );
 
             for r in &rows {

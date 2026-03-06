@@ -1090,13 +1090,11 @@ impl App {
                             match self.config.current_image_protocol() {
                                 crate::config::ImageProtocol::Auto => {
                                     // Fix: iTerm2 incorrectly detected as Kitty
-                                    if picker.protocol_type() == ProtocolType::Kitty {
-                                        if let Ok(term_program) = std::env::var("TERM_PROGRAM") {
-                                            if term_program.contains("iTerm") {
+                                    if picker.protocol_type() == ProtocolType::Kitty
+                                        && let Ok(term_program) = std::env::var("TERM_PROGRAM")
+                                            && term_program.contains("iTerm") {
                                                 picker.set_protocol_type(ProtocolType::Iterm2);
                                             }
-                                        }
-                                    }
                                 }
                                 crate::config::ImageProtocol::Kitty => {
                                     picker.set_protocol_type(ProtocolType::Kitty);
@@ -1252,7 +1250,7 @@ impl App {
             .into_iter()
             .skip(scroll_y)
             .take(visible)
-            .map(|s| Line::from(s))
+            .map(Line::from)
             .collect();
 
         let (log_bc, log_tc) = if self.is_vibrant() {
@@ -1809,9 +1807,7 @@ impl App {
             } else {
                 0
             };
-        let pct = ((total_lines as u16 * 100) / f.area().height.max(1))
-            .max(20)
-            .min(60);
+        let pct = ((total_lines as u16 * 100) / f.area().height.max(1)).clamp(20, 60);
         let area = centered_rect(70, pct, f.area());
         clear_overlay_area(f, area);
 
@@ -2080,7 +2076,7 @@ impl App {
         let term = f.area();
 
         // Adaptive width — wider and flatter
-        let sheet_w = term.width.saturating_sub(4).min(92).max(44);
+        let sheet_w = term.width.saturating_sub(4).clamp(44, 92);
         let inner_w = sheet_w.saturating_sub(2) as usize;
         let show_art = inner_w >= 70;
 
@@ -2408,7 +2404,7 @@ impl App {
         // Sliding window: keep selected item visible, reserving 1 row for "above" indicator.
         let has_above_row = sel >= MAX_VIS;
         let item_slots = if has_above_row { MAX_VIS - 1 } else { MAX_VIS };
-        let window_start = if sel + 1 <= item_slots { 0 } else { sel + 1 - item_slots };
+        let window_start = (sel + 1).saturating_sub(item_slots);
         let window_end = (window_start + item_slots).min(total);
         if has_above_row {
             lines.push(Line::from(Span::styled(
@@ -2416,8 +2412,7 @@ impl App {
                 Style::default().fg(Color::DarkGray),
             )));
         }
-        for i in window_start..window_end {
-            let (name, is_dir) = &candidates[i];
+        for (i, (name, is_dir)) in candidates.iter().enumerate().skip(window_start).take(window_end - window_start) {
             let is_sel = selected_idx == Some(i);
             let row_prefix = if is_sel { "  > " } else { "    " };
             let style = if is_sel {
@@ -2448,9 +2443,7 @@ impl App {
             } else {
                 0
             };
-        let pct = ((total_lines as u16 * 100) / f.area().height.max(1))
-            .max(20)
-            .min(60);
+        let pct = ((total_lines as u16 * 100) / f.area().height.max(1)).clamp(20, 60);
         let area = centered_rect(70, pct, f.area());
         clear_overlay_area(f, area);
 
@@ -2489,7 +2482,7 @@ impl App {
         let candidate_lines = input.candidates.len().min(8);
         let base_height = 7;
         let total_lines = base_height + if candidate_lines > 0 { candidate_lines + 1 } else { 0 };
-        let pct = ((total_lines as u16 * 100) / f.area().height.max(1)).max(20).min(60);
+        let pct = ((total_lines as u16 * 100) / f.area().height.max(1)).clamp(20, 60);
         let area = centered_rect(70, pct, f.area());
         clear_overlay_area(f, area);
 
@@ -2610,7 +2603,7 @@ impl App {
                     .file_size
                     .as_deref()
                     .and_then(|s| s.parse::<u64>().ok())
-                    .map(|n| format_size(n))
+                    .map(format_size)
                     .unwrap_or_default();
 
                 let name_style = if is_sel {
@@ -2631,14 +2624,13 @@ impl App {
                     ),
                     Span::styled(format!("  {}", size), Style::default().fg(Color::DarkGray)),
                 ];
-                if task.phase == "PHASE_TYPE_ERROR" {
-                    if let Some(msg) = &task.message {
+                if task.phase == "PHASE_TYPE_ERROR"
+                    && let Some(msg) = &task.message {
                         spans.push(Span::styled(
                             format!("  {}", truncate_name(msg, 20)),
                             Style::default().fg(Color::Red),
                         ));
                     }
-                }
 
                 lines.push(Line::from(spans));
             }
@@ -2841,13 +2833,12 @@ impl App {
                 Picker::from_query_stdio().ok().map(|mut p| {
                     match self.config.current_image_protocol() {
                         crate::config::ImageProtocol::Auto => {
-                            if p.protocol_type() == ProtocolType::Kitty {
-                                if std::env::var("TERM_PROGRAM")
+                            if p.protocol_type() == ProtocolType::Kitty
+                                && std::env::var("TERM_PROGRAM")
                                     .is_ok_and(|t| t.contains("iTerm"))
                                 {
                                     p.set_protocol_type(ProtocolType::Iterm2);
                                 }
-                            }
                         }
                         crate::config::ImageProtocol::Kitty => p.set_protocol_type(ProtocolType::Kitty),
                         crate::config::ImageProtocol::Iterm2 => p.set_protocol_type(ProtocolType::Iterm2),
@@ -2867,8 +2858,7 @@ impl App {
                             .map(|p| { let f = p.font_size(); (f.0 as u32, f.1 as u32) })
                             .unwrap_or((10, 20));
                         if cw > 0 && ch > 0 && img.width() > 0 {
-                            let rows = (img.height() * thumb_col_w as u32 * cw + img.width() * ch - 1)
-                                / (img.width() * ch);
+                            let rows = (img.height() * thumb_col_w as u32 * cw).div_ceil(img.width() * ch);
                             (rows as u16).min(top_h)
                         } else {
                             top_h
@@ -3558,7 +3548,7 @@ impl App {
 
         for (i, (title, url, pass_code)) in shares.iter().enumerate() {
             let ox = (i as u16) * 3;
-            let oy = (i as u16) * 1;
+            let oy = i as u16 ;
             let area = Rect {
                 x: 2 + ox,
                 y: 1 + oy,

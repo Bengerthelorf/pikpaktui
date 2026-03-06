@@ -1015,15 +1015,14 @@ impl App {
                 });
             }
             EntryKind::File => {
-                if let Some(ref thumb_url) = entry.thumbnail_link {
-                    if !thumb_url.is_empty() {
+                if let Some(ref thumb_url) = entry.thumbnail_link
+                    && !thumb_url.is_empty() {
                         self.spawn_thumbnail_fetch(
                             thumb_url.clone(),
                             move |r| OpResult::PreviewThumbnail(eid.clone(), r),
                         );
                         return;
                     }
-                }
                 if theme::is_text_previewable(&entry) {
                     let max_bytes = self.config.preview_max_size;
                     std::thread::spawn(move || {
@@ -1079,9 +1078,9 @@ impl App {
 }
 
 static SYNTAX_SET: LazyLock<syntect::parsing::SyntaxSet> =
-    LazyLock::new(|| syntect::parsing::SyntaxSet::load_defaults_newlines());
+    LazyLock::new(syntect::parsing::SyntaxSet::load_defaults_newlines);
 static THEME_SET: LazyLock<syntect::highlighting::ThemeSet> =
-    LazyLock::new(|| syntect::highlighting::ThemeSet::load_defaults());
+    LazyLock::new(syntect::highlighting::ThemeSet::load_defaults);
 
 fn highlight_content(name: &str, content: &str) -> Vec<ratatui::text::Line<'static>> {
     use ratatui::style::{Color, Style};

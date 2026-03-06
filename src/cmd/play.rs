@@ -13,8 +13,8 @@ fn build_play_options(client: &PikPak, file_id: &str) -> Result<Vec<PlayOption>>
     let mut options = Vec::new();
 
     // Original via web_content_link
-    if let Some(ref url) = info.web_content_link {
-        if !url.is_empty() {
+    if let Some(ref url) = info.web_content_link
+        && !url.is_empty() {
             let size_str = info
                 .size
                 .as_deref()
@@ -27,7 +27,6 @@ fn build_play_options(client: &PikPak, file_id: &str) -> Result<Vec<PlayOption>>
                 available: true,
             });
         }
-    }
 
     // Transcoded streams
     if let Some(ref medias) = info.medias {

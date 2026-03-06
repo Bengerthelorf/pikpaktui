@@ -64,16 +64,13 @@ fn home_config_dir() -> Option<PathBuf> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
+#[derive(Default)]
 pub enum QuotaBarStyle {
+    #[default]
     Bar,
     Percent,
 }
 
-impl Default for QuotaBarStyle {
-    fn default() -> Self {
-        Self::Bar
-    }
-}
 
 impl QuotaBarStyle {
     pub fn all() -> &'static [Self] {
@@ -102,18 +99,15 @@ impl QuotaBarStyle {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
+#[derive(Default)]
 pub enum BorderStyle {
     Rounded,
+    #[default]
     Thick,
     ThickRounded,
     Double,
 }
 
-impl Default for BorderStyle {
-    fn default() -> Self {
-        Self::Thick
-    }
-}
 
 impl BorderStyle {
     pub fn all() -> &'static [Self] {
@@ -144,7 +138,9 @@ impl BorderStyle {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
+#[derive(Default)]
 pub enum ColorScheme {
+    #[default]
     Vibrant,
     Classic,
     Custom,
@@ -152,18 +148,15 @@ pub enum ColorScheme {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
+#[derive(Default)]
 pub enum ImageProtocol {
+    #[default]
     Auto,
     Kitty,
     Iterm2,
     Sixel,
 }
 
-impl Default for ImageProtocol {
-    fn default() -> Self {
-        Self::Auto
-    }
-}
 
 impl ImageProtocol {
     pub fn all() -> &'static [Self] {
@@ -194,17 +187,14 @@ impl ImageProtocol {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
+#[derive(Default)]
 pub enum ThumbnailSize {
     Small,
+    #[default]
     Medium,
     Large,
 }
 
-impl Default for ThumbnailSize {
-    fn default() -> Self {
-        Self::Medium
-    }
-}
 
 impl ThumbnailSize {
     pub fn as_api_str(self) -> &'static str {
@@ -218,18 +208,15 @@ impl ThumbnailSize {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
+#[derive(Default)]
 pub enum ThumbnailMode {
+    #[default]
     Auto,
     Off,
     ForceColor,
     ForceGrayscale,
 }
 
-impl Default for ThumbnailMode {
-    fn default() -> Self {
-        Self::Auto
-    }
-}
 
 impl ThumbnailMode {
     pub fn all() -> &'static [Self] {
@@ -282,11 +269,10 @@ pub enum ThumbnailRenderMode {
 }
 
 pub fn detect_truecolor_support() -> bool {
-    if let Ok(ct) = env::var("COLORTERM") {
-        if ct.contains("truecolor") || ct.contains("24bit") {
+    if let Ok(ct) = env::var("COLORTERM")
+        && (ct.contains("truecolor") || ct.contains("24bit")) {
             return true;
         }
-    }
 
     if let Ok(term) = env::var("TERM") {
         if term.contains("truecolor") || term.contains("24bit") {
@@ -302,7 +288,9 @@ pub fn detect_truecolor_support() -> bool {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
+#[derive(Default)]
 pub enum SortField {
+    #[default]
     Name,
     Size,
     Created,
@@ -311,11 +299,6 @@ pub enum SortField {
     None,
 }
 
-impl Default for SortField {
-    fn default() -> Self {
-        Self::Name
-    }
-}
 
 impl SortField {
     pub fn all() -> &'static [Self] {
@@ -353,11 +336,6 @@ impl SortField {
     }
 }
 
-impl Default for ColorScheme {
-    fn default() -> Self {
-        Self::Vibrant
-    }
-}
 
 impl ColorScheme {
     pub fn all() -> &'static [Self] {
@@ -594,12 +572,11 @@ impl TuiConfig {
         };
         let mut cfg: TuiConfig = toml::from_str(&raw).unwrap_or_default();
         // Migrate legacy single-value `image_protocol` into per-terminal map
-        if let Some(proto) = cfg.image_protocol.take() {
-            if cfg.image_protocols.is_empty() {
+        if let Some(proto) = cfg.image_protocol.take()
+            && cfg.image_protocols.is_empty() {
                 let term = Self::detect_terminal();
                 cfg.image_protocols.insert(term, proto);
             }
-        }
         cfg
     }
 
@@ -624,7 +601,7 @@ impl TuiConfig {
 
 /// Sort a list of entries in-place based on the given sort field and direction.
 /// For all sort modes except `None`, folders are always sorted before files.
-pub fn sort_entries(entries: &mut Vec<crate::pikpak::Entry>, field: SortField, reverse: bool) {
+pub fn sort_entries(entries: &mut [crate::pikpak::Entry], field: SortField, reverse: bool) {
     use crate::pikpak::EntryKind;
 
     match field {

@@ -120,8 +120,8 @@ impl LocalPathInput {
 
     /// Write the selected candidate into value. Returns true if applied.
     pub fn confirm_selected(&mut self) -> bool {
-        if let Some(idx) = self.candidate_idx {
-            if let Some((name, is_dir)) = self.candidates.get(idx) {
+        if let Some(idx) = self.candidate_idx
+            && let Some((name, is_dir)) = self.candidates.get(idx) {
                 let suffix = if *is_dir { "/" } else { "" };
                 self.value = join_path(&self.completion_base, &format!("{}{}", name, suffix));
                 self.candidates.clear();
@@ -129,7 +129,6 @@ impl LocalPathInput {
                 self.completion_base.clear();
                 return true;
             }
-        }
         false
     }
 

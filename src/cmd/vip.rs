@@ -17,14 +17,11 @@ pub fn run() -> Result<()> {
     }
 
     // Invite code
-    match client.invite_code() {
-        Ok(code) => println!("Invite Code: {}", code),
-        Err(_) => {}
-    }
+    if let Ok(code) = client.invite_code() { println!("Invite Code: {}", code) }
 
     // Transfer quota
-    if let Ok(tq) = client.transfer_quota() {
-        if let Some(base) = tq.base {
+    if let Ok(tq) = client.transfer_quota()
+        && let Some(base) = tq.base {
             let fmt = |used: u64, total: u64| -> String {
                 format!("{} / {} used", super::format_size(used), super::format_size(total))
             };
@@ -47,7 +44,6 @@ pub fn run() -> Result<()> {
                 }
             }
         }
-    }
 
     Ok(())
 }

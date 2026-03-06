@@ -60,7 +60,7 @@ pub fn run(args: &[String]) -> Result<()> {
             let name = ev.file_name.as_deref().unwrap_or("?").to_string();
             let is_folder = ev.reference_resource.as_ref()
                 .and_then(|r| r.kind.as_deref())
-                .map_or(false, |k| k.contains("folder"));
+                .is_some_and(|k| k.contains("folder"));
             let kind_icon = if is_folder {
                 if nerd_font { "\u{f07b} " } else { "[D]" }
             } else if nerd_font { "\u{f15b} " } else { "[F]" };
@@ -84,8 +84,8 @@ pub fn run(args: &[String]) -> Result<()> {
 
     // Dim header
     println!(
-        "\x1b[2m{:<w_event$}  {:<w_icon$}  {:<w_name$}  {}\x1b[0m",
-        "EVENT", "", "NAME", "TIME",
+        "\x1b[2m{:<w_event$}  {:<w_icon$}  {:<w_name$}  TIME\x1b[0m",
+        "EVENT", "", "NAME",
     );
 
     for r in &rows {

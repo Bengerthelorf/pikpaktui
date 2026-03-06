@@ -451,7 +451,7 @@ pub fn print_entries_short(entries: &[pikpak::Entry], nerd_font: bool) {
     let max_width = display_widths.iter().copied().max().unwrap_or(1);
     let col_width = max_width + 2;
     let num_cols = (term_width / col_width).max(1);
-    let num_rows = (entries.len() + num_cols - 1) / num_cols;
+    let num_rows = entries.len().div_ceil(num_cols);
 
     for row in 0..num_rows {
         for col in 0..num_cols {
