@@ -110,11 +110,3 @@ Issues and PRs welcome! See [GitHub Issues](https://github.com/Bengerthelorf/pik
 ## License
 
 [Apache-2.0](LICENSE)
-
----
-
-<div align="center">
-
-[![Star History Chart](https://api.star-history.com/svg?repos=Bengerthelorf/pikpaktui&type=Timeline)](https://www.star-history.com/#Bengerthelorf/pikpaktui&Timeline)
-
-</div>
