@@ -1,6 +1,7 @@
 pub mod cat;
 pub mod complete_path;
 pub mod completions;
+pub mod login;
 pub mod cp;
 pub mod download;
 pub mod events;
@@ -46,6 +47,7 @@ pub const COMMAND_GROUPS: &[(&str, &[&str])] = &[
     ("Cloud Download",    &["offline", "tasks"]),
     ("Trash",             &["trash", "untrash"]),
     ("Starred & Activity",&["star", "unstar", "starred", "events"]),
+    ("Auth",              &["login"]),
     ("Account",           &["quota", "vip"]),
     ("Utility",           &["completions"]),
 ];
@@ -359,6 +361,24 @@ fn command_help_text_inner(cmd: &str) -> (&'static str, &'static str, String) {
                  {ex}  pikpaktui starred{R}\n\
                  {ex}  pikpaktui starred 50{R}\n",
                 ex = D,
+            ),
+        ),
+        "login" => (
+            "login [options]",
+            "Log in to PikPak and save credentials",
+            format!(
+                "{B}OPTIONS:{R}\n\
+                 {opt}  -u, --user <email>     {d}PikPak account email{R}\n\
+                 {opt}  -p, --password <pass>  {d}PikPak account password{R}\n\
+                 \n{B}ENVIRONMENT:{R}\n\
+                 {opt}  PIKPAK_USER            {d}Account email (fallback){R}\n\
+                 {opt}  PIKPAK_PASS            {d}Account password (fallback){R}\n\
+                 \n{B}PRIORITY:{R}\n\
+                 {d}  CLI flags take precedence over environment variables.{R}\n\
+                 \n{B}EXAMPLES:{R}\n\
+                 {ex}  pikpaktui login -u user@example.com -p mypassword{R}\n\
+                 {ex}  PIKPAK_USER=user@example.com PIKPAK_PASS=pass pikpaktui login{R}\n",
+                opt = G, d = D, ex = D,
             ),
         ),
         "vip" => (
