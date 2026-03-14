@@ -670,15 +670,42 @@ impl App {
                 _ => None,
             };
 
+            let update_badge: Option<(Vec<Span<'static>>, u16)> =
+                if self.config.update_check == crate::config::UpdateCheck::Notify {
+                    self.update_available.as_ref().map(|v| {
+                        let text = format!(" ↑ v{} ", v);
+                        let w = text.len() as u16 + 3;
+                        let spans = vec![
+                            Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
+                            Span::styled(text, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                        ];
+                        (spans, w)
+                    })
+                } else {
+                    None
+                };
+
+            let mut right_spans: Vec<Span<'static>> = Vec::new();
+            let mut right_w: u16 = 0;
+
+            if let Some((badge_spans, badge_w)) = update_badge {
+                right_spans.extend(badge_spans);
+                right_w += badge_w;
+            }
             if let Some((quota_spans, quota_w)) = quota_info {
-                let quota_w = quota_w.min(bar_area.width.saturating_sub(4));
-                let help_w = bar_area.width.saturating_sub(quota_w);
+                right_spans.extend(quota_spans);
+                right_w += quota_w;
+            }
+
+            if right_w > 0 {
+                let right_w = right_w.min(bar_area.width.saturating_sub(4));
+                let help_w = bar_area.width.saturating_sub(right_w);
                 let chunks = Layout::default()
                     .direction(Direction::Horizontal)
-                    .constraints([Constraint::Length(help_w), Constraint::Length(quota_w)])
+                    .constraints([Constraint::Length(help_w), Constraint::Length(right_w)])
                     .split(bar_area);
                 f.render_widget(Paragraph::new(Line::from(help_spans)), chunks[0]);
-                f.render_widget(Paragraph::new(Line::from(quota_spans)), chunks[1]);
+                f.render_widget(Paragraph::new(Line::from(right_spans)), chunks[1]);
             } else {
                 f.render_widget(Paragraph::new(Line::from(help_spans)), bar_area);
             }

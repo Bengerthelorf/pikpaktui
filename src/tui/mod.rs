@@ -306,6 +306,7 @@ struct App {
     quota_used: Option<u64>,
     quota_limit: Option<u64>,
     shares_pending: bool,
+    update_available: Option<String>,
 }
 
 impl App {
@@ -364,6 +365,7 @@ impl App {
             quota_used: None,
             quota_limit: None,
             shares_pending: false,
+            update_available: None,
         };
         app.refresh();
         app.fetch_quota();
@@ -442,6 +444,7 @@ impl App {
             quota_used: None,
             quota_limit: None,
             shares_pending: false,
+            update_available: None,
         }
     }
 
@@ -823,6 +826,7 @@ impl App {
                         env!("CARGO_PKG_VERSION"),
                         version
                     ));
+                    self.update_available = Some(version);
                 }
                 OpResult::UpdateAvailable(None) => {}
             }
@@ -905,6 +909,9 @@ impl App {
     }
 
     fn check_for_update_async(&self) {
+        if self.config.update_check == crate::config::UpdateCheck::Off {
+            return;
+        }
         let tx = self.result_tx.clone();
         std::thread::spawn(move || {
             let _ = tx.send(OpResult::UpdateAvailable(

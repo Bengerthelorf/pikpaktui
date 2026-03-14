@@ -4,11 +4,12 @@ mod pikpak;
 mod theme;
 mod tui;
 
-use crate::config::{AppConfig, TuiConfig};
+use crate::config::{AppConfig, TuiConfig, UpdateCheck};
 use crate::pikpak::PikPak;
 use anyhow::{Result, anyhow};
 use std::env;
 use std::process::exit;
+use std::sync::mpsc;
 
 fn main() {
     if let Err(e) = entry() {
@@ -28,7 +29,9 @@ fn entry() -> Result<()> {
         return cmd::print_command_help(&args[0]);
     }
 
-    match args[0].as_str() {
+    let update_rx = cli_update_check(&args);
+
+    let result = match args[0].as_str() {
         "--version" | "-V" | "version" => {
             println!("pikpaktui {}", env!("CARGO_PKG_VERSION"));
             Ok(())
@@ -64,7 +67,40 @@ fn entry() -> Result<()> {
         other => Err(anyhow!(
             "unknown command: {other}\nRun `pikpaktui --help` for usage."
         )),
+    };
+
+    if let Some(rx) = update_rx {
+        if let Ok(Some(version)) = rx.try_recv() {
+            eprintln!(
+                "\x1b[33m↑ Update available: v{} → v{} (run `pikpaktui update`)\x1b[0m",
+                env!("CARGO_PKG_VERSION"),
+                version
+            );
+        }
     }
+
+    result
+}
+
+fn cli_update_check(args: &[String]) -> Option<mpsc::Receiver<Option<String>>> {
+    let skip = matches!(
+        args.first().map(|s| s.as_str()),
+        Some("update" | "completions" | "__complete_path")
+    );
+    if skip {
+        return None;
+    }
+
+    let config = TuiConfig::load();
+    if config.update_check != UpdateCheck::Notify {
+        return None;
+    }
+
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(cmd::update::check_for_update());
+    });
+    Some(rx)
 }
 
 fn run_tui() -> Result<()> {

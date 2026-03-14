@@ -468,6 +468,51 @@ pub struct TuiConfig {
     pub player: Option<String>,
     #[serde(default = "default_download_jobs")]
     pub download_jobs: usize,
+    #[serde(default)]
+    pub update_check: UpdateCheck,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum UpdateCheck {
+    #[default]
+    Notify,
+    Quiet,
+    Off,
+}
+
+impl UpdateCheck {
+    pub fn all() -> &'static [Self] {
+        &[Self::Notify, Self::Quiet, Self::Off]
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Notify => "Notify",
+            Self::Quiet => "Quiet",
+            Self::Off => "Off",
+        }
+    }
+
+    pub fn description(&self) -> &'static str {
+        match self {
+            Self::Notify => "Check & show in status bar + CLI",
+            Self::Quiet => "Check silently, log only",
+            Self::Off => "No update checking",
+        }
+    }
+
+    pub fn next(&self) -> Self {
+        let all = Self::all();
+        let idx = all.iter().position(|s| s == self).unwrap();
+        all[(idx + 1) % all.len()]
+    }
+
+    pub fn prev(&self) -> Self {
+        let all = Self::all();
+        let idx = all.iter().position(|s| s == self).unwrap();
+        all[(idx + all.len() - 1) % all.len()]
+    }
 }
 
 fn default_download_jobs() -> usize { 1 }
@@ -506,6 +551,7 @@ impl Default for TuiConfig {
             image_protocol: None,
             player: None,
             download_jobs: 1,
+            update_check: UpdateCheck::default(),
         }
     }
 }
