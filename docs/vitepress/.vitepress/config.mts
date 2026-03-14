@@ -6,7 +6,7 @@ export default defineConfig({
   base: '/pikpaktui/',
 
   head: [
-    ['link', { rel: 'icon', type: 'image/svg+xml', href: '/pikpaktui/favicon.svg' }],
+    ['link', { rel: 'icon', type: 'image/svg+xml', href: '/pikpaktui/images/icon.svg' }],
   ],
 
   locales: {
