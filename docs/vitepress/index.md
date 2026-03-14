@@ -37,6 +37,9 @@ features:
   - icon: 🔧
     title: Fully Configurable
     details: Nerd Font icons, custom RGB color schemes, per-terminal image protocols (Kitty/iTerm2/Sixel), concurrent download jobs, external video player, and more.
+  - icon: 🤖
+    title: AI Agent Friendly
+    details: Non-interactive login, JSON output, dry-run support, and clear exit codes — designed to work with OpenClaw and other AI agents out of the box.
   - icon: 💚
     title: Open Source
     details: Apache-2.0 licensed. Contributions welcome — issues, PRs, and feature requests on GitHub. Self-updating binary keeps you on the latest version.
