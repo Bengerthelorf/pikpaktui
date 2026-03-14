@@ -1079,8 +1079,8 @@ impl App {
 
                 match render_mode {
                     ThumbnailRenderMode::Auto => {
+                        let mut used_protocol = false;
                         if let Ok(mut picker) = Picker::from_query_stdio() {
-                            // Apply user-configured protocol override
                             match self.config.current_image_protocol() {
                                 crate::config::ImageProtocol::Auto => {
                                     // Fix: iTerm2 incorrectly detected as Kitty
@@ -1106,6 +1106,17 @@ impl App {
                             let mut protocol = picker.new_resize_protocol(img_display);
                             let img_widget = StatefulImage::default();
                             f.render_stateful_widget(img_widget, render_rect, &mut protocol);
+                            used_protocol = true;
+                        }
+                        // Fallback to halfblock when no protocol is available
+                        if !used_protocol {
+                            let colored_lines = render_image_to_colored_lines(
+                                image,
+                                image_area.width as u32,
+                                image_area.height as u32,
+                            );
+                            let colored_para = Paragraph::new(Text::from(colored_lines));
+                            f.render_widget(colored_para, image_area);
                         }
                     }
                     ThumbnailRenderMode::ColoredHalf => {
@@ -2872,6 +2883,9 @@ impl App {
                             let img_display = upscale_for_rect(img, render_rect, picker.font_size());
                             let mut protocol = picker.new_resize_protocol(img_display);
                             f.render_stateful_widget(StatefulImage::default(), render_rect, &mut protocol);
+                        } else {
+                            let colored_lines = render_image_to_colored_lines(img, thumb_col_w as u32, image_rows as u32);
+                            f.render_widget(Paragraph::new(Text::from(colored_lines)), img_rect);
                         }
                     }
                     ThumbnailRenderMode::ColoredHalf => {
