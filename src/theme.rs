@@ -120,14 +120,11 @@ pub fn is_text_previewable(entry: &Entry) -> bool {
 
     matches!(
         ext.as_str(),
-        // Document (text)
         "txt" | "md" | "csv" | "rtf"
-        // Code
         | "rs" | "py" | "js" | "go" | "c" | "cpp" | "h" | "hpp" | "java" | "kt"
         | "swift" | "rb" | "php" | "sh" | "bash" | "zsh" | "lua" | "zig" | "toml" | "yaml"
         | "yml" | "json" | "xml" | "html" | "css" | "sql" | "r" | "dart" | "ex" | "exs"
         | "hs" | "ml" | "scala" | "clj" | "nim" | "v" | "vue" | "jsx" | "tsx" | "svelte"
-        // Subtitle / config
         | "srt" | "ass" | "ssa" | "vtt" | "sub" | "log" | "ini" | "cfg" | "conf" | "env"
         | "properties" | "nfo"
     )

@@ -562,7 +562,6 @@ impl App {
         let (main_area, help_bar_area) = self.layout_with_help_bar(f.area());
 
         if self.config.show_preview {
-            // Three-column miller columns: parent 20% | current 40% | preview 40%
             let chunks = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([
@@ -580,12 +579,10 @@ impl App {
             self.draw_current_pane(f, chunks[1]);
             self.draw_preview_pane(f, chunks[2]);
 
-            // Log overlay (covers right pane area)
             if self.show_logs_overlay {
                 self.draw_log_overlay(f, chunks[2]);
             }
         } else {
-            // Two-column: parent 25% | current 75%
             let chunks = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([Constraint::Percentage(25), Constraint::Percentage(75)])
@@ -598,7 +595,6 @@ impl App {
             self.draw_parent_pane(f, chunks[0]);
             self.draw_current_pane(f, chunks[1]);
 
-            // Log overlay on rightmost 40%
             if self.show_logs_overlay {
                 let log_area = Layout::default()
                     .direction(Direction::Horizontal)
@@ -608,13 +604,10 @@ impl App {
             }
         }
 
-        // Help bar
         if let Some(bar_area) = help_bar_area {
             let pairs = self.help_pairs();
             let mut help_spans = vec![Span::raw(" ")];
             help_spans.extend(Self::styled_help_spans(&pairs));
-
-            // Build quota spans — style determined by config
             let quota_info = match (self.quota_used, self.quota_limit) {
                 (Some(used), Some(limit)) if limit > 0 => {
                     let pct = (used as f64 / limit as f64).clamp(0.0, 1.0);
@@ -704,7 +697,6 @@ impl App {
 
     fn draw_parent_pane(&self, f: &mut Frame, area: ratatui::layout::Rect) {
         if self.breadcrumb.is_empty() {
-            // At root — show empty panel
             let p = Paragraph::new(Text::from(vec![])).block(
                 self.styled_block()
                     .title(" / ")
@@ -1141,7 +1133,6 @@ impl App {
                 let info_p = Paragraph::new(Text::from(info_lines));
                 f.render_widget(info_p, info_area);
 
-                // Render border with title
                 let title = self
                     .entries
                     .get(self.selected)
@@ -1233,7 +1224,6 @@ impl App {
         let visible = area.height.saturating_sub(2) as usize;
         let content_width = area.width.saturating_sub(2).max(1) as usize;
 
-        // Pre-wrap all log messages into visual lines
         let all_lines = super::wrap_logs(
             self.logs.iter().map(|s| s.as_str()),
             content_width,
@@ -1247,7 +1237,6 @@ impl App {
             Some(y) => y.min(max_scroll),
         };
 
-        // Slice visible window
         let visible_lines: Vec<Line> = all_lines
             .into_iter()
             .skip(scroll_y)
@@ -1800,7 +1789,6 @@ impl App {
         input: &PathInput,
         cur: &str,
     ) {
-        // Determine overlay height based on candidates
         let candidate_lines = input.candidates.len().min(8);
         let base_height = 6; // padding + input line + help line
         let total_lines = base_height
@@ -1824,7 +1812,6 @@ impl App {
             ]),
         ];
 
-        // Show candidates
         if !input.candidates.is_empty() {
             lines.push(Line::from(""));
             for (i, name) in input.candidates.iter().enumerate().take(8) {
@@ -1890,7 +1877,6 @@ impl App {
     fn draw_picker(&self, f: &mut Frame) {
         let (outer, chunks) = self.build_picker_layout(f);
 
-        // Left: source (read-only)
         let source_items: Vec<ListItem> = self
             .entries
             .iter()
@@ -1921,7 +1907,6 @@ impl App {
             .highlight_symbol("  ");
         f.render_stateful_widget(source_list, chunks[0], &mut source_state);
 
-        // Right: picker
         let (is_move, source_entry, picker) = match &self.input {
             InputMode::MovePicker { source, picker } => (true, source, picker),
             InputMode::CopyPicker { source, picker } => (false, source, picker),
@@ -1931,7 +1916,6 @@ impl App {
         let op = if is_move { "Move" } else { "Copy" };
         self.draw_picker_right_pane(f, chunks[1], picker, is_move);
 
-        // Help bar
         if self.config.show_help_bar {
             let pairs = self.help_pairs();
             let mut spans = vec![
@@ -1956,7 +1940,6 @@ impl App {
     fn draw_cart_picker(&self, f: &mut Frame) {
         let (outer, chunks) = self.build_picker_layout(f);
 
-        // Left: cart contents (read-only)
         let cart_items: Vec<ListItem> = self
             .cart
             .iter()
@@ -1990,7 +1973,6 @@ impl App {
         let mut cart_state = ListState::default();
         f.render_stateful_widget(cart_list, chunks[0], &mut cart_state);
 
-        // Right: destination folder picker
         let (is_move, picker) = match &self.input {
             InputMode::CartMovePicker { picker } => (true, picker),
             InputMode::CartCopyPicker { picker } => (false, picker),
@@ -2000,7 +1982,6 @@ impl App {
         let op = if is_move { "Move" } else { "Copy" };
         self.draw_picker_right_pane(f, chunks[1], picker, is_move);
 
-        // Help bar
         if self.config.show_help_bar {
             let pairs = self.help_pairs();
             let mut spans = vec![
@@ -2077,12 +2058,10 @@ impl App {
     pub(super) fn draw_help_sheet(&self, f: &mut Frame) {
         let term = f.area();
 
-        // Adaptive width — wider and flatter
         let sheet_w = term.width.saturating_sub(4).clamp(44, 92);
         let inner_w = sheet_w.saturating_sub(2) as usize;
         let show_art = inner_w >= 70;
 
-        // Define help sections based on mode
         type HelpSection<'a> = (&'a str, Vec<(&'a str, &'a str)>);
 
         let sections: Vec<HelpSection> = match &self.input {
@@ -2165,10 +2144,8 @@ impl App {
 
         // ≤3 sections: one column each. >3: first two share column 0.
         let columns: Vec<Vec<(&str, &Vec<(&str, &str)>)>> = if sections.len() <= 3 {
-            // Simple: one section per column
             sections.iter().map(|(name, items)| vec![(*name, items)]).collect()
         } else {
-            // Group: first two sections share column 0
             let mut cols: Vec<Vec<(&str, &Vec<(&str, &str)>)>> = Vec::new();
             cols.push(vec![
                 (sections[0].0, &sections[0].1),
@@ -2183,7 +2160,6 @@ impl App {
         let col_count = columns.len();
         let col_w = inner_w / col_count;
 
-        // Calculate max rows per column (title line + items for each group, with blank separator)
         let col_heights: Vec<usize> = columns.iter().map(|groups| {
             let mut h = 0;
             for (i, (_, items)) in groups.iter().enumerate() {
@@ -2195,7 +2171,6 @@ impl App {
         }).collect();
         let max_rows = col_heights.iter().copied().max().unwrap_or(0);
 
-        // Height — help content takes priority over ASCII art
         let min_content_h = max_rows + 2 + 2; // items + hint/blank + borders
         let art_lines: usize = 7; // 5 art + 2 blank lines
         let show_art = show_art && (term.height as usize) >= min_content_h + art_lines;
@@ -2203,7 +2178,6 @@ impl App {
         let content_h = art_h + max_rows + 2; // art + items + blank + hint
         let sheet_h = ((content_h + 2) as u16).min(term.height); // +2 borders
 
-        // Center the popup
         let x = (term.width.saturating_sub(sheet_w)) / 2;
         let y = (term.height.saturating_sub(sheet_h)) / 2;
         let sheet_area = ratatui::layout::Rect::new(x, y, sheet_w, sheet_h);
@@ -2218,7 +2192,6 @@ impl App {
 
         let mut lines: Vec<Line> = Vec::new();
 
-        // ASCII art banner
         if show_art {
             let art = [
                 r#"    dMMMMb  dMP dMP dMP dMMMMb  .aMMMb  dMP dMP dMMMMMMP dMP dMP dMP"#,
@@ -2249,8 +2222,6 @@ impl App {
             lines.push(Line::from(""));
         }
 
-        // Pre-build each column's row content: (RowKind, data)
-        // RowKind: Title(name), Item(key, desc), Blank
         enum RowKind<'a> { Title(&'a str), Item(&'a str, &'a str), Blank }
         let col_rows: Vec<Vec<RowKind>> = columns.iter().map(|groups| {
             let mut rows = Vec::new();
@@ -2264,7 +2235,6 @@ impl App {
             rows
         }).collect();
 
-        // Render rows side by side
         for row in 0..max_rows {
             let mut spans = Vec::new();
             for (ci, rows) in col_rows.iter().enumerate() {
@@ -2300,7 +2270,6 @@ impl App {
             lines.push(Line::from(spans));
         }
 
-        // Close hint
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
             " Press any key to close",
@@ -2320,8 +2289,6 @@ impl App {
         );
         f.render_widget(p, sheet_area);
     }
-
-    // --- Cart overlay ---
 
     fn draw_cart_overlay(&self, f: &mut Frame) {
         let total_size: u64 = self.cart.iter().map(|e| e.size).sum();
@@ -2385,8 +2352,6 @@ impl App {
             area,
         );
     }
-
-    // --- Download input overlay ---
 
     /// Appends a blank separator line followed by a sliding-window candidate list to `lines`.
     /// Does nothing if `candidates` is empty.
@@ -2478,8 +2443,6 @@ impl App {
         );
     }
 
-    // --- Upload input overlay ---
-
     fn draw_upload_input_overlay(&self, f: &mut Frame, input: &LocalPathInput, cur: &str) {
         let candidate_lines = input.candidates.len().min(8);
         let base_height = 7;
@@ -2523,8 +2486,6 @@ impl App {
         );
     }
 
-    // --- Offline input overlay ---
-
     fn draw_offline_input_overlay(&self, f: &mut Frame, value: &str, cur: &str) {
         let area = self.prepare_overlay(f, 70, 25);
         let (bc, tc) = if self.is_vibrant() {
@@ -2551,8 +2512,6 @@ impl App {
             area,
         );
     }
-
-    // --- Offline tasks view (full screen) ---
 
     fn draw_offline_tasks_overlay(
         &self,
@@ -2648,8 +2607,6 @@ impl App {
             );
         }
     }
-    // --- Info loading overlay ---
-
     fn draw_info_loading_overlay(&self, f: &mut Frame) {
         let area = self.prepare_overlay(f, 45, 20);
 
@@ -2683,8 +2640,6 @@ impl App {
         f.render_widget(p, area);
     }
 
-    // --- Info overlay ---
-
     fn draw_info_overlay(
         &self,
         f: &mut Frame,
@@ -2706,7 +2661,6 @@ impl App {
         let wrap_w = inner_w.saturating_sub(thumb_col_w) as usize;
         let footer_wrap_w = inner_w as usize;
 
-        // meta_lines: rendered side-by-side with the thumbnail (wraps within text column)
         let mut meta_lines = vec![Line::from("")];
 
         if let Some(id) = &info.id {
@@ -2793,7 +2747,6 @@ impl App {
             }
         }
 
-        // footer_lines: full-width below the side-by-side area (link can be long)
         let mut footer_lines = Vec::new();
 
         if let Some(link) = &info.web_content_link {
@@ -2852,7 +2805,6 @@ impl App {
                 None
             };
 
-            // Image height based on thumb column width (not full overlay width)
             let image_rows: u16 = if let Some(img) = image {
                 match render_mode {
                     ThumbnailRenderMode::Auto => {
@@ -2887,13 +2839,11 @@ impl App {
                 height: inner_h,
             };
 
-            // Vertical split: top = side-by-side meta+thumb, bottom = full-width footer (link + hint)
             let v_chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Length(top_h), Constraint::Min(0)])
                 .split(inner);
 
-            // Horizontal split within top: metadata text on left, thumbnail on right
             let h_chunks = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([Constraint::Min(0), Constraint::Length(thumb_col_w)])
@@ -2904,7 +2854,6 @@ impl App {
 
             let thumb_area = h_chunks[1];
             if let Some(img) = image {
-                // Vertically center the image in the right column
                 let img_rect = if image_rows < thumb_area.height {
                     let y_offset = (thumb_area.height - image_rows) / 2;
                     ratatui::layout::Rect {
@@ -2939,7 +2888,6 @@ impl App {
                     ThumbnailRenderMode::Off => {}
                 }
             } else {
-                // Spinner centered vertically in the thumbnail column
                 let spinner_y = thumb_area.y + thumb_area.height / 2;
                 let frame = SPINNER_FRAMES[self.spinner_idx];
                 f.render_widget(
@@ -2967,8 +2915,6 @@ impl App {
             f.render_widget(p, area);
         }
     }
-
-    // --- Text preview overlay ---
 
     fn draw_text_preview_overlay(
         &self,
@@ -3007,8 +2953,6 @@ impl App {
         );
         f.render_widget(p, area);
     }
-
-    // --- Folder listing popup ---
 
     fn draw_info_folder_overlay(&self, f: &mut Frame, name: &str, entries: &[Entry]) {
         let visible = entries.len().min(20);
@@ -3063,8 +3007,6 @@ impl App {
         f.render_widget(p, area);
     }
 
-    // --- Settings overlay ---
-
     fn draw_settings_overlay(
         &self,
         f: &mut Frame,
@@ -3077,8 +3019,6 @@ impl App {
         self.settings_area.set(area);
         clear_overlay_area(f, area);
 
-        // Categorized settings: (category_name, settings_list)
-        // Each setting: (name, description, value)
         type SettingItem = (String, String, String);
         let categories: Vec<(&str, Vec<SettingItem>)> = vec![
             (
@@ -3193,7 +3133,6 @@ impl App {
             ),
         ];
 
-        // Map each item index to its line position for scrolling
         let mut item_line_map: Vec<usize> = Vec::new();
         let mut line_idx = 0;
         for (_cat_name, items) in &categories {
@@ -3256,7 +3195,6 @@ impl App {
                 ];
 
                 if is_text_input_item && is_selected && editing {
-                    // Show as inline text input: "Player Command: value█"
                     name_value_spans.push(Span::styled(": ", Style::default().fg(Color::DarkGray)));
                     let display_val = draft.player.as_deref().unwrap_or("");
                     name_value_spans.push(Span::styled(
@@ -3264,7 +3202,6 @@ impl App {
                         Style::default().fg(Color::Yellow),
                     ));
                 } else {
-                    // Right-align value with padding
                     let terminal_width = area.width.saturating_sub(4) as usize;
                     let name_len = prefix.len() + name.len();
                     let value_len = value.len();
@@ -3286,7 +3223,6 @@ impl App {
 
         lines.push(Line::from(""));
 
-        // Help bar
         let hints = if editing {
             vec![
                 ("Left/Right", "change"),
@@ -3304,7 +3240,6 @@ impl App {
         };
         lines.push(Self::hint_line(&hints));
 
-        // Apply scroll offset
         let visible_lines: Vec<Line> = lines
             .into_iter()
             .skip(scroll_offset)
@@ -3323,8 +3258,6 @@ impl App {
             area,
         );
     }
-
-    // --- Image protocol settings overlay ---
 
     fn draw_image_protocol_overlay(
         &self,
@@ -3416,8 +3349,6 @@ impl App {
         );
     }
 
-    // --- Custom color settings overlay ---
-
     fn draw_custom_color_overlay(
         &self,
         f: &mut Frame,
@@ -3457,7 +3388,6 @@ impl App {
                 Style::default().fg(Color::Reset)
             };
 
-            // Show color preview and RGB values
             let color_preview = "███";
             let rgb_text = format!("R:{:3} G:{:3} B:{:3}", r, g, b);
 
@@ -3469,7 +3399,6 @@ impl App {
                 Span::styled(rgb_text, Style::default().fg(Color::DarkGray)),
             ];
 
-            // Show editing indicator
             if is_selected && editing_rgb {
                 let component_name = match rgb_component {
                     0 => "R",
@@ -3510,8 +3439,6 @@ impl App {
             area,
         );
     }
-
-    // --- Share overlays ---
 
     fn draw_share_prompt_overlay(&self, f: &mut Frame) {
         let area = self.prepare_overlay(f, 50, 20);
@@ -3616,7 +3543,6 @@ impl App {
             (Color::Cyan, Color::LightBlue)
         };
 
-        // Outer: content + optional help bar
         let (main_area, help_bar_area) = self.layout_with_help_bar(f.area());
 
         if shares.is_empty() {
@@ -3635,7 +3561,6 @@ impl App {
                 main_area,
             );
         } else {
-            // Two-pane: list (38%) | detail (62%)
             let panes = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([Constraint::Percentage(38), Constraint::Percentage(62)])
@@ -3643,14 +3568,10 @@ impl App {
             let list_area = panes[0];
             let detail_area = panes[1];
 
-            // --- Left pane: list ---
             let list_title = format!(" My Shares ({}) ", shares.len());
-            // badge section: "  public  permanent" = 2+7+2+9 = 20 chars; prefix = 3
             const BADGE_W: u16 = 20;
             const PREFIX_W: u16 = 3;
             let name_col = list_area.width.saturating_sub(PREFIX_W + BADGE_W + 2) as usize;
-            // usable rows: borders(2) + leading blank(1) + confirm/nothing(1) = subtract 4
-            // but we removed the inner hint line, so just borders + blank
             let usable = list_area.height.saturating_sub(3) as usize;
             let scroll_offset = widgets::scroll_offset(selected, usable);
 
@@ -3672,7 +3593,6 @@ impl App {
                 let expiry_str = share_expiry_label(&share.expiration_days);
                 let expiry_color = share_expiry_color(&share.expiration_days);
 
-                // Pad title so badges start at a fixed column
                 let title = truncate_name(&share.title, name_col);
                 let pad = " ".repeat(name_col.saturating_sub(title.chars().count()) + 2);
 
@@ -3693,7 +3613,6 @@ impl App {
                 )));
             }
 
-            // Confirm-delete prompt (only shown when active; no inner hint bar otherwise)
             if confirm_delete.is_some() {
                 list_lines.push(Line::from(""));
                 list_lines.push(Line::from(vec![
@@ -3714,7 +3633,6 @@ impl App {
                 list_area,
             );
 
-            // --- Right pane: detail ---
             let detail_lines = if let Some(share) = shares.get(selected) {
                 share_detail_lines(share, detail_area.width)
             } else {
@@ -3783,14 +3701,12 @@ fn share_detail_lines(share: &crate::pikpak::MyShare, width: u16) -> Vec<Line<'s
 
     let mut lines: Vec<Line<'static>> = vec![Line::from("")];
 
-    // Title
     lines.push(Line::from(vec![
         Span::styled("  Title   ", label),
         Span::styled(share.title.clone(), value.add_modifier(Modifier::BOLD)),
     ]));
     lines.push(Line::from(""));
 
-    // URL (full, wraps visually by truncation)
     lines.push(Line::from(vec![
         Span::styled("  URL     ", label),
         Span::styled(
@@ -3800,7 +3716,6 @@ fn share_detail_lines(share: &crate::pikpak::MyShare, width: u16) -> Vec<Line<'s
     ]));
     lines.push(Line::from(""));
 
-    // Type + expiry on one row
     lines.push(Line::from(vec![
         Span::styled("  Type    ", label),
         Span::styled(type_str, Style::default().fg(type_color)),
@@ -3808,7 +3723,6 @@ fn share_detail_lines(share: &crate::pikpak::MyShare, width: u16) -> Vec<Line<'s
         Span::styled(expiry_str, Style::default().fg(expiry_color)),
     ]));
 
-    // Password (if set)
     if is_pw && !share.pass_code.is_empty() {
         lines.push(Line::from(vec![
             Span::styled("  Pass    ", label),
@@ -3819,14 +3733,12 @@ fn share_detail_lines(share: &crate::pikpak::MyShare, width: u16) -> Vec<Line<'s
         ]));
     }
 
-    // Created
     lines.push(Line::from(vec![
         Span::styled("  Created ", label),
         Span::styled(date, Style::default().fg(Color::Blue)),
     ]));
     lines.push(Line::from(""));
 
-    // Stats row
     let stats = format!(
         "{}   saves {}   files {}",
         views, saves, files
@@ -3837,7 +3749,6 @@ fn share_detail_lines(share: &crate::pikpak::MyShare, width: u16) -> Vec<Line<'s
     ]));
     lines.push(Line::from(""));
 
-    // Share ID (dimmed, for copy/reference)
     lines.push(Line::from(vec![
         Span::styled("  ID      ", label),
         Span::styled(share.share_id.clone(), Style::default().fg(Color::DarkGray)),
@@ -3916,7 +3827,6 @@ fn wrap_labeled_field<'a>(
             }
         }
 
-        // Word boundaries: after spaces, before CJK (width >= 2)
         if ch == ' ' {
             current.push(ch);
             current_w += ch_w;
@@ -3975,8 +3885,6 @@ fn warn_triangle_lines() -> Vec<Line<'static>> {
         .add_modifier(Modifier::BOLD);
     let bg = Style::default().fg(Color::Black).bg(Color::Yellow);
 
-    // Helper: build a row with ▄█ ... █▄ walls and centered inner content
-    // pad = leading spaces, inner_w = inner width, content = centered content str
     let row = |pad: usize, inner: Vec<Span<'static>>| -> Line<'static> {
         let mut spans = vec![Span::styled(" ".repeat(pad), Style::default())];
         spans.push(Span::styled("\u{2584}\u{2588}", w)); // ▄█
@@ -3985,7 +3893,6 @@ fn warn_triangle_lines() -> Vec<Line<'static>> {
         Line::from(spans)
     };
 
-    // Centered ██ on bg within `width` chars
     let bang = |width: usize| -> Vec<Span<'static>> {
         let side = (width - 2) / 2;
         vec![Span::styled(
@@ -3994,33 +3901,23 @@ fn warn_triangle_lines() -> Vec<Line<'static>> {
         )]
     };
 
-    // All spaces on bg (gap row)
     let gap = |width: usize| -> Vec<Span<'static>> { vec![Span::styled(" ".repeat(width), bg)] };
 
     vec![
-        // row 0: tip
         Line::from(Span::styled(
             format!("{}\u{2584}\u{2584}", " ".repeat(10)),
             w,
         )),
-        // row 1: ▄██▄
         Line::from(Span::styled(
             format!("{}\u{2584}\u{2588}\u{2588}\u{2584}", " ".repeat(9)),
             w,
         )),
-        // row 2: inner=2, empty
         row(8, gap(2)),
-        // row 3: inner=4, "!" bar  " ██ "
         row(7, bang(4)),
-        // row 4: inner=6, "!" bar  "  ██  "
         row(6, bang(6)),
-        // row 5: inner=8, "!" bar  "   ██   "
         row(5, bang(8)),
-        // row 6: inner=10, gap
         row(4, gap(10)),
-        // row 7: inner=12, dot  "     ██     "
         row(3, bang(12)),
-        // row 8: base ████████████████
         Line::from(Span::styled(
             format!("{}{}", " ".repeat(3), "\u{2588}".repeat(16)),
             w,

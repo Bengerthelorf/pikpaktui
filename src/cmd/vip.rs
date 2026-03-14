@@ -16,10 +16,8 @@ pub fn run() -> Result<()> {
         println!("No VIP info available");
     }
 
-    // Invite code
     if let Ok(code) = client.invite_code() { println!("Invite Code: {}", code) }
 
-    // Transfer quota
     if let Ok(tq) = client.transfer_quota()
         && let Some(base) = tq.base {
             let fmt = |used: u64, total: u64| -> String {

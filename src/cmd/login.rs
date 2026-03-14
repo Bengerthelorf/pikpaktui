@@ -36,7 +36,6 @@ pub fn run(args: &[String]) -> Result<()> {
         i += 1;
     }
 
-    // Fall back to environment variables
     let user = user
         .or_else(|| std::env::var("PIKPAK_USER").ok())
         .ok_or_else(|| {

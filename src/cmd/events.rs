@@ -69,20 +69,17 @@ pub fn run(args: &[String]) -> Result<()> {
         })
         .collect();
 
-    // Compute column widths
     let w_event = rows.iter().map(|r| r.event.len()).max().unwrap_or(5).max(5);
     let w_icon = rows.iter().map(|r| UnicodeWidthStr::width(r.kind_icon)).max().unwrap_or(3).max(3);
     let w_name = rows.iter().map(|r| UnicodeWidthStr::width(r.name.as_str())).max().unwrap_or(4).max(4);
     let w_date = rows.iter().map(|r| r.date.len()).max().unwrap_or(7).max(7);
 
-    // Clamp name to terminal width
     let term_width = crossterm::terminal::size()
         .map(|(w, _)| w as usize)
         .unwrap_or(120);
     let fixed = w_event + 2 + w_icon + 2 + w_date + 8;
     let w_name = w_name.min(term_width.saturating_sub(fixed).max(12));
 
-    // Dim header
     println!(
         "\x1b[2m{:<w_event$}  {:<w_icon$}  {:<w_name$}  TIME\x1b[0m",
         "EVENT", "", "NAME",

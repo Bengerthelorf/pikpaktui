@@ -33,7 +33,6 @@ pub(super) fn center_image_rect(img: &image::DynamicImage, area: Rect) -> Rect {
         return area;
     }
     let orig_aspect = orig_w as f32 / orig_h as f32;
-    // Natural width (cols) if the image fills all available rows
     let natural_w = (area.height as f32 * 2.0 * orig_aspect) as u16;
     if natural_w >= area.width {
         // Landscape / square: already fills full width, no shift needed
@@ -155,7 +154,6 @@ pub(super) fn render_image_to_grayscale_lines(
     for y in 0..final_height_chars {
         let mut line_str = if left_pad > 0 { " ".repeat(left_pad) } else { String::new() };
         for x in 0..w {
-            // Average 2 vertical pixels
             let y1 = (y * 2).min(h - 1);
             let y2 = (y * 2 + 1).min(h - 1);
 

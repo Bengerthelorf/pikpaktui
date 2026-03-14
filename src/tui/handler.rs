@@ -41,13 +41,11 @@ enum PathInputContext {
 
 impl App {
     pub(super) fn handle_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> Result<bool> {
-        // Help sheet: any key closes it
         if self.show_help_sheet {
             self.show_help_sheet = false;
             return Ok(false);
         }
 
-        // Ctrl+C: treat as quit globally, regardless of current mode
         if code == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL) {
             if self.download_state.has_active() {
                 self.input = InputMode::ConfirmQuit;
@@ -188,7 +186,6 @@ impl App {
                         return Ok(true);
                     }
                     KeyCode::Char('n') | KeyCode::Esc => {
-                        // cancel, return to Normal
                     }
                     _ => {
                         self.input = InputMode::ConfirmQuit;
@@ -199,7 +196,6 @@ impl App {
             InputMode::GotoPath { mut query } => {
                 match handle_text_input(&mut query, code) {
                     Some(true) => {
-                        // Enter — resolve path in background
                         let q = query.trim().to_string();
                         if !q.is_empty() {
                             self.loading = true;
@@ -381,7 +377,6 @@ impl App {
             } => {
                 match code {
                     KeyCode::Down | KeyCode::Char('j') => {
-                        // Find next available item
                         let mut next = selected + 1;
                         while next < medias.len() && !medias[next].available {
                             next += 1;
@@ -503,7 +498,6 @@ impl App {
                 Ok(false)
             }
             InputMode::InfoView { .. } => {
-                // Any key closes info view; return to trash view if we came from there
                 if !self.trash_entries.is_empty() {
                     self.input = InputMode::TrashView {
                         entries: std::mem::take(&mut self.trash_entries),
@@ -514,12 +508,10 @@ impl App {
                 Ok(false)
             }
             InputMode::InfoFolderView { entries, .. } => {
-                // Cache listing so Enter can reuse it
                 self.preview_state = PreviewState::FolderListing(entries);
                 Ok(false)
             }
             InputMode::TextPreviewView { .. } => {
-                // Any key closes text preview view
                 Ok(false)
             }
             InputMode::Settings {
@@ -530,7 +522,6 @@ impl App {
             } => {
                 let result = self.handle_settings_key(code, &mut selected, &mut editing, &mut draft, &mut modified);
 
-                // Check if handle_settings_key changed the input mode (e.g., entered CustomColorSettings)
                 if !matches!(self.input, InputMode::Normal) {
                     return Ok(false);
                 }
@@ -671,7 +662,6 @@ impl App {
             KeyCode::Enter => {
                 if let Some(entry) = self.current_entry().cloned() {
                     if entry.kind == EntryKind::Folder {
-                        // Check if preview already has this folder's children cached
                         let cached_children =
                             if self.preview_target_id.as_deref() == Some(&entry.id) {
                                 if let PreviewState::FolderListing(children) =
@@ -685,7 +675,6 @@ impl App {
                                 None
                             };
 
-                        // Cache current entries as parent (avoid re-fetching)
                         self.parent_entries = std::mem::take(&mut self.entries);
                         self.parent_selected = self.selected;
                         let old_id = std::mem::replace(&mut self.current_folder_id, entry.id);
@@ -694,12 +683,10 @@ impl App {
                         self.clear_preview();
 
                         if let Some(children) = cached_children {
-                            // Reuse cached preview data — no API call needed
                             self.entries = children;
                             self.push_log(format!("Refreshed {}", self.current_path_display()));
                             self.on_cursor_move();
                         } else {
-                            // Request current directory listing
                             self.loading = true;
                             let client = Arc::clone(&self.client);
                             let tx = self.result_tx.clone();
@@ -711,7 +698,6 @@ impl App {
                     } else if entry.kind == EntryKind::File
                         && theme::categorize(&entry) == theme::FileCategory::Video
                     {
-                        // Video file: fetch info for playback
                         self.loading = true;
                         let client = Arc::clone(&self.client);
                         let tx = self.result_tx.clone();
@@ -731,12 +717,10 @@ impl App {
                     );
                     self.selected = self.parent_selected;
 
-                    // Clamp selected to valid range
                     if !self.entries.is_empty() && self.selected >= self.entries.len() {
                         self.selected = self.entries.len() - 1;
                     }
 
-                    // Preview: show children of the folder we just left
                     if self.config.show_preview {
                         self.preview_state = PreviewState::FolderListing(old_entries);
                         self.preview_target_id = Some(leaving_id);
@@ -797,7 +781,6 @@ impl App {
                 self.show_help_sheet = true;
             }
             KeyCode::Char('a') => {
-                // Toggle current entry (file or folder) in/out of cart
                 if let Some(entry) = self.current_entry().cloned() {
                     if self.cart_ids.contains(&entry.id) {
                         self.cart_ids.remove(&entry.id);
@@ -820,13 +803,11 @@ impl App {
                 self.open_my_shares_view();
             }
             KeyCode::Char('s') => {
-                // Star/unstar current entry
                 if let Some(entry) = self.current_entry().cloned() {
                     self.spawn_star_toggle(entry);
                 }
             }
             KeyCode::Char('y') => {
-                // Copy direct download link to clipboard
                 if let Some(entry) = self.current_entry().cloned()
                     && entry.kind == EntryKind::File {
                         let client = Arc::clone(&self.client);
@@ -858,33 +839,27 @@ impl App {
                 }
             }
             KeyCode::Char('o') => {
-                // Offline download URL input
                 self.input = InputMode::OfflineInput {
                     value: String::new(),
                 };
             }
             KeyCode::Char('O') => {
-                // Offline tasks view
                 self.open_offline_tasks_view();
             }
             KeyCode::Char('t') => {
-                // Trash view
                 self.open_trash_view();
             }
             KeyCode::Char('S') => {
-                // Cycle sort field
                 self.config.sort_field = self.config.sort_field.next();
                 self.resort_entries();
                 let _ = self.config.save();
             }
             KeyCode::Char('R') => {
-                // Toggle reverse sort order
                 self.config.sort_reverse = !self.config.sort_reverse;
                 self.resort_entries();
                 let _ = self.config.save();
             }
             KeyCode::Char('w') => {
-                // Watch: open video stream/resolution picker
                 if let Some(entry) = self.current_entry().cloned()
                     && entry.kind == EntryKind::File
                         && theme::categorize(&entry) == theme::FileCategory::Video
@@ -898,7 +873,6 @@ impl App {
                             let _ = tx.send(match result {
                                 Ok(info) => {
                                     let mut options = Vec::new();
-                                    // Original is always available via web_content_link
                                     if let Some(ref url) = info.web_content_link
                                         && !url.is_empty() {
                                             let size_str = info
@@ -913,7 +887,6 @@ impl App {
                                                 available: true,
                                             });
                                         }
-                                    // Transcoded streams from medias
                                     if let Some(ref medias) = info.medias {
                                         for m in medias {
                                             if m.is_origin.unwrap_or(false) {
@@ -952,10 +925,8 @@ impl App {
             KeyCode::Char('p') => {
                 if let Some(entry) = self.current_entry().cloned() {
                     if self.config.show_preview {
-                        // Fill right preview pane: folders → listing, files → text/details
                         self.fetch_preview_for_selected();
                     } else if entry.kind == EntryKind::File && theme::is_text_previewable(&entry) {
-                        // Popup overlay (2-column mode, text files only)
                         self.input = InputMode::InfoLoading;
                         self.loading = true;
                         self.loading_label = Some("Loading preview...".into());
@@ -1011,8 +982,6 @@ impl App {
             self.init_path_input(source, is_move);
         }
     }
-
-    // --- Path input with tab completion ---
 
     fn init_path_input(&mut self, source: Entry, is_move: bool) {
         let input = PathInput::new();
@@ -1134,8 +1103,6 @@ impl App {
             InputMode::CopyInput { source, input: owned }
         };
     }
-
-    // --- Picker ---
 
     fn build_picker_state(&mut self) -> Option<PickerState> {
         let folder_id = self.current_folder_id.clone();
@@ -1300,8 +1267,6 @@ impl App {
         };
     }
 
-    // --- Operations ---
-
     fn execute_move_copy(&mut self, source: Entry, target: &str, is_move: bool) {
         match self.client.resolve_path(target) {
             Ok(dest_id) => {
@@ -1366,12 +1331,9 @@ impl App {
         });
     }
 
-    // --- Cart View ---
-
     fn handle_cart_view_key(&mut self, code: KeyCode) {
         match code {
             KeyCode::Esc => {
-                // Back to normal
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 if !self.cart.is_empty() {
@@ -1386,7 +1348,6 @@ impl App {
                 self.input = InputMode::CartView;
             }
             KeyCode::Char('x') | KeyCode::Char('d') => {
-                // Remove selected from cart
                 if !self.cart.is_empty() && self.cart_selected < self.cart.len() {
                     let removed = self.cart.remove(self.cart_selected);
                     self.cart_ids.remove(&removed.id);
@@ -1398,7 +1359,6 @@ impl App {
                 self.input = InputMode::CartView;
             }
             KeyCode::Char('a') => {
-                // Clear all
                 let count = self.cart.len();
                 self.cart.clear();
                 self.cart_ids.clear();
@@ -1462,8 +1422,6 @@ impl App {
         }
     }
 
-    // --- Cart text path input ---
-
     fn init_cart_path_input(&mut self, is_move: bool) {
         let input = PathInput::new();
         self.input = if is_move {
@@ -1501,8 +1459,6 @@ impl App {
             }
         }
     }
-
-    // --- Cart Picker (batch move/copy) ---
 
     fn init_cart_picker(&mut self, is_move: bool) {
         match self.build_picker_state() {
@@ -1560,17 +1516,13 @@ impl App {
                 Err(e) => OpResult::Err(format!("{} failed: {e:#}", op)),
             });
         });
-        // Clear cart after dispatching
         self.cart.clear();
         self.cart_ids.clear();
         self.cart_selected = 0;
-        // Announce item names in log
         for name in &names {
             self.push_log(format!("  {}", name));
         }
     }
-
-    // --- Confirm Cart Delete ---
 
     fn handle_confirm_cart_delete_key(&mut self, code: KeyCode) {
         match code {
@@ -1601,8 +1553,6 @@ impl App {
         self.cart_selected = 0;
     }
 
-    // --- Share ---
-
     fn handle_share_prompt_key(&mut self, code: KeyCode) {
         match code {
             KeyCode::Char('p') => {
@@ -1626,12 +1576,10 @@ impl App {
         let ctrl = modifiers.contains(KeyModifiers::CONTROL);
         match code {
             KeyCode::Esc if ctrl => {
-                // Close all share cards
                 shares.clear();
                 self.input = InputMode::CartView;
             }
             KeyCode::Esc => {
-                // Close topmost card
                 shares.pop();
                 if shares.is_empty() {
                     self.input = InputMode::CartView;
@@ -1641,7 +1589,6 @@ impl App {
                 }
             }
             KeyCode::Char('y') => {
-                // Copy URL of topmost card
                 if let Some((_, url, _)) = shares.last() {
                     match write_clipboard(url) {
                         Ok(()) => self.push_log(format!("Copied URL: {url}")),
@@ -1663,7 +1610,6 @@ impl App {
             self.input = InputMode::CartView;
             return;
         }
-        // Switch to ShareCreatedView immediately (results will be pushed as they come in)
         self.input = InputMode::ShareCreatedView { shares: vec![] };
         for entry in &self.cart {
             let client = Arc::clone(&self.client);
@@ -1840,8 +1786,6 @@ impl App {
         }
     }
 
-    // --- Local path input (shared between download + upload) ---
-
     /// Process a key event on a local-path input field (tab-completion, navigation, typing).
     /// Returns `Updated` for navigation/typing, `Confirmed(path)` on Enter with no candidate,
     /// or `Cancelled` on Esc with no candidates open.
@@ -1906,8 +1850,6 @@ impl App {
             _ => LocalPathInputResult::Updated,
         }
     }
-
-    // --- Download Input ---
 
     fn handle_download_input_key(&mut self, code: KeyCode, input: &mut LocalPathInput) {
         match Self::apply_local_path_input_key(code, input) {
@@ -2020,17 +1962,13 @@ impl App {
         self.download_state.start_next(&self.client);
     }
 
-    // --- Download View ---
-
     fn handle_download_view_key(&mut self, code: KeyCode) {
         let task_count = self.download_state.tasks.len();
 
         match code {
             KeyCode::Esc => {
-                // Back to normal, downloads continue in background
             }
             KeyCode::Enter => {
-                // Toggle collapsed/expanded mode
                 use crate::tui::DownloadViewMode;
                 self.download_view_mode = match self.download_view_mode {
                     DownloadViewMode::Collapsed => DownloadViewMode::Expanded,
@@ -2052,7 +1990,6 @@ impl App {
                 self.input = InputMode::DownloadView;
             }
             KeyCode::Char('p') => {
-                // Pause/resume selected
                 let sel = self.download_state.selected;
                 let mut log_msg = None;
                 let mut need_start = false;
@@ -2081,7 +2018,6 @@ impl App {
                 self.input = InputMode::DownloadView;
             }
             KeyCode::Char('x') => {
-                // Cancel selected
                 let sel = self.download_state.selected;
                 if let Some(task) = self.download_state.tasks.get_mut(sel)
                     && matches!(
@@ -2102,7 +2038,6 @@ impl App {
                 self.input = InputMode::DownloadView;
             }
             KeyCode::Char('r') => {
-                // Retry failed task
                 let sel = self.download_state.selected;
                 let mut log_msg = None;
                 let mut need_start = false;
@@ -2128,8 +2063,6 @@ impl App {
         }
     }
 
-    // --- Star/Unstar ---
-
     fn spawn_star_toggle(&mut self, entry: Entry) {
         let is_starred = entry.starred;
         let client = Arc::clone(&self.client);
@@ -2150,8 +2083,6 @@ impl App {
             });
         });
     }
-
-    // --- Offline download input ---
 
     fn handle_offline_input_key(&mut self, code: KeyCode, value: &mut String) {
         match code {
@@ -2214,8 +2145,6 @@ impl App {
         });
     }
 
-    // --- Offline tasks view ---
-
     fn open_offline_tasks_view(&mut self) {
         self.input = InputMode::InfoLoading;
         self.loading = true;
@@ -2242,7 +2171,6 @@ impl App {
     ) {
         match code {
             KeyCode::Esc => {
-                // Back to normal
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 if !tasks.is_empty() {
@@ -2263,11 +2191,9 @@ impl App {
                 };
             }
             KeyCode::Char('r') => {
-                // Refresh
                 self.open_offline_tasks_view();
             }
             KeyCode::Char('R') => {
-                // Retry selected task
                 if let Some(task) = tasks.get(*selected)
                     && task.phase == "PHASE_TYPE_ERROR" {
                         let client = Arc::clone(&self.client);
@@ -2294,7 +2220,6 @@ impl App {
                 };
             }
             KeyCode::Char('x') => {
-                // Delete selected task
                 if let Some(task) = tasks.get(*selected) {
                     let client = Arc::clone(&self.client);
                     let tx = self.result_tx.clone();
@@ -2627,9 +2552,7 @@ impl App {
     }
 
     fn handle_mouse_scroll(&mut self, col: u16, row: u16, up: bool) {
-        // Normal mode: scroll in any of the three panes
         if matches!(self.input, InputMode::Normal) {
-            // Log overlay scroll takes priority when visible
             if self.show_logs_overlay
                 && self.is_in_rect(col, row, self.logs_overlay_area.get())
             {
@@ -2695,7 +2618,6 @@ impl App {
             return;
         }
 
-        // Non-normal modes: scroll support for overlay views
         if let InputMode::OfflineTasksView { tasks, selected } = &mut self.input {
             if up {
                 if *selected > 0 {
@@ -2735,7 +2657,6 @@ impl App {
             }
             self.trash_selected = *selected;
         } else if let InputMode::Settings { selected, editing, draft, modified } = &mut self.input {
-            // Settings overlay scroll support
             if up {
                 if *selected > 0 {
                     *selected -= 1;
@@ -2822,7 +2743,6 @@ impl App {
         let preview_area = self.preview_pane_area.get();
 
         if self.is_in_rect(col, row, current_area) {
-            // Click / double-click on current pane
             let content_y = row.saturating_sub(current_area.y + 1) as usize;
             let offset = self.scroll_offset.get();
             let clicked_idx = offset + content_y;
@@ -2834,14 +2754,12 @@ impl App {
                 }
             }
         } else if self.is_in_rect(col, row, parent_area) {
-            // Click / double-click on parent pane
             let content_y = row.saturating_sub(parent_area.y + 1) as usize;
             let offset = self.parent_scroll_offset.get();
             let clicked_idx = offset + content_y;
             if clicked_idx < self.parent_entries.len() {
                 self.parent_selected = clicked_idx;
                 if double {
-                    // Navigate back to parent, then enter the clicked folder
                     let _ = self.handle_normal_key(KeyCode::Backspace, KeyModifiers::NONE);
                     let is_folder = self
                         .entries
@@ -2853,7 +2771,6 @@ impl App {
                 }
             }
         } else if self.is_in_rect(col, row, preview_area) && double {
-            // Double-click on preview pane: Enter for folders, Space for files
             let is_folder = self
                 .entries
                 .get(self.selected)
@@ -2990,7 +2907,6 @@ impl App {
                 }
             }
             KeyCode::Esc | KeyCode::Backspace => {
-                // Return to main settings at item #8
                 self.input = InputMode::Settings {
                     selected: 8,
                     editing: false,
@@ -3168,9 +3084,8 @@ impl App {
                     }
                 }
                 KeyCode::Esc | KeyCode::Backspace => {
-                    // Return to main settings
                     self.input = InputMode::Settings {
-                        selected: 5, // Return to Color Scheme item
+                        selected: 5,
                         editing: false,
                         draft: draft.clone(),
                         modified: *modified,
@@ -3284,7 +3199,6 @@ impl App {
                     }
                 }
                 4 => {
-                    // Quota Bar Style
                     match code {
                         KeyCode::Left => {
                             draft.quota_bar_style = draft.quota_bar_style.prev();
@@ -3399,7 +3313,6 @@ impl App {
                     }
                 }
                 10 => {
-                    // Sort Field
                     match code {
                         KeyCode::Left => {
                             draft.sort_field = draft.sort_field.prev();
@@ -3419,7 +3332,6 @@ impl App {
                     }
                 }
                 11 => {
-                    // Reverse Order
                     match code {
                         KeyCode::Char(' ')
                         | KeyCode::Enter
@@ -3436,7 +3348,6 @@ impl App {
                     }
                 }
                 12 => {
-                    // Move Mode
                     match code {
                         KeyCode::Left => {
                             draft.move_mode = if draft.move_mode == "picker" {
@@ -3464,7 +3375,6 @@ impl App {
                     }
                 }
                 13 => {
-                    // CLI Nerd Font
                     match code {
                         KeyCode::Char(' ')
                         | KeyCode::Enter
@@ -3481,7 +3391,6 @@ impl App {
                     }
                 }
                 14 => {
-                    // Player Command (text input)
                     match code {
                         KeyCode::Esc => {
                             *editing = false;
@@ -3509,7 +3418,6 @@ impl App {
                     }
                 }
                 15 => {
-                    // Concurrent Downloads (+/- or Left/Right)
                     match code {
                         KeyCode::Char('+') | KeyCode::Up | KeyCode::Right => {
                             draft.download_jobs = (draft.download_jobs + 1).min(16);
@@ -3540,7 +3448,6 @@ impl App {
                 }
                 KeyCode::Char(' ') | KeyCode::Enter => {
                     if *selected == 9 {
-                        // Directly enter image protocol sub-menu
                         let current_terminal = draft.ensure_current_terminal();
                         let terminals: Vec<String> =
                             draft.image_protocols.keys().cloned().collect();

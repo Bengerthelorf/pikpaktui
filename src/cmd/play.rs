@@ -12,7 +12,6 @@ fn build_play_options(client: &PikPak, file_id: &str) -> Result<Vec<PlayOption>>
     let info = client.file_info(file_id)?;
     let mut options = Vec::new();
 
-    // Original via web_content_link
     if let Some(ref url) = info.web_content_link
         && !url.is_empty() {
             let size_str = info
@@ -28,7 +27,6 @@ fn build_play_options(client: &PikPak, file_id: &str) -> Result<Vec<PlayOption>>
             });
         }
 
-    // Transcoded streams
     if let Some(ref medias) = info.medias {
         for m in medias {
             if m.is_origin.unwrap_or(false) {
@@ -94,7 +92,6 @@ pub fn run(args: &[String]) -> Result<()> {
 
     match quality {
         None => {
-            // List available streams
             println!("Available streams for '{}':", name);
             for (i, opt) in options.iter().enumerate() {
                 let status = if opt.available { "" } else { " (unavailable)" };
@@ -105,7 +102,6 @@ pub fn run(args: &[String]) -> Result<()> {
             Ok(())
         }
         Some(q) => {
-            // Try to match by number first
             if let Ok(num) = q.parse::<usize>() {
                 if num >= 1 && num <= options.len() {
                     let opt = &options[num - 1];
@@ -121,7 +117,6 @@ pub fn run(args: &[String]) -> Result<()> {
                 ));
             }
 
-            // Match by name (case-insensitive, substring)
             let q_lower = q.to_lowercase();
             let matched: Vec<&PlayOption> = options
                 .iter()

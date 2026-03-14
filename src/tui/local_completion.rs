@@ -67,7 +67,6 @@ impl LocalPathInput {
         };
 
         let prefix_lower = prefix.to_lowercase();
-        // (name, is_dir, score) — score used for sorting only
         let mut matches: Vec<(String, bool, i32)> = Vec::new();
 
         for entry in read_dir.flatten() {
@@ -188,7 +187,6 @@ fn fuzzy_score_lower(name: &str, pattern: &str) -> Option<i32> {
         return None;
     }
 
-    // Greedy forward pass to collect match positions
     let mut positions: Vec<usize> = Vec::with_capacity(pc.len());
     let mut pi = 0;
     for (i, &c) in nc.iter().enumerate() {

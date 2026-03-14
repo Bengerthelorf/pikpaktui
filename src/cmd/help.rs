@@ -14,7 +14,6 @@ const RESET: &str = "\x1b[0m";
 pub fn run() -> Result<()> {
     let version = env!("CARGO_PKG_VERSION");
 
-    // ASCII art banner with gradient
     let art: &[(&str, &str)] = &[
         (LIGHT_CYAN,    r#"    dMMMMb  dMP dMP dMP dMMMMb  .aMMMb  dMP dMP dMMMMMMP dMP dMP dMP"#),
         (CYAN,          r#"   dMP.dMP amr dMP.dMP dMP.dMP dMP"dMP dMP.dMP    dMP   dMP dMP amr "#),
@@ -33,11 +32,9 @@ pub fn run() -> Result<()> {
     );
     println!();
 
-    // Usage
     println!("{BOLD}USAGE:{RESET}  {GREEN}pikpaktui{RESET} {DIM}[command] [args...]{RESET}");
     println!();
 
-    // Commands — generated from the single source of truth
     println!("{BOLD}COMMANDS:{RESET}");
     println!(
         "  {YELLOW}{BOLD}(no command){RESET}                    {DIM}Launch interactive TUI{RESET}"
@@ -48,7 +45,6 @@ pub fn run() -> Result<()> {
         println!("  {MAGENTA}{BOLD}{group}{RESET}");
         for cmd in *cmds {
             let (usage, desc, _) = super::command_help_text(cmd);
-            // usage starts with "cmd ...", print it as: green name + dim args + right-align desc
             let (name, args) = match usage.find(' ') {
                 Some(i) => (&usage[..i], &usage[i..]),
                 None => (usage, ""),

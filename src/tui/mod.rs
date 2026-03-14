@@ -140,7 +140,6 @@ enum InputMode {
     ConfirmPermanentDelete {
         value: String,
     },
-    // Text input with tab completion
     MoveInput {
         source: Entry,
         input: PathInput,
@@ -149,7 +148,6 @@ enum InputMode {
         source: Entry,
         input: PathInput,
     },
-    // Two-pane picker
     MovePicker {
         source: Entry,
         picker: PickerState,
@@ -158,7 +156,6 @@ enum InputMode {
         source: Entry,
         picker: PickerState,
     },
-    // Cart & Downloads
     CartView,
     CartMoveInput {
         input: PathInput,
@@ -180,16 +177,13 @@ enum InputMode {
         input: LocalPathInput,
     },
     DownloadView,
-    // Offline download URL input
     OfflineInput {
         value: String,
     },
-    // Offline tasks list
     OfflineTasksView {
         tasks: Vec<crate::pikpak::OfflineTask>,
         selected: usize,
     },
-    // Info popup (show_preview=false mode)
     InfoLoading,
     InfoView {
         info: FileInfoResponse,
@@ -223,7 +217,6 @@ enum InputMode {
         selected: usize,
         expanded: bool,
     },
-    // Share
     SharePrompt,
     ShareCreatedView {
         shares: Vec<(String, String, String)>, // (title, url, pass_code)
@@ -277,7 +270,6 @@ struct App {
     show_help_sheet: bool,
     result_rx: Receiver<OpResult>,
     result_tx: Sender<OpResult>,
-    // Miller columns
     parent_entries: Vec<Entry>,
     parent_selected: usize,
     preview_state: PreviewState,
@@ -286,41 +278,32 @@ struct App {
     show_logs_overlay: bool,
     last_cursor_move: Instant,
     pending_preview_fetch: bool,
-    // Cart
     cart: Vec<Entry>,
     cart_ids: HashSet<String>,
     cart_selected: usize,
-    // Downloads
     download_state: DownloadState,
     download_view_mode: DownloadViewMode,
     network_stats: NetworkStats,
     last_network_update: Instant,
-    // Mouse support: pane areas recorded during draw
     current_pane_area: Cell<ratatui::layout::Rect>,
     parent_pane_area: Cell<ratatui::layout::Rect>,
     preview_pane_area: Cell<ratatui::layout::Rect>,
     scroll_offset: Cell<usize>,
     parent_scroll_offset: Cell<usize>,
     list_area_height: Cell<u16>,
-    // Double-click detection
     last_click_time: Instant,
     last_click_pos: (u16, u16),
-    // Preview pane scroll offset
     preview_scroll: usize,
-    // Log overlay scroll offset and area for mouse support
     /// `None` = auto-follow bottom; `Some(y)` = pinned at absolute scroll-from-top offset
     logs_scroll: Option<usize>,
     logs_overlay_area: Cell<ratatui::layout::Rect>,
-    // Settings overlay area for mouse support
     settings_area: Cell<ratatui::layout::Rect>,
     trash_entries: Vec<Entry>,
     trash_selected: usize,
     trash_expanded: bool,
     loading_label: Option<String>,
-    // Quota display
     quota_used: Option<u64>,
     quota_limit: Option<u64>,
-    // My Shares deferred loading
     shares_pending: bool,
 }
 
@@ -522,7 +505,6 @@ impl App {
                 }
             }
         }
-        // Save download state on exit
         download::save_download_state(&self.download_state.tasks);
         Ok(())
     }
@@ -573,7 +555,6 @@ impl App {
                     self.push_log(format!("File info failed: {e:#}"));
                 }
                 OpResult::ParentLs(pid, Ok(mut entries)) => {
-                    // Only accept if this is still the expected parent
                     let expected = self.breadcrumb.last().map(|(id, _)| id.as_str());
                     if expected == Some(&pid) {
                         crate::config::sort_entries(&mut entries, self.config.sort_field, self.config.sort_reverse);
@@ -596,7 +577,6 @@ impl App {
                 OpResult::PreviewLs(id, Ok(mut children)) => {
                     crate::config::sort_entries(&mut children, self.config.sort_field, self.config.sort_reverse);
                     if matches!(self.input, InputMode::InfoLoading) {
-                        // Popup mode (show_preview=false)
                         self.finish_loading();
                         let name = self.preview_target_name.take().unwrap_or_default();
                         self.preview_state = PreviewState::FolderListing(children.clone());
@@ -716,7 +696,6 @@ impl App {
                     if medias.is_empty() {
                         self.push_log("No playback streams available".into());
                     } else {
-                        // Select first available
                         let first_avail = medias.iter().position(|m| m.available).unwrap_or(0);
                         self.input = InputMode::PlayPicker {
                             name: info.name.clone(),
@@ -839,13 +818,11 @@ impl App {
             }
         }
 
-        // Poll download progress
         let logs = self.download_state.poll(&self.client);
         for msg in logs {
             self.push_log(msg);
         }
 
-        // Update network stats (every 500ms)
         if self.last_network_update.elapsed() >= Duration::from_millis(500) {
             let current_speed: f64 = self
                 .download_state
@@ -946,7 +923,6 @@ impl App {
                 let _ = tx.send(OpResult::ParentLs(pid.clone(), client.ls(&pid)));
             });
         } else {
-            // At root — no parent
             self.parent_entries.clear();
             self.parent_selected = 0;
         }
@@ -962,7 +938,6 @@ impl App {
 
     fn on_cursor_move(&mut self) {
         self.preview_scroll = 0;
-        // No preview pane when show_preview=false
         if !self.config.show_preview {
             return;
         }

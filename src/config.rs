@@ -580,7 +580,6 @@ impl TuiConfig {
                 Self::default()
             }
         };
-        // Migrate legacy single-value `image_protocol` into per-terminal map
         if let Some(proto) = cfg.image_protocol.take()
             && cfg.image_protocols.is_empty() {
                 let term = Self::detect_terminal();
@@ -659,7 +658,6 @@ pub fn sort_entries(entries: &mut [crate::pikpak::Entry], field: SortField, reve
     }
 
     if reverse {
-        // Only reverse within each kind group (folders stay first)
         let folder_end = entries.iter().position(|e| e.kind == EntryKind::File).unwrap_or(entries.len());
         entries[..folder_end].reverse();
         entries[folder_end..].reverse();

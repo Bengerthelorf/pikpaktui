@@ -59,7 +59,6 @@ impl App {
         let done = ds.done_count();
         let total = ds.tasks.len();
 
-        // Calculate overall stats
         let mut total_downloaded: u64 = 0;
         let mut total_size: u64 = 0;
         let mut current_speed: f64 = 0.0;
@@ -80,11 +79,9 @@ impl App {
             0
         };
 
-        // Center area size
         let area = centered_rect(70, 50, f.area());
         super::draw::clear_overlay_area(f, area);
 
-        // Build content
         let mut lines = vec![
             Line::from(""),
             Line::from(vec![
@@ -97,7 +94,6 @@ impl App {
             Line::from(""),
         ];
 
-        // Overall progress bar
         let bar_width: usize = 40;
         let filled = if total_size > 0 {
             (bar_width as u64 * total_downloaded / total_size) as usize
@@ -114,7 +110,6 @@ impl App {
         ]));
         lines.push(Line::from(""));
 
-        // Stats
         lines.push(Line::from(vec![
             Span::styled("  Downloaded: ", Style::default().fg(Color::Cyan)),
             Span::styled(
@@ -138,7 +133,6 @@ impl App {
         ]));
         lines.push(Line::from(""));
 
-        // Active downloads preview (max 5)
         if !ds.tasks.is_empty() {
             lines.push(Line::from(Span::styled(
                 "  Active Downloads:",
@@ -183,7 +177,6 @@ impl App {
         lines.push(Line::from(""));
         lines.push(Line::from(""));
 
-        // Hints
         let hints = vec![
             ("Enter", "expand"),
             ("p", "pause/resume"),
@@ -224,31 +217,26 @@ impl App {
         };
         let main_area = outer[0];
 
-        // Main layout: Left (60%) | Right (40%)
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
             .split(main_area);
 
-        // Left side layout: List (80%) | Overall Progress (20%)
         let left_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Percentage(80), Constraint::Percentage(20)])
             .split(chunks[0]);
 
-        // Right side layout: Network Activity (60%) | File Details (40%)
         let right_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
             .split(chunks[1]);
 
-        // Draw sections
         self.draw_download_list(f, left_chunks[0]);
         self.draw_overall_progress(f, left_chunks[1]);
         self.draw_network_activity(f, right_chunks[0]);
         self.draw_file_details(f, right_chunks[1]);
 
-        // Help bar
         if self.config.show_help_bar {
             let pairs = self.help_pairs();
             let mut spans = vec![Span::raw(" ")];
@@ -385,7 +373,6 @@ impl App {
             0
         };
 
-        // Progress bar
         let bar_width = area.width.saturating_sub(6) as usize;
         let filled = if total_size > 0 {
             (bar_width as u64 * total_downloaded / total_size.max(1)) as usize
@@ -423,7 +410,6 @@ impl App {
             ]),
         ];
 
-        // ETA calculation
         if current_speed > 0.0 && total_size > total_downloaded {
             let remaining = total_size - total_downloaded;
             let eta_secs = remaining as f64 / current_speed;
@@ -546,14 +532,12 @@ impl App {
         let mut lines = vec![Line::from("")];
 
         if let Some(task) = task {
-            // File name
             lines.push(Line::from(vec![
                 Span::styled("  File: ", Style::default().fg(Color::Cyan)),
                 Span::styled(&task.name, Style::default().fg(Color::Reset)),
             ]));
             lines.push(Line::from(""));
 
-            // Status
             let (status_str, status_color) = match &task.status {
                 TaskStatus::Pending => ("Pending", Color::DarkGray),
                 TaskStatus::Downloading => ("Downloading", Color::Cyan),
@@ -585,7 +569,6 @@ impl App {
                 lines.push(Line::from(""));
             }
 
-            // Size
             lines.push(Line::from(vec![
                 Span::styled("  Size: ", Style::default().fg(Color::Cyan)),
                 Span::styled(
@@ -594,7 +577,6 @@ impl App {
                 ),
             ]));
 
-            // Downloaded
             let pct = if task.total_size > 0 {
                 (task.downloaded as f64 / task.total_size as f64 * 100.0) as u64
             } else {
@@ -608,7 +590,6 @@ impl App {
                 ),
             ]));
 
-            // Speed
             if task.status == TaskStatus::Downloading && task.speed > 0.0 {
                 lines.push(Line::from(vec![
                     Span::styled("  Speed: ", Style::default().fg(Color::Cyan)),
@@ -618,7 +599,6 @@ impl App {
                     ),
                 ]));
 
-                // ETA
                 if task.total_size > task.downloaded {
                     let remaining = task.total_size - task.downloaded;
                     let eta_secs = remaining as f64 / task.speed;
@@ -630,7 +610,6 @@ impl App {
                 }
             }
 
-            // Destination
             lines.push(Line::from(""));
             lines.push(Line::from(vec![
                 Span::styled("  Path: ", Style::default().fg(Color::Cyan)),

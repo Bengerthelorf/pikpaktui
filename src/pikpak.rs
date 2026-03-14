@@ -88,8 +88,6 @@ impl PikPak {
         })
     }
 
-    // --- Session management ---
-
     pub fn load_session(&self) -> Result<Option<SessionToken>> {
         if !self.session_path.exists() {
             return Ok(None);
@@ -121,8 +119,6 @@ impl PikPak {
             _ => false,
         }
     }
-
-    // --- Auth ---
 
     pub fn login(&mut self, email: &str, password: &str) -> Result<()> {
         if email.trim().is_empty() {
@@ -307,8 +303,6 @@ impl PikPak {
     fn auth_url(&self, path: &str) -> String {
         format!("{}/{}", self.auth_base_url.trim_end_matches('/'), path)
     }
-
-    // --- Drive API ---
 
     pub fn ls(&self, parent_id: &str) -> Result<Vec<Entry>> {
         let token = self.access_token()?;
@@ -614,7 +608,6 @@ impl PikPak {
             }))
             .ok_or_else(|| anyhow!("no download link for file {}", file_id))?;
 
-        // Check existing file size for resume
         let existing_size = dest.metadata().map(|m| m.len()).unwrap_or(0);
 
         let mut rb = self.http.get(download_url);
@@ -756,7 +749,6 @@ impl PikPak {
         let token = self.access_token()?;
         let url = self.drive_url("drive/v1/tasks");
 
-        // Build query params: task_ids=a&task_ids=b&delete_files=true
         let mut pairs: Vec<(&str, String)> = task_ids
             .iter()
             .map(|id| ("task_ids", id.to_string()))
@@ -772,8 +764,6 @@ impl PikPak {
         let response = rb.send().context("delete tasks request failed")?;
         ensure_success(response, "delete tasks")
     }
-
-    // --- Star ---
 
     /// Star files by IDs.
     pub fn star(&self, ids: &[&str]) -> Result<()> {
@@ -835,8 +825,6 @@ impl PikPak {
         Ok(entries)
     }
 
-    // --- Events ---
-
     /// Get recent file events (recently added files).
     pub fn events(&self, limit: u32) -> Result<EventsResponse> {
         let token = self.access_token()?;
@@ -857,8 +845,6 @@ impl PikPak {
 
         response.json().context("invalid events json")
     }
-
-    // --- VIP / Account info ---
 
     /// Get VIP membership info.
     pub fn vip_info(&self) -> Result<VipInfoResponse> {
@@ -1171,7 +1157,6 @@ impl PikPak {
             }
         }
 
-        // Create all subdirs up front before spawning threads.
         let mut failed_count = 0usize;
         for folder in &folders {
             if let Err(e) = std::fs::create_dir_all(local_dir.join(&folder.name)) {
@@ -1180,7 +1165,6 @@ impl PikPak {
             }
         }
 
-        // Download files concurrently via a worker pool.
         let ok = Arc::new(AtomicUsize::new(0));
         let failed = Arc::new(AtomicUsize::new(0));
         let (tx, rx) = std::sync::mpsc::channel::<Entry>();
@@ -1220,7 +1204,6 @@ impl PikPak {
         let mut total_ok = ok.load(Ordering::Relaxed);
         let mut total_failed = failed.load(Ordering::Relaxed) + failed_count;
 
-        // Recurse into subdirs sequentially.
         for folder in folders {
             let sub_dir = local_dir.join(&folder.name);
             match self.download_dir_inner(&folder.id, &sub_dir, workers) {
@@ -1404,7 +1387,6 @@ impl PikPak {
             ));
         }
 
-        // Parse UploadId from XML
         extract_xml_tag(&body, "UploadId")
             .ok_or_else(|| anyhow!("no UploadId in initiate multipart response"))
     }
@@ -1499,7 +1481,6 @@ impl PikPak {
         upload_id: &str,
         etags: &[String],
     ) -> Result<()> {
-        // Build XML body
         let mut xml = String::from("<CompleteMultipartUpload>");
         for (i, etag) in etags.iter().enumerate() {
             xml.push_str(&format!(
@@ -1694,7 +1675,6 @@ pub fn pikpak_hash(path: &Path) -> Result<String> {
         remaining -= to_read as u64;
     }
 
-    // If file is empty, hash empty string
     if file_size == 0 {
         let mut hasher = Sha1::new();
         hasher.update(b"");
@@ -1704,7 +1684,6 @@ pub fn pikpak_hash(path: &Path) -> Result<String> {
         }
     }
 
-    // Final SHA1 of concatenated hashes
     let mut final_hasher = Sha1::new();
     final_hasher.update(all_hashes.as_bytes());
     let final_hash = final_hasher.finalize();
@@ -1750,7 +1729,6 @@ fn httpdate_now() -> String {
         .unwrap_or_default();
     let secs = now.as_secs();
 
-    // Format as HTTP date: "Thu, 01 Jan 1970 00:00:00 GMT"
     let days = secs / 86400;
     let time_of_day = secs % 86400;
     let hours = time_of_day / 3600;
@@ -1779,7 +1757,6 @@ fn httpdate_now() -> String {
 }
 
 fn days_to_ymd(days: u64) -> (u64, u64, u64) {
-    // Simplified Gregorian calendar calculation
     let mut y = 1970;
     let mut remaining = days;
 
@@ -1821,8 +1798,6 @@ fn extract_xml_tag(xml: &str, tag: &str) -> Option<String> {
     let end = xml[start..].find(&close)? + start;
     Some(xml[start..end].to_string())
 }
-
-// --- Response types ---
 
 #[derive(Debug, Deserialize)]
 struct SigninResponse {
@@ -2002,8 +1977,6 @@ pub struct TransferBand {
     pub assets: Option<u64>,
 }
 
-// --- Offline / Tasks response types ---
-
 #[derive(Debug, Deserialize)]
 pub struct OfflineTaskResponse {
     #[serde(default)]
@@ -2036,8 +2009,6 @@ pub struct OfflineListResponse {
     pub tasks: Vec<OfflineTask>,
 }
 
-// --- Events response types ---
-
 #[derive(Debug, Deserialize)]
 pub struct EventsResponse {
     #[serde(default)]
@@ -2068,8 +2039,6 @@ pub struct EventRefResource {
     pub mime_type: Option<String>,
 }
 
-// --- VIP response types ---
-
 #[derive(Debug, Deserialize)]
 pub struct VipInfoResponse {
     #[serde(default)]
@@ -2085,8 +2054,6 @@ pub struct VipData {
     #[serde(default)]
     pub expire: Option<String>,
 }
-
-// --- Helpers ---
 
 fn ensure_success(response: reqwest::blocking::Response, op: &str) -> Result<()> {
     let status = response.status();

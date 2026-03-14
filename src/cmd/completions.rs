@@ -259,13 +259,11 @@ mod tests {
 
     #[test]
     fn zsh_output_contains_compadd_prefix() {
-        // Verify we use compadd -p for proper prefix-based matching
         assert!(ZSH_COMPLETION.contains("compadd -p"));
     }
 
     #[test]
     fn zsh_output_contains_explicit_compdef() {
-        // For eval mode, must have explicit compdef
         assert!(ZSH_COMPLETION.contains("compdef _pikpaktui pikpaktui"));
     }
 

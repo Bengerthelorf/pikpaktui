@@ -16,7 +16,6 @@ pub fn run(args: &[String]) -> Result<()> {
     let prefix = args.first().map(|s| s.as_str()).unwrap_or("/");
     let (dir, _partial) = split_for_completion(prefix);
 
-    // Silently succeed with no output if not logged in or on error
     let client = match super::cli_client() {
         Ok(c) => c,
         Err(_) => return Ok(()),
@@ -62,14 +61,12 @@ fn split_for_completion(prefix: &str) -> (String, String) {
         return ("/".to_string(), String::new());
     }
 
-    // If it ends with '/', the whole thing is the directory
     if prefix.ends_with('/') {
         let dir = prefix.trim_end_matches('/');
         let dir = if dir.is_empty() { "/" } else { dir };
         return (dir.to_string(), String::new());
     }
 
-    // Split at last '/'
     match prefix.rsplit_once('/') {
         Some(("", name)) => ("/".to_string(), name.to_string()),
         Some((dir, name)) => (dir.to_string(), name.to_string()),

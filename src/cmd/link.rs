@@ -45,7 +45,6 @@ pub fn run(args: &[String]) -> Result<()> {
         })
         .ok_or_else(|| anyhow!("no download link available for '{}'", name))?;
 
-    // Collect media streaming URLs (videos have transcoded streams in medias[])
     let media_urls: Vec<(String, String)> = if media {
         info.medias
             .as_deref()

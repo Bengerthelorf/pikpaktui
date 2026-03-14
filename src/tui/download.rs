@@ -193,17 +193,14 @@ fn download_worker(
     pause_flag: &Arc<AtomicBool>,
     cancel_flag: &Arc<AtomicBool>,
 ) -> anyhow::Result<()> {
-    // Get fresh download URL
     let (url, total_size) = client.download_url(file_id)?;
 
     let _ = msg_tx.send(DownloadMsg::Started { index, total_size });
 
-    // Create parent directories
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent)?;
     }
 
-    // Check existing file size for resume
     let existing_size = dest.metadata().map(|m| m.len()).unwrap_or(0);
 
     if existing_size >= total_size && total_size > 0 {
@@ -244,12 +241,10 @@ fn download_worker(
     let speed_interval = std::time::Duration::from_millis(500);
 
     loop {
-        // Check cancel
         if cancel_flag.load(Ordering::Relaxed) {
             return Ok(());
         }
 
-        // Check pause — spin-wait
         while pause_flag.load(Ordering::Relaxed) {
             if cancel_flag.load(Ordering::Relaxed) {
                 return Ok(());
@@ -265,7 +260,6 @@ fn download_worker(
         file.write_all(&buf[..n])?;
         downloaded += n as u64;
 
-        // Report progress periodically
         let elapsed = last_report.elapsed();
         if elapsed >= speed_interval {
             let speed = (downloaded - last_report_bytes) as f64 / elapsed.as_secs_f64();
@@ -283,7 +277,6 @@ fn download_worker(
     Ok(())
 }
 
-// --- Persistence ---
 
 #[derive(Serialize, Deserialize)]
 struct PersistedTask {

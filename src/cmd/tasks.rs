@@ -4,7 +4,6 @@ use unicode_width::UnicodeWidthStr;
 pub fn run(args: &[String]) -> Result<()> {
     let client = super::cli_client()?;
 
-    // Sub-commands: list (default), retry <id>, delete <id...>
     let sub = args.first().map(|s| s.as_str()).unwrap_or("list");
     let rest = if args.is_empty() { &[][..] } else { &args[1..] };
 
@@ -45,7 +44,6 @@ pub fn run(args: &[String]) -> Result<()> {
                 return Ok(());
             }
 
-            // Prepare row data for column-width calculation
             struct Row {
                 icon: &'static str,
                 color: &'static str,
@@ -88,21 +86,18 @@ pub fn run(args: &[String]) -> Result<()> {
                 })
                 .collect();
 
-            // Compute column widths
             let w_name = rows.iter().map(|r| UnicodeWidthStr::width(r.name.as_str())).max().unwrap_or(4).max(4);
             let w_prog = rows.iter().map(|r| r.progress.len()).max().unwrap_or(0).max(4);
             let w_size = rows.iter().map(|r| r.size.len()).max().unwrap_or(4).max(4);
             let w_id = 8usize;
             let w_last = rows.iter().map(|r| UnicodeWidthStr::width(r.last.as_str())).max().unwrap_or(7).max(7);
 
-            // Clamp name width to terminal
             let term_width = crossterm::terminal::size()
                 .map(|(w, _)| w as usize)
                 .unwrap_or(120);
             let fixed = 8 + w_prog + 2 + w_size + 2 + w_id + 2 + w_last + 8;
             let w_name = w_name.min(term_width.saturating_sub(fixed).max(12));
 
-            // Header (dim, like gh)
             println!(
                 "\x1b[2mSTATUS  {:<w_prog$}  {:<w_name$}  {:>w_size$}  {:>w_id$}  CREATED\x1b[0m",
                 "PROGRESS", "NAME", "SIZE", "ID",

@@ -231,7 +231,6 @@ fn run_list(args: &[String]) -> Result<()> {
         return Ok(());
     }
 
-    // Prepare row data
     struct Row {
         type_str: &'static str,
         type_color: &'static str,
@@ -275,7 +274,6 @@ fn run_list(args: &[String]) -> Result<()> {
         })
         .collect();
 
-    // Compute column widths
     let w_type = 7usize; // "private"
     let w_title = rows.iter().map(|r| UnicodeWidthStr::width(r.title.as_str())).max().unwrap_or(5).max(5);
     let w_expiry = rows.iter().map(|r| r.expiry.len()).max().unwrap_or(6).max(6);
@@ -284,14 +282,12 @@ fn run_list(args: &[String]) -> Result<()> {
     let w_saves = rows.iter().map(|r| r.saves.len()).max().unwrap_or(5).max(5);
     let w_date = rows.iter().map(|r| r.date.len()).max().unwrap_or(7).max(7);
 
-    // Clamp title to terminal width
     let term_width = crossterm::terminal::size()
         .map(|(w, _)| w as usize)
         .unwrap_or(120);
     let fixed = w_type + 2 + w_expiry + 2 + w_files + 2 + w_views + 2 + w_saves + 2 + w_date + 12;
     let w_title = w_title.min(term_width.saturating_sub(fixed).max(12));
 
-    // Header (dim, gh-style)
     println!(
         "\x1b[2mTYPE     {:<w_title$}  {:<w_expiry$}  {:>w_files$}  {:>w_views$}  {:>w_saves$}  CREATED\x1b[0m",
         "TITLE", "EXPIRY", "FILES", "VIEWS", "SAVES",
@@ -310,7 +306,6 @@ fn run_list(args: &[String]) -> Result<()> {
             tc = r.type_color,
             t = r.type_str,
         );
-        // URL on second line, dimmed
         println!("         \x1b[2m{}\x1b[0m", r.url);
     }
 

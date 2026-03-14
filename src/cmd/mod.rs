@@ -30,8 +30,6 @@ use crate::config::AppConfig;
 use crate::pikpak::{self, PikPak};
 use anyhow::{Result, anyhow};
 
-// ── Per-command help ────────────────────────────────────────────
-
 const G: &str = "\x1b[32m";  // green
 const _C: &str = "\x1b[36m"; // cyan (reserved)
 const D: &str = "\x1b[2m";   // dim
@@ -417,7 +415,6 @@ pub fn cli_client() -> Result<PikPak> {
         return Ok(client);
     }
 
-    // Try login.yaml
     let cfg = AppConfig::load()?;
     match (cfg.username, cfg.password) {
         (Some(u), Some(p)) if !u.is_empty() && !p.is_empty() => {

@@ -93,7 +93,6 @@ fn parse_args(args: &[String]) -> Result<LsArgs> {
     if expect_depth {
         return Err(anyhow!("--depth requires a value\n{USAGE}"));
     }
-    // --depth implies --tree
     if max_depth.is_some() {
         tree = true;
     }
@@ -165,7 +164,6 @@ pub fn run(args: &[String]) -> Result<()> {
     let folder_id = client.resolve_path(&parsed.path)?;
 
     if parsed.tree {
-        // Print root label
         let root_label = parsed.path.trim_end_matches('/');
         let root_label = if root_label.is_empty() { "/" } else { root_label };
         println!("{}", root_label);
@@ -355,7 +353,6 @@ mod tests {
                 max_depth: Some(3),
             }
         );
-        // --tree and --long can be combined
         assert_eq!(
             parse_args(&s(&["--tree", "-l"])).unwrap(),
             LsArgs {
@@ -497,7 +494,6 @@ mod sort_tests {
             entry("dir_b", EntryKind::Folder, 0, ""),
         ];
         sort_entries(&mut entries, SortField::Name, true);
-        // Folders still first, but reversed within each group
         assert_eq!(entries[0].name, "dir_b");
         assert_eq!(entries[1].name, "dir_a");
         assert_eq!(entries[2].name, "b");
