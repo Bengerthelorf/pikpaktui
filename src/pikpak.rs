@@ -2110,8 +2110,9 @@ fn now_unix() -> i64 {
 }
 
 fn sanitize(s: &str) -> String {
-    if s.len() > 240 {
-        format!("{}...", &s[..240])
+    if s.chars().count() > 240 {
+        let truncated: String = s.chars().take(240).collect();
+        format!("{}...", truncated)
     } else {
         s.to_string()
     }

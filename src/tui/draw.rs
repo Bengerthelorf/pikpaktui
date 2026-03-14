@@ -206,8 +206,9 @@ impl App {
         } else {
             (Color::Cyan, Color::Yellow)
         };
-        let truncated_name = if name.len() > 40 {
-            format!("{}...", &name[..37])
+        let truncated_name = if name.chars().count() > 40 {
+            let s: String = name.chars().take(37).collect();
+            format!("{}...", s)
         } else {
             name.to_string()
         };
@@ -253,8 +254,9 @@ impl App {
         let area = centered_rect(60, height, f.area());
         clear_overlay_area(f, area);
 
-        let truncated_name = if name.len() > 40 {
-            format!("{}...", &name[..37])
+        let truncated_name = if name.chars().count() > 40 {
+            let s: String = name.chars().take(37).collect();
+            format!("{}...", s)
         } else {
             name.to_string()
         };
