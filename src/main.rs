@@ -58,6 +58,7 @@ fn entry() -> Result<()> {
         "play" => cmd::play::run(&args[1..]),
         "vip" => cmd::vip::run(),
         "login" => cmd::login::run(&args[1..]),
+        "update" => cmd::update::run(),
         "completions" => cmd::completions::run(&args[1..]),
         "__complete_path" => cmd::complete_path::run(&args[1..]),
         other => Err(anyhow!(

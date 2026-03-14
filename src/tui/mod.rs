@@ -110,6 +110,7 @@ enum OpResult {
     Upload(Result<String>),
     ShareCreated { title: String, url: String, pass_code: String },
     MyShares(Result<Vec<crate::pikpak::MyShare>>),
+    UpdateAvailable(Option<String>),
 }
 
 #[derive(Default)]
@@ -366,6 +367,7 @@ impl App {
         };
         app.refresh();
         app.fetch_quota();
+        app.check_for_update_async();
         app
     }
 
@@ -815,6 +817,14 @@ impl App {
                         self.input = InputMode::Normal;
                     }
                 }
+                OpResult::UpdateAvailable(Some(version)) => {
+                    self.push_log(format!(
+                        "Update available: v{} → v{} (run `pikpaktui update`)",
+                        env!("CARGO_PKG_VERSION"),
+                        version
+                    ));
+                }
+                OpResult::UpdateAvailable(None) => {}
             }
         }
 
@@ -892,6 +902,15 @@ impl App {
         if self.logs.len() > 500 {
             self.logs.pop_front();
         }
+    }
+
+    fn check_for_update_async(&self) {
+        let tx = self.result_tx.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(OpResult::UpdateAvailable(
+                crate::cmd::update::check_for_update(),
+            ));
+        });
     }
 
     fn fetch_quota(&mut self) {

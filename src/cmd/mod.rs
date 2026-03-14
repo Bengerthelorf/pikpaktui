@@ -23,6 +23,7 @@ pub mod tasks;
 pub mod trash;
 pub mod unstar;
 pub mod untrash;
+pub mod update;
 pub mod upload;
 pub mod vip;
 
@@ -47,7 +48,7 @@ pub const COMMAND_GROUPS: &[(&str, &[&str])] = &[
     ("Starred & Activity",&["star", "unstar", "starred", "events"]),
     ("Auth",              &["login"]),
     ("Account",           &["quota", "vip"]),
-    ("Utility",           &["completions"]),
+    ("Utility",           &["update", "completions"]),
 ];
 
 /// Returns (usage_line, short_description, detailed_body) for a command.
@@ -382,6 +383,11 @@ fn command_help_text_inner(cmd: &str) -> (&'static str, &'static str, String) {
         "vip" => (
             "vip",
             "Show VIP and account info",
+            String::new(),
+        ),
+        "update" => (
+            "update",
+            "Check for updates and self-update",
             String::new(),
         ),
         "completions" => (
