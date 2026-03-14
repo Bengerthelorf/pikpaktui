@@ -1,11 +1,11 @@
 # Getting Started
 
-pikpaktui is a terminal client for [PikPak](https://mypikpak.com) cloud storage, offering both an interactive TUI and a full CLI with 26 subcommands. Written in pure Rust — no OpenSSL, no C dependencies.
+pikpaktui is a terminal client for [PikPak](https://mypikpak.com) cloud storage, offering both an interactive TUI and a full CLI with 27 subcommands. Written in pure Rust — no OpenSSL, no C dependencies.
 
 ## Requirements
 
 - A PikPak account ([sign up](https://mypikpak.com))
-- macOS (Intel or Apple Silicon) or Linux (x86_64)
+- macOS (Intel or Apple Silicon), Linux (x86_64 or ARM64), Windows (x86_64 or ARM64), or FreeBSD
 
 ## Installation
 
@@ -28,7 +28,7 @@ cargo build --release
 
 :::
 
-Pre-built binaries (including Linux musl static) are available on the [Releases page](https://github.com/Bengerthelorf/pikpaktui/releases/latest).
+Pre-built binaries are available for macOS (Intel & Apple Silicon), Linux (x86_64 & ARM64, including musl static), Windows (x86_64 & ARM64), and FreeBSD on the [Releases page](https://github.com/Bengerthelorf/pikpaktui/releases/latest).
 
 ## First Launch — TUI
 
@@ -160,5 +160,5 @@ PIKPAK_USER=you@example.com PIKPAK_PASS=yourpassword pikpaktui login
 
 - [TUI Guide](/guide/tui) — All keybindings for every view
 - [Configuration](/guide/configuration) — Customize colors, fonts, player, and more
-- [CLI Commands](/cli/commands) — Full reference for all 26 subcommands
+- [CLI Commands](/cli/commands) — Full reference for all 27 subcommands
 - [Shell Completions](/guide/shell-completions) — Tab-complete cloud paths in zsh

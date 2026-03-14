@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="assets/icon.svg" width="128" height="128" alt="pikpaktui icon">
+
 # pikpaktui
 
 **A TUI and CLI client for [PikPak](https://mypikpak.com) cloud storage — written in pure Rust.**
@@ -30,7 +32,7 @@ CLI reference, TUI guide, configuration, shell completions, and more.
 ## Highlights
 
 - 🖥️ **Interactive TUI** — Three-column Miller layout (like Yazi) with thumbnail previews, syntax highlighting, and keyboard-driven navigation
-- ⌨️ **Full CLI** — 27 subcommands (`ls`, `mv`, `cp`, `rm`, `download`, `upload`, `share`, `login`, and more) with colored output, JSON mode, and dry-run support
+- ⌨️ **Full CLI** — 28 subcommands (`ls`, `mv`, `cp`, `rm`, `download`, `upload`, `share`, `update`, and more) with colored output, JSON mode, and dry-run support
 - 🎬 **Video Streaming** — Stream videos directly from PikPak to your local player (IINA, mpv, VLC)
 - 📥 **Cloud Downloads** — Add magnet links and URLs for offline downloading
 - 🔗 **Share Management** — Create, list, save, and delete share links with optional password protection
@@ -53,7 +55,7 @@ cargo install pikpaktui
 
 ### Pre-built Binaries
 
-Download from [Releases](https://github.com/Bengerthelorf/pikpaktui/releases/latest) — available for Linux (x86_64 musl static), macOS Intel, and macOS Apple Silicon.
+Download from [Releases](https://github.com/Bengerthelorf/pikpaktui/releases/latest) — available for Linux (x86_64/ARM64), macOS (Intel/Apple Silicon), Windows (x86_64/ARM64), and FreeBSD.
 
 ### From Source
 

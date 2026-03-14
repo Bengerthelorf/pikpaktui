@@ -136,6 +136,8 @@ export default defineConfig({
   },
 
   themeConfig: {
+    logo: '/images/icon.svg',
+
     nav: [
       { text: 'Guide', link: '/guide/getting-started' },
       { text: 'CLI', link: '/cli/' },

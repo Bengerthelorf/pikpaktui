@@ -4,6 +4,9 @@ hero:
   name: pikpaktui
   text: PikPak in Your Terminal
   tagline: A fast, keyboard-driven TUI and CLI client for PikPak cloud storage. Browse, manage, download, and stream — without leaving the terminal.
+  image:
+    src: /images/icon.svg
+    alt: pikpaktui
   actions:
     - theme: brand
       text: Get Started
@@ -20,11 +23,11 @@ features:
     title: Interactive TUI
     details: Three-column Miller layout (like Yazi) — navigate folders, preview thumbnails and text files, move/copy/rename, stream videos, and manage offline downloads, all from the keyboard.
   - icon: ⌨️
-    title: Full CLI — 26 Commands
-    details: ls, mv, cp, rm, download, upload, share, offline, tasks, and more. JSON output for scripting, dry-run to preview changes, concurrent downloads with -j.
+    title: Full CLI — 27 Commands
+    details: ls, mv, cp, rm, download, upload, share, offline, tasks, update, and more. JSON output for scripting, dry-run to preview changes, concurrent downloads with -j.
   - icon: 🦀
     title: Pure Rust, No Dependencies
-    details: Built on ratatui + crossterm + reqwest (rustls-tls). No OpenSSL, no C dependencies. Static musl binary available for Linux x86_64.
+    details: Built on ratatui + crossterm + reqwest (rustls-tls). No OpenSSL, no C dependencies. Pre-built binaries for macOS, Linux, Windows, and FreeBSD.
   - icon: 🌐
     title: Offline (Cloud) Downloads
     details: Submit magnet links and HTTP/HTTPS URLs for server-side downloading. Monitor progress, retry failures, all within the TUI or via CLI.

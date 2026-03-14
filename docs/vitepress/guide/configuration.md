@@ -54,6 +54,19 @@ player = "mpv"              # External video player command; set in TUI on first
 
 # Downloads
 download_jobs = 1           # Concurrent download threads (1–16)
+update_check = "notify"     # "notify" | "quiet" | "off"
+```
+
+### update_check
+
+Controls update checking behavior.
+
+- `"notify"` (default) — Check for updates on startup; show persistently in TUI status bar and CLI stderr
+- `"quiet"` — Check silently; only show in TUI log
+- `"off"` — Disable update checking entirely
+
+```toml
+update_check = "notify"
 ```
 
 ### Image Protocols

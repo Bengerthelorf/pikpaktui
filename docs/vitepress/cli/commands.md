@@ -627,6 +627,18 @@ pikpaktui vip
 
 ---
 
+## update
+
+Check for updates and self-update the binary from GitHub releases.
+
+```bash
+pikpaktui update
+```
+
+Downloads the latest release for your platform and replaces the current binary in-place.
+
+---
+
 ## completions
 
 Generate shell completion scripts. Currently only **Zsh** is supported.

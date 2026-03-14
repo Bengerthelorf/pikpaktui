@@ -1,6 +1,6 @@
 # CLI Overview
 
-pikpaktui provides 26 CLI subcommands for scripting, automation, and power-user workflows. All commands require a valid session — run `pikpaktui` (TUI) first to log in, or use `pikpaktui login`.
+pikpaktui provides 27 CLI subcommands for scripting, automation, and power-user workflows. All commands require a valid session — run `pikpaktui` (TUI) first to log in, or use `pikpaktui login`.
 
 ## Command Groups
 
@@ -72,6 +72,7 @@ pikpaktui provides 26 CLI subcommands for scripting, automation, and power-user 
 
 | Command | Description |
 |---------|-------------|
+| [`update`](/cli/commands#update) | Check for updates and self-update |
 | [`completions`](/cli/commands#completions) | Generate shell completions |
 
 ## Common Flags

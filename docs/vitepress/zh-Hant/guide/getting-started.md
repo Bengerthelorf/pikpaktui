@@ -1,11 +1,11 @@
 # 快速開始
 
-pikpaktui 是一個 [PikPak](https://mypikpak.com) 雲端儲存的終端機客戶端，提供互動式 TUI 與包含 26 條子指令的完整 CLI。由純 Rust 撰寫，無 OpenSSL，無 C 相依。
+pikpaktui 是一個 [PikPak](https://mypikpak.com) 雲端儲存的終端機客戶端，提供互動式 TUI 與包含 27 條子指令的完整 CLI。由純 Rust 撰寫，無 OpenSSL，無 C 相依。
 
 ## 系統需求
 
 - PikPak 帳號（[立即註冊](https://mypikpak.com)）
-- macOS（Intel 或 Apple Silicon）或 Linux（x86_64）
+- macOS（Intel 或 Apple Silicon）、Linux（x86_64 / ARM64）、Windows（x86_64 / ARM64）或 FreeBSD
 
 ## 安裝
 
@@ -159,5 +159,5 @@ PIKPAK_USER=you@example.com PIKPAK_PASS=yourpassword pikpaktui login
 
 - [TUI 指南](/zh-Hant/guide/tui) — 所有檢視的完整快捷鍵參考
 - [設定](/zh-Hant/guide/configuration) — 自訂配色、字型、播放器等
-- [CLI 指令參考](/zh-Hant/cli/commands) — 全部 26 條指令詳解
+- [CLI 指令參考](/zh-Hant/cli/commands) — 全部 27 條指令詳解
 - [Shell 補全](/zh-Hant/guide/shell-completions) — 在 zsh 中 Tab 補全雲端路徑

@@ -615,6 +615,18 @@ pikpaktui vip
 
 ---
 
+## update
+
+检查更新并从 GitHub Releases 自动更新二进制文件。
+
+```bash
+pikpaktui update
+```
+
+下载适合当前平台的最新版本并就地替换当前二进制文件。
+
+---
+
 ## completions
 
 生成 Shell 补全脚本，目前仅支持 **Zsh**。
