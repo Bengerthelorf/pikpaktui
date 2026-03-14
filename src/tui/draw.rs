@@ -3172,6 +3172,16 @@ impl App {
                     ),
                 ],
             ),
+            (
+                "Update Settings",
+                vec![
+                    (
+                        "Update Check".to_string(),
+                        draft.update_check.description().to_string(),
+                        draft.update_check.as_str().to_string(),
+                    ),
+                ],
+            ),
         ];
 
         let mut item_line_map: Vec<usize> = Vec::new();

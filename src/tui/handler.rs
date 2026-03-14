@@ -3433,13 +3433,29 @@ impl App {
                         _ => {}
                     }
                 }
+                16 => {
+                    match code {
+                        KeyCode::Right | KeyCode::Char('+') | KeyCode::Char('l') => {
+                            draft.update_check = draft.update_check.next();
+                            *modified = true;
+                        }
+                        KeyCode::Left | KeyCode::Char('-') | KeyCode::Char('h') => {
+                            draft.update_check = draft.update_check.prev();
+                            *modified = true;
+                        }
+                        KeyCode::Enter | KeyCode::Esc => {
+                            *editing = false;
+                        }
+                        _ => {}
+                    }
+                }
                 _ => {}
             }
             None
         } else {
             match code {
                 KeyCode::Down | KeyCode::Char('j') => {
-                    *selected = (*selected + 1).min(15);
+                    *selected = (*selected + 1).min(16);
                     None
                 }
                 KeyCode::Up | KeyCode::Char('k') => {
