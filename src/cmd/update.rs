@@ -4,9 +4,12 @@ use self_update::cargo_crate_version;
 fn platform_target() -> &'static str {
     match (std::env::consts::ARCH, std::env::consts::OS) {
         ("x86_64", "linux") => "x86_64-linux",
+        ("aarch64", "linux") => "aarch64-linux",
         ("x86_64", "macos") => "x86_64-macos",
         ("aarch64", "macos") => "aarch64-macos",
         ("x86_64", "windows") => "x86_64-windows",
+        ("aarch64", "windows") => "aarch64-windows",
+        ("x86_64", "freebsd") => "x86_64-freebsd",
         (arch, os) => {
             eprintln!("Unsupported platform: {}-{}", arch, os);
             std::process::exit(1);

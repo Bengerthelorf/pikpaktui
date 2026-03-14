@@ -72,11 +72,31 @@ jobs:
             strip: true
             ext: ""
 
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            name: pikpaktui-aarch64-linux
+            strip: false
+            cross: true
+            ext: ""
+
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             name: pikpaktui-x86_64-windows
             strip: false
             ext: ".exe"
+
+          - target: aarch64-pc-windows-msvc
+            os: windows-latest
+            name: pikpaktui-aarch64-windows
+            strip: false
+            ext: ".exe"
+
+          - target: x86_64-unknown-freebsd
+            os: ubuntu-latest
+            name: pikpaktui-x86_64-freebsd
+            strip: false
+            cross: true
+            ext: ""
 
     steps:
       - name: Checkout
@@ -87,11 +107,15 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - name: Install musl tools (Linux)
+      - name: Install musl tools (Linux x86_64)
         if: matrix.target == 'x86_64-unknown-linux-musl'
         run: |
           sudo apt-get update
           sudo apt-get install -y musl-tools
+
+      - name: Install cross
+        if: matrix.cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
 
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2
@@ -105,7 +129,12 @@ jobs:
           echo "TARGET_DIR=./target/${{ matrix.target }}" >> $GITHUB_ENV
 
       - name: Build binary
+        if: ${{ !matrix.cross }}
         run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Build binary (cross)
+        if: ${{ matrix.cross }}
+        run: cross build --release --target ${{ matrix.target }}
 
       - name: Strip binary
         if: matrix.strip
@@ -213,9 +242,12 @@ jobs:
           echo "## Download" >> CHANGELOG.md
           echo "Choose the appropriate binary for your platform:" >> CHANGELOG.md
           echo "- **Linux x86_64**: pikpaktui-x86_64-linux.tar.gz (statically linked)" >> CHANGELOG.md
+          echo "- **Linux ARM64**: pikpaktui-aarch64-linux.tar.gz (statically linked)" >> CHANGELOG.md
           echo "- **macOS Intel**: pikpaktui-x86_64-macos.tar.gz" >> CHANGELOG.md
           echo "- **macOS Apple Silicon**: pikpaktui-aarch64-macos.tar.gz" >> CHANGELOG.md
           echo "- **Windows x86_64**: pikpaktui-x86_64-windows.zip" >> CHANGELOG.md
+          echo "- **Windows ARM64**: pikpaktui-aarch64-windows.zip" >> CHANGELOG.md
+          echo "- **FreeBSD x86_64**: pikpaktui-x86_64-freebsd.tar.gz" >> CHANGELOG.md
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
