@@ -23,7 +23,7 @@ features:
     title: Interactive TUI
     details: Three-column Miller layout (like Yazi) — navigate folders, preview thumbnails and text files, move/copy/rename, stream videos, and manage offline downloads, all from the keyboard.
   - icon: ⌨️
-    title: Full CLI — 27 Commands
+    title: Full CLI — 28 Commands
     details: ls, mv, cp, rm, download, upload, share, offline, tasks, update, and more. JSON output for scripting, dry-run to preview changes, concurrent downloads with -j.
   - icon: 🦀
     title: Pure Rust, No Dependencies
@@ -37,4 +37,7 @@ features:
   - icon: 🔧
     title: Fully Configurable
     details: Nerd Font icons, custom RGB color schemes, per-terminal image protocols (Kitty/iTerm2/Sixel), concurrent download jobs, external video player, and more.
+  - icon: 💚
+    title: Open Source
+    details: Apache-2.0 licensed. Contributions welcome — issues, PRs, and feature requests on GitHub. Self-updating binary keeps you on the latest version.
 ---

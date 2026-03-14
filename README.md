@@ -37,7 +37,9 @@ CLI reference, TUI guide, configuration, shell completions, and more.
 - 📥 **Cloud Downloads** — Add magnet links and URLs for offline downloading
 - 🔗 **Share Management** — Create, list, save, and delete share links with optional password protection
 - 🐚 **Shell Completions** — Zsh completions with dynamic cloud path completion via Tab
+- 🔄 **Self-Updating** — Built-in `update` command downloads the latest release and replaces the binary in-place
 - 🦀 **Pure Rust** — Built on `ratatui` + `crossterm` + `reqwest` (rustls-tls). No OpenSSL, no C dependencies
+- 💚 **Open Source** — Apache-2.0 licensed, contributions welcome
 
 ## Install
 
