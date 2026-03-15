@@ -46,6 +46,36 @@ jobs:
         run: cargo fmt --check
         continue-on-error: true
 
+      - name: Test shell completions (all shells)
+        shell: bash
+        run: |
+          cargo run -- completions bash > /dev/null
+          cargo run -- completions zsh > /dev/null
+          cargo run -- completions fish > /dev/null
+          cargo run -- completions powershell > /dev/null
+          echo "All completion scripts generated successfully"
+
+      - name: Test PowerShell completions (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $output = cargo run -- completions powershell 2>$null
+          if (-not $output) { throw "Empty completion output" }
+
+          $regCount = ($output | Select-String "Register-ArgumentCompleter").Count
+          if ($regCount -ne 1) { throw "Expected 1 Register-ArgumentCompleter, got $regCount" }
+
+          $output | Out-String | Invoke-Expression
+          Write-Host "PowerShell completions loaded successfully"
+
+      - name: Test version and help
+        shell: bash
+        run: |
+          cargo run -- --version
+          cargo run -- --help
+          cargo run -- completions --help
+          echo "Help/version tests passed"
+
   build:
     name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}

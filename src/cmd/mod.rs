@@ -395,9 +395,15 @@ fn command_help_text_inner(cmd: &str) -> (&'static str, &'static str, String) {
             "Generate shell completions",
             format!(
                 "{B}SUPPORTED SHELLS:{R}\n\
+                 {opt}  bash{R}\n\
                  {opt}  zsh{R}\n\
+                 {opt}  fish{R}\n\
+                 {opt}  powershell{R}\n\
                  \n{B}EXAMPLES:{R}\n\
-                 {ex}  pikpaktui completions zsh > _pikpaktui{R}\n",
+                 {ex}  pikpaktui completions zsh > ~/.zfunc/_pikpaktui{R}\n\
+                 {ex}  pikpaktui completions bash > /etc/bash_completion.d/pikpaktui{R}\n\
+                 {ex}  pikpaktui completions fish > ~/.config/fish/completions/pikpaktui.fish{R}\n\
+                 {ex}  pikpaktui completions powershell | Out-String | Invoke-Expression{R}\n",
                 opt = G, ex = D,
             ),
         ),
