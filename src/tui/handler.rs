@@ -3350,19 +3350,11 @@ impl App {
                 12 => {
                     match code {
                         KeyCode::Left => {
-                            draft.move_mode = if draft.move_mode == "picker" {
-                                "input".to_string()
-                            } else {
-                                "picker".to_string()
-                            };
+                            draft.move_mode = draft.move_mode.toggle();
                             *modified = true;
                         }
                         KeyCode::Right => {
-                            draft.move_mode = if draft.move_mode == "picker" {
-                                "input".to_string()
-                            } else {
-                                "picker".to_string()
-                            };
+                            draft.move_mode = draft.move_mode.toggle();
                             *modified = true;
                         }
                         KeyCode::Enter => {

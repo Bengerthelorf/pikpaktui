@@ -21,12 +21,16 @@ pub fn run(args: &[String]) -> Result<()> {
                 i += 1;
                 parent_path = args.get(i).map(|s| s.as_str());
             }
-            "--name" | "-n" => {
+            "--name" => {
                 i += 1;
                 name = args.get(i).map(|s| s.as_str());
             }
-            "--dry-run" => dry_run = true,
-            _ => {}
+            "--dry-run" | "-n" => dry_run = true,
+            other => {
+                return Err(anyhow!(
+                    "unknown option: {other}\nRun `pikpaktui offline --help` for usage."
+                ));
+            }
         }
         i += 1;
     }

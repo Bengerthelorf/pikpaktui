@@ -69,6 +69,7 @@ impl PikPak {
             http: reqwest::blocking::Client::builder()
                 .user_agent(USER_AGENT)
                 .connect_timeout(std::time::Duration::from_secs(10))
+                .timeout(std::time::Duration::from_secs(300))
                 .build()
                 .context("failed to build http client")?,
             drive_base_url: env::var("PIKPAK_DRIVE_BASE_URL")
@@ -105,12 +106,13 @@ impl PikPak {
                 .with_context(|| format!("failed to create dir {}", parent.display()))?;
         }
         let raw = serde_json::to_string_pretty(token).context("failed to encode session")?;
-        // Atomic write: write to temp file then rename to avoid corruption on crash
         let tmp_path = self.session_path.with_extension("tmp");
         fs::write(&tmp_path, &raw)
             .with_context(|| format!("failed to write temp session {}", tmp_path.display()))?;
         fs::rename(&tmp_path, &self.session_path)
-            .with_context(|| format!("failed to rename session {}", self.session_path.display()))
+            .with_context(|| format!("failed to rename session {}", self.session_path.display()))?;
+        set_file_owner_only(&self.session_path);
+        Ok(())
     }
 
     pub fn has_valid_session(&self) -> bool {
@@ -558,22 +560,10 @@ impl PikPak {
     pub fn download_url(&self, file_id: &str) -> Result<(String, u64)> {
         let info = self.file_info(file_id)?;
         let url = info
-            .web_content_link
-            .as_deref()
-            .or(info.links.as_ref().and_then(|l| {
-                l.get("application/octet-stream")
-                    .and_then(|v| v.url.as_deref())
-            }))
+            .download_url()
             .ok_or_else(|| anyhow!("no download link for file {}", file_id))?
             .to_string();
-
-        let total_size = info
-            .size
-            .as_deref()
-            .and_then(|s| s.parse::<u64>().ok())
-            .unwrap_or(0);
-
-        Ok((url, total_size))
+        Ok((url, info.file_size()))
     }
 
     /// Get a reference to the HTTP client.
@@ -600,12 +590,7 @@ impl PikPak {
     pub fn download_to(&self, file_id: &str, dest: &std::path::Path) -> Result<u64> {
         let info = self.file_info(file_id)?;
         let download_url = info
-            .web_content_link
-            .as_deref()
-            .or(info.links.as_ref().and_then(|l| {
-                l.get("application/octet-stream")
-                    .and_then(|v| v.url.as_deref())
-            }))
+            .download_url()
             .ok_or_else(|| anyhow!("no download link for file {}", file_id))?;
 
         let existing_size = dest.metadata().map(|m| m.len()).unwrap_or(0);
@@ -924,19 +909,9 @@ impl PikPak {
     ) -> Result<(String, String, u64, bool)> {
         let info = self.file_info(file_id)?;
         let url = info
-            .web_content_link
-            .as_deref()
-            .or(info.links.as_ref().and_then(|l| {
-                l.get("application/octet-stream")
-                    .and_then(|v| v.url.as_deref())
-            }))
+            .download_url()
             .ok_or_else(|| anyhow!("no download link for file {}", file_id))?;
-
-        let file_size = info
-            .size
-            .as_deref()
-            .and_then(|s| s.parse::<u64>().ok())
-            .unwrap_or(0);
+        let file_size = info.file_size();
 
         let response = self
             .http
@@ -1636,8 +1611,13 @@ pub struct ShareInfoResponse {
     pub files: Vec<ShareEntry>,
 }
 
-/// Compute the PikPak hash of a file.
+/// Compute the PikPak proprietary file hash for upload deduplication.
 /// Algorithm: chunk the file, SHA1 each chunk, concatenate hex hashes, SHA1 the result.
+/// Chunk sizes follow PikPak's server-side spec (reverse-engineered from the Android client):
+///   < 128 MB  -> 256 KB chunks
+///   < 256 MB  -> 512 KB chunks
+///   < 512 MB  -> 1 MB chunks
+///   >= 512 MB -> 2 MB chunks
 pub fn pikpak_hash(path: &Path) -> Result<String> {
     use sha1::Digest;
 
@@ -1936,6 +1916,25 @@ pub struct FileInfoResponse {
     pub medias: Option<Vec<MediaInfo>>,
 }
 
+impl FileInfoResponse {
+    /// Extract the best download URL from file info.
+    pub fn download_url(&self) -> Option<&str> {
+        self.web_content_link
+            .as_deref()
+            .or(self.links.as_ref().and_then(|l| {
+                l.get("application/octet-stream")
+                    .and_then(|v| v.url.as_deref())
+            }))
+    }
+
+    pub fn file_size(&self) -> u64 {
+        self.size
+            .as_deref()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(0)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LinkInfo {
     #[serde(default)]
@@ -2065,9 +2064,20 @@ fn ensure_success(response: reqwest::blocking::Response, op: &str) -> Result<()>
 }
 
 fn default_session_path() -> Result<PathBuf> {
-    let base = dirs::config_dir().ok_or_else(|| anyhow!("unable to locate config dir"))?;
+    let base = dirs::home_dir()
+        .map(|h| h.join(".config"))
+        .ok_or_else(|| anyhow!("unable to locate home dir"))?;
     Ok(base.join("pikpaktui").join("session.json"))
 }
+
+#[cfg(unix)]
+fn set_file_owner_only(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
+}
+
+#[cfg(not(unix))]
+fn set_file_owner_only(_path: &Path) {}
 
 fn now_unix() -> i64 {
     SystemTime::now()
@@ -2086,84 +2096,13 @@ fn sanitize(s: &str) -> String {
 }
 
 fn md5_hex(input: &str) -> String {
-    let digest = md5_compute(input.as_bytes());
+    use md5::{Md5, Digest};
+    let hash = Md5::digest(input.as_bytes());
     let mut hex = String::with_capacity(32);
-    for b in &digest {
+    for b in hash.iter() {
         write!(hex, "{:02x}", b).unwrap();
     }
     hex
-}
-
-fn md5_compute(input: &[u8]) -> [u8; 16] {
-    const S: [u32; 64] = [
-        7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 5, 9, 14, 20, 5, 9, 14, 20, 5,
-        9, 14, 20, 5, 9, 14, 20, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 6, 10,
-        15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
-    ];
-
-    const K: [u32; 64] = [
-        0xd76aa478, 0xe8c7b756, 0x242070db, 0xc1bdceee, 0xf57c0faf, 0x4787c62a, 0xa8304613,
-        0xfd469501, 0x698098d8, 0x8b44f7af, 0xffff5bb1, 0x895cd7be, 0x6b901122, 0xfd987193,
-        0xa679438e, 0x49b40821, 0xf61e2562, 0xc040b340, 0x265e5a51, 0xe9b6c7aa, 0xd62f105d,
-        0x02441453, 0xd8a1e681, 0xe7d3fbc8, 0x21e1cde6, 0xc33707d6, 0xf4d50d87, 0x455a14ed,
-        0xa9e3e905, 0xfcefa3f8, 0x676f02d9, 0x8d2a4c8a, 0xfffa3942, 0x8771f681, 0x6d9d6122,
-        0xfde5380c, 0xa4beea44, 0x4bdecfa9, 0xf6bb4b60, 0xbebfbc70, 0x289b7ec6, 0xeaa127fa,
-        0xd4ef3085, 0x04881d05, 0xd9d4d039, 0xe6db99e5, 0x1fa27cf8, 0xc4ac5665, 0xf4292244,
-        0x432aff97, 0xab9423a7, 0xfc93a039, 0x655b59c3, 0x8f0ccc92, 0xffeff47d, 0x85845dd1,
-        0x6fa87e4f, 0xfe2ce6e0, 0xa3014314, 0x4e0811a1, 0xf7537e82, 0xbd3af235, 0x2ad7d2bb,
-        0xeb86d391,
-    ];
-
-    let orig_len_bits = (input.len() as u64).wrapping_mul(8);
-    let mut msg = input.to_vec();
-    msg.push(0x80);
-    while msg.len() % 64 != 56 {
-        msg.push(0);
-    }
-    msg.extend_from_slice(&orig_len_bits.to_le_bytes());
-
-    let mut a0: u32 = 0x67452301;
-    let mut b0: u32 = 0xefcdab89;
-    let mut c0: u32 = 0x98badcfe;
-    let mut d0: u32 = 0x10325476;
-
-    for chunk in msg.chunks_exact(64) {
-        let mut m = [0u32; 16];
-        for (i, word) in chunk.chunks_exact(4).enumerate() {
-            m[i] = u32::from_le_bytes([word[0], word[1], word[2], word[3]]);
-        }
-
-        let (mut a, mut b, mut c, mut d) = (a0, b0, c0, d0);
-
-        for i in 0..64 {
-            let (f, g) = match i {
-                0..=15 => ((b & c) | ((!b) & d), i),
-                16..=31 => ((d & b) | ((!d) & c), (5 * i + 1) % 16),
-                32..=47 => (b ^ c ^ d, (3 * i + 5) % 16),
-                _ => (c ^ (b | (!d)), (7 * i) % 16),
-            };
-
-            let temp = d;
-            d = c;
-            c = b;
-            b = b.wrapping_add(
-                (a.wrapping_add(f).wrapping_add(K[i]).wrapping_add(m[g])).rotate_left(S[i]),
-            );
-            a = temp;
-        }
-
-        a0 = a0.wrapping_add(a);
-        b0 = b0.wrapping_add(b);
-        c0 = c0.wrapping_add(c);
-        d0 = d0.wrapping_add(d);
-    }
-
-    let mut result = [0u8; 16];
-    result[0..4].copy_from_slice(&a0.to_le_bytes());
-    result[4..8].copy_from_slice(&b0.to_le_bytes());
-    result[8..12].copy_from_slice(&c0.to_le_bytes());
-    result[12..16].copy_from_slice(&d0.to_le_bytes());
-    result
 }
 
 fn de_opt_u64<'de, D>(deserializer: D) -> std::result::Result<Option<u64>, D::Error>

@@ -18,21 +18,49 @@ pub struct AppConfig {
 impl AppConfig {
     pub fn load() -> Result<Self> {
         let path = config_path()?;
-        if !path.exists() {
-            return Ok(Self::default());
+        if path.exists() {
+            let raw = fs::read_to_string(&path)
+                .with_context(|| format!("failed to read config {}", path.display()))?;
+            let cfg: AppConfig =
+                toml::from_str(&raw).with_context(|| "failed to parse login.toml")?;
+            return Ok(cfg);
         }
-        let raw = fs::read_to_string(&path)
-            .with_context(|| format!("failed to read config {}", path.display()))?;
-        let cfg: AppConfig =
-            serde_yaml::from_str(&raw).with_context(|| "failed to parse login.yaml")?;
-        Ok(cfg)
+        // Backward compat: try legacy login.yaml
+        let legacy = path.with_file_name("login.yaml");
+        if legacy.exists() {
+            let raw = fs::read_to_string(&legacy)
+                .with_context(|| format!("failed to read legacy config {}", legacy.display()))?;
+            // Parse simple key: value YAML manually to avoid serde_yaml dependency
+            let cfg = Self::parse_legacy_yaml(&raw);
+            return Ok(cfg);
+        }
+        Ok(Self::default())
+    }
+
+    /// Minimal parser for legacy login.yaml (simple key: value format).
+    fn parse_legacy_yaml(raw: &str) -> Self {
+        let mut cfg = Self::default();
+        for line in raw.lines() {
+            let line = line.trim();
+            if let Some((key, val)) = line.split_once(':') {
+                let key = key.trim();
+                let val = val.trim().trim_matches('"').trim_matches('\'');
+                match key {
+                    "proxy" => cfg.proxy = Some(val.to_string()),
+                    "username" => cfg.username = Some(val.to_string()),
+                    "password" => cfg.password = Some(val.to_string()),
+                    _ => {}
+                }
+            }
+        }
+        cfg
     }
 
     pub fn save_credentials(username: &str, password: &str) -> Result<()> {
         let path = config_path()?;
         let mut cfg = if path.exists() {
             let raw = fs::read_to_string(&path).unwrap_or_default();
-            serde_yaml::from_str(&raw).unwrap_or_default()
+            toml::from_str(&raw).unwrap_or_default()
         } else {
             AppConfig::default()
         };
@@ -45,20 +73,31 @@ impl AppConfig {
                 .with_context(|| format!("failed to create dir {}", parent.display()))?;
         }
 
-        let raw = serde_yaml::to_string(&cfg).context("failed to serialize config")?;
+        let raw = toml::to_string_pretty(&cfg).context("failed to serialize config")?;
         let tmp_path = path.with_extension("tmp");
         fs::write(&tmp_path, &raw)
             .with_context(|| format!("failed to write config {}", tmp_path.display()))?;
         fs::rename(&tmp_path, &path)
             .with_context(|| format!("failed to rename config {}", path.display()))?;
+        set_file_owner_only(&path);
         Ok(())
     }
 }
 
 pub fn config_path() -> Result<PathBuf> {
     let base = home_config_dir().ok_or_else(|| anyhow::anyhow!("unable to locate config dir"))?;
-    Ok(base.join("pikpaktui").join("login.yaml"))
+    Ok(base.join("pikpaktui").join("login.toml"))
 }
+
+/// Restrict file permissions to owner-only (0600) on Unix.
+#[cfg(unix)]
+fn set_file_owner_only(path: &PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
+}
+
+#[cfg(not(unix))]
+fn set_file_owner_only(_path: &PathBuf) {}
 
 /// Returns ~/.config on all platforms instead of platform-specific config dirs.
 fn home_config_dir() -> Option<PathBuf> {
@@ -427,12 +466,37 @@ impl Default for CustomColors {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+#[derive(Default)]
+pub enum MoveMode {
+    #[default]
+    Picker,
+    Input,
+}
+
+impl MoveMode {
+    pub fn toggle(self) -> Self {
+        match self {
+            Self::Picker => Self::Input,
+            Self::Input => Self::Picker,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Picker => "picker",
+            Self::Input => "input",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TuiConfig {
     #[serde(default)]
     pub nerd_font: bool,
-    #[serde(default = "default_move_mode")]
-    pub move_mode: String, // "picker" or "input"
+    #[serde(default)]
+    pub move_mode: MoveMode,
     #[serde(default = "default_true")]
     pub show_help_bar: bool,
     #[serde(default)]
@@ -525,15 +589,12 @@ fn default_true() -> bool {
     true
 }
 
-fn default_move_mode() -> String {
-    "picker".to_string()
-}
 
 impl Default for TuiConfig {
     fn default() -> Self {
         Self {
             nerd_font: false,
-            move_mode: "picker".to_string(),
+            move_mode: MoveMode::default(),
             show_help_bar: true,
             quota_bar_style: QuotaBarStyle::default(),
             cli_nerd_font: false,
@@ -558,7 +619,7 @@ impl Default for TuiConfig {
 
 impl TuiConfig {
     pub fn use_picker(&self) -> bool {
-        self.move_mode != "input"
+        self.move_mode != MoveMode::Input
     }
 
     /// Detect the current terminal emulator name via `TERM_PROGRAM`.
@@ -695,8 +756,16 @@ pub fn sort_entries(entries: &mut [crate::pikpak::Entry], field: SortField, reve
             entries.sort_by(|a, b| {
                 let kind_ord = kind_order(&a.kind).cmp(&kind_order(&b.kind));
                 kind_ord.then_with(|| {
-                    let ext_a = a.name.rsplit('.').next().unwrap_or("").to_lowercase();
-                    let ext_b = b.name.rsplit('.').next().unwrap_or("").to_lowercase();
+                    let ext_a = std::path::Path::new(&a.name)
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .unwrap_or("")
+                        .to_lowercase();
+                    let ext_b = std::path::Path::new(&b.name)
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .unwrap_or("")
+                        .to_lowercase();
                     ext_a.cmp(&ext_b).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
                 })
             });

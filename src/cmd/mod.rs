@@ -32,7 +32,6 @@ use crate::pikpak::{self, PikPak};
 use anyhow::{Result, anyhow};
 
 const G: &str = "\x1b[32m";  // green
-const _C: &str = "\x1b[36m"; // cyan (reserved)
 const D: &str = "\x1b[2m";   // dim
 const B: &str = "\x1b[1m";   // bold
 const R: &str = "\x1b[0m";   // reset
@@ -218,6 +217,7 @@ fn command_help_text_inner(cmd: &str) -> (&'static str, &'static str, String) {
             format!(
                 "{B}OPTIONS:{R}\n\
                  {opt}  --to <path>      {d}Destination folder in PikPak{R}\n\
+                 {opt}  --name <name>    {d}Custom name for the task{R}\n\
                  {opt}  -n, --dry-run    {d}Preview without creating task{R}\n\
                  \n{B}EXAMPLES:{R}\n\
                  {ex}  pikpaktui offline https://example.com/file.zip{R}\n\
@@ -434,7 +434,7 @@ pub fn cli_client() -> Result<PikPak> {
             Ok(client)
         }
         _ => Err(anyhow!(
-            "not logged in. Run `pikpaktui` (TUI) to login first, or set credentials in login.yaml"
+            "not logged in. Run `pikpaktui` (TUI) to login first, or set credentials in login.toml"
         )),
     }
 }
@@ -603,6 +603,27 @@ impl Drop for Spinner {
 }
 
 use std::io::IsTerminal;
+
+/// Unicode-aware string truncation with ellipsis.
+pub fn truncate(s: &str, max: usize) -> String {
+    use unicode_width::UnicodeWidthStr;
+    if UnicodeWidthStr::width(s) <= max {
+        s.to_string()
+    } else {
+        let mut w = 0;
+        let mut out = String::new();
+        for ch in s.chars() {
+            let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+            if w + cw + 1 > max {
+                break;
+            }
+            out.push(ch);
+            w += cw;
+        }
+        out.push('…');
+        out
+    }
+}
 
 pub fn format_size(bytes: u64) -> String {
     const KB: u64 = 1024;

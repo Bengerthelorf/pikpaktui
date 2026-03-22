@@ -159,6 +159,7 @@ fn launch_player(player_cmd: &str, url: &str, label: &str) -> Result<()> {
     }
     let program = parts[0];
     let mut args: Vec<&str> = parts[1..].to_vec();
+    args.push("--");
     args.push(url);
 
     eprintln!("Playing '{}' with {}...", label, program);

@@ -64,7 +64,7 @@ pub fn run(args: &[String]) -> Result<()> {
     AppConfig::save_credentials(&user, &password)?;
 
     println!("\x1b[32m✓\x1b[0m Logged in as \x1b[1m{}\x1b[0m", user);
-    println!("\x1b[2mCredentials saved to login.yaml\x1b[0m");
+    println!("\x1b[2mCredentials saved to login.toml\x1b[0m");
 
     Ok(())
 }

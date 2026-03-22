@@ -3143,7 +3143,7 @@ impl App {
                     (
                         "Move Mode".to_string(),
                         "Interface for move/copy operations".to_string(),
-                        draft.move_mode.clone(),
+                        draft.move_mode.as_str().to_string(),
                     ),
                     (
                         "CLI Nerd Font".to_string(),

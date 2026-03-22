@@ -5,6 +5,8 @@ edition = "2024"
 description = "A TUI and CLI client for PikPak cloud storage"
 license = "Apache-2.0"
 repository = "https://github.com/Bengerthelorf/pikpaktui"
+homepage = "https://app.snaix.homes/pikpaktui/"
+documentation = "https://app.snaix.homes/pikpaktui/"
 keywords = ["tui", "pikpak", "cloud-storage", "cli"]
 categories = ["command-line-utilities"]
 include = [
@@ -23,9 +25,9 @@ dirs = "6"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
-serde_yaml = "0.9.34-deprecated"
 toml = "0.9.8"
 sha1 = "0.10"
+md-5 = "0.10"
 hmac = "0.12"
 base64 = "0.22"
 unicode-width = "0.2"

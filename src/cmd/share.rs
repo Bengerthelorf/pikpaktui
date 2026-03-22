@@ -294,7 +294,7 @@ fn run_list(args: &[String]) -> Result<()> {
     );
 
     for r in &rows {
-        let title = truncate(&r.title, w_title);
+        let title = super::truncate(&r.title, w_title);
         println!(
             "\x1b[{tc}m{t:<w_type$}\x1b[0m  {:<w_title$}  {:<w_expiry$}  {:>w_files$}  {:>w_views$}  {:>w_saves$}  {}",
             title,
@@ -312,25 +312,6 @@ fn run_list(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-fn truncate(s: &str, max: usize) -> String {
-    use unicode_width::UnicodeWidthStr;
-    if UnicodeWidthStr::width(s) <= max {
-        s.to_string()
-    } else {
-        let mut w = 0;
-        let mut out = String::new();
-        for ch in s.chars() {
-            let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
-            if w + cw + 1 > max {
-                break;
-            }
-            out.push(ch);
-            w += cw;
-        }
-        out.push('…');
-        out
-    }
-}
 
 fn run_delete(args: &[String]) -> Result<()> {
     let ids: Vec<&str> = args

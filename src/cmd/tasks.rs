@@ -104,7 +104,7 @@ pub fn run(args: &[String]) -> Result<()> {
             );
 
             for r in &rows {
-                let name = truncate(&r.name, w_name);
+                let name = super::truncate(&r.name, w_name);
                 println!(
                     "\x1b[{color}m{icon}\x1b[0m       {:<w_prog$}  {:<w_name$}  {:>w_size$}  {:>w_id$}  {}",
                     r.progress,
@@ -171,21 +171,3 @@ pub fn run(args: &[String]) -> Result<()> {
     }
 }
 
-fn truncate(s: &str, max: usize) -> String {
-    if UnicodeWidthStr::width(s) <= max {
-        s.to_string()
-    } else {
-        let mut w = 0;
-        let mut out = String::new();
-        for ch in s.chars() {
-            let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
-            if w + cw + 1 > max {
-                break;
-            }
-            out.push(ch);
-            w += cw;
-        }
-        out.push('…');
-        out
-    }
-}
