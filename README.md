@@ -8,7 +8,7 @@
 
 [![Crates.io](https://img.shields.io/crates/v/pikpaktui?style=for-the-badge&color=blue)](https://crates.io/crates/pikpaktui)
 &nbsp;
-[![Documentation](https://img.shields.io/badge/Documentation-Visit_→-2ea44f?style=for-the-badge)](https://bengerthelorf.github.io/pikpaktui/)
+[![Documentation](https://img.shields.io/badge/Documentation-Visit_→-2ea44f?style=for-the-badge)](https://app.snaix.homes/pikpaktui/)
 &nbsp;
 [![Homebrew](https://img.shields.io/badge/Homebrew-Available-orange?style=for-the-badge)](https://github.com/Bengerthelorf/pikpaktui#install)
 
@@ -21,7 +21,7 @@
 
 <br>
 
-### [📖 Read the Full Documentation →](https://bengerthelorf.github.io/pikpaktui/)
+### [📖 Read the Full Documentation →](https://app.snaix.homes/pikpaktui/)
 
 CLI reference, TUI guide, configuration, shell completions, and more.
 
@@ -43,6 +43,12 @@ CLI reference, TUI guide, configuration, shell completions, and more.
 - 💚 **Open Source** — Apache-2.0 licensed, contributions welcome
 
 ## Install
+
+### Install Script (macOS / Linux / FreeBSD)
+
+```bash
+curl -fsSL https://app.snaix.homes/pikpaktui/install | bash
+```
 
 ### Homebrew (macOS / Linux)
 
@@ -94,7 +100,7 @@ pikpaktui share -p -d 7 /movie.mkv
 
 Press `,` for settings, `h` for help, `q` to quit.
 
-> **Need help?** Check the [Getting Started](https://bengerthelorf.github.io/pikpaktui/guide/getting-started) guide, or browse the full [Documentation](https://bengerthelorf.github.io/pikpaktui/).
+> **Need help?** Check the [Getting Started](https://app.snaix.homes/pikpaktui/guide/getting-started) guide, or browse the full [Documentation](https://app.snaix.homes/pikpaktui/).
 
 ## Environment Variables
 

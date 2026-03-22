@@ -8,7 +8,7 @@ metadata:
       bins:
         - pikpaktui
     emoji: "☁️"
-    homepage: https://github.com/Bengerthelorf/pikpaktui
+    homepage: https://app.snaix.homes/pikpaktui/
 ---
 
 # PikPak Cloud Storage

@@ -11,6 +11,10 @@ pikpaktui is a terminal client for [PikPak](https://mypikpak.com) cloud storage,
 
 ::: code-group
 
+```bash [Install Script]
+curl -fsSL https://app.snaix.homes/pikpaktui/install | bash
+```
+
 ```bash [Homebrew]
 brew install Bengerthelorf/tap/pikpaktui
 ```
