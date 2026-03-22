@@ -49,14 +49,24 @@ pub fn run_with_credentials(
     run_terminal(App::new_login(client, credentials, config))
 }
 
+fn restore_terminal() {
+    let _ = disable_raw_mode();
+    let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
+}
+
 fn run_terminal(mut app: App) -> Result<()> {
+    let original_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        restore_terminal();
+        original_hook(info);
+    }));
+
     enable_raw_mode()?;
     execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture)?;
-    let mut terminal = ratatui::init();
+    let backend = ratatui::backend::CrosstermBackend::new(io::stdout());
+    let mut terminal = ratatui::Terminal::new(backend)?;
     let res = app.run(&mut terminal);
-    ratatui::restore();
-    execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture)?;
-    disable_raw_mode()?;
+    restore_terminal();
     res
 }
 
@@ -851,8 +861,10 @@ impl App {
     }
 
     fn attempt_login(&mut self, email: &str, password: &str) {
-        let client =
-            Arc::get_mut(&mut self.client).expect("no other references to client during login");
+        let Some(client) = Arc::get_mut(&mut self.client) else {
+            self.push_log("Cannot login: client is in use by background tasks".to_string());
+            return;
+        };
         match client.login(email, password) {
             Ok(()) => {
                 if let Err(e) = AppConfig::save_credentials(email, password) {

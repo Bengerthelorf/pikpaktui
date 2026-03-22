@@ -1104,7 +1104,7 @@ impl PikPak {
         local_dest: &Path,
         workers: usize,
     ) -> Result<(usize, usize)> {
-        let dir = local_dest.join(folder_name);
+        let dir = local_dest.join(sanitize_filename(folder_name));
         std::fs::create_dir_all(&dir)
             .with_context(|| format!("cannot create dir '{}'", dir.display()))?;
         self.download_dir_inner(folder_id, &dir, workers)
@@ -1134,7 +1134,7 @@ impl PikPak {
 
         let mut failed_count = 0usize;
         for folder in &folders {
-            if let Err(e) = std::fs::create_dir_all(local_dir.join(&folder.name)) {
+            if let Err(e) = std::fs::create_dir_all(local_dir.join(sanitize_filename(&folder.name))) {
                 eprintln!("  [error] mkdir '{}': {}", folder.name, e);
                 failed_count += 1;
             }
@@ -1156,7 +1156,7 @@ impl PikPak {
                 let failed = Arc::clone(&failed);
                 s.spawn(move || {
                     while let Ok(entry) = rx.lock().unwrap_or_else(|e| e.into_inner()).recv() {
-                        let dest = local_dir.join(&entry.name);
+                        let dest = local_dir.join(sanitize_filename(&entry.name));
                         let local_size = dest.metadata().map(|m| m.len()).unwrap_or(0);
                         if local_size > 0 && local_size == entry.size {
                             println!("  skipping '{}' (already complete)", dest.display());
@@ -1180,7 +1180,7 @@ impl PikPak {
         let mut total_failed = failed.load(Ordering::Relaxed) + failed_count;
 
         for folder in folders {
-            let sub_dir = local_dir.join(&folder.name);
+            let sub_dir = local_dir.join(sanitize_filename(&folder.name));
             match self.download_dir_inner(&folder.id, &sub_dir, workers) {
                 Ok((sub_ok, sub_fail)) => {
                     total_ok += sub_ok;
@@ -2084,6 +2084,11 @@ fn now_unix() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
+}
+
+/// Sanitize a filename from an API response to prevent path traversal.
+fn sanitize_filename(name: &str) -> String {
+    name.replace(['/', '\\'], "_").replace("..", "_")
 }
 
 fn sanitize(s: &str) -> String {

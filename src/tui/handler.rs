@@ -1645,7 +1645,7 @@ impl App {
         if confirm_delete.is_some() {
             match code {
                 KeyCode::Char('y') | KeyCode::Enter => {
-                    let share_id = confirm_delete.take().unwrap();
+                    let Some(share_id) = confirm_delete.take() else { return; };
                     let client = Arc::clone(&self.client);
                     let tx = self.result_tx.clone();
                     self.loading = true;
@@ -2503,6 +2503,7 @@ impl App {
         }
         let program = parts[0];
         let mut args: Vec<&str> = parts[1..].to_vec();
+        args.push("--");
         args.push(url);
         match std::process::Command::new(program).args(&args).spawn() {
             Ok(_) => {

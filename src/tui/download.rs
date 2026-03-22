@@ -220,7 +220,7 @@ fn download_worker(
     }
 
     let mut file = if existing_size > 0 && status == reqwest::StatusCode::PARTIAL_CONTENT {
-        let mut f = fs::OpenOptions::new().write(true).open(dest)?;
+        let mut f = fs::OpenOptions::new().write(true).create(true).open(dest)?;
         f.seek(SeekFrom::Start(existing_size))?;
         f
     } else {

@@ -8,8 +8,6 @@ use std::path::PathBuf;
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct AppConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub proxy: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub username: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub password: Option<String>,
@@ -46,7 +44,6 @@ impl AppConfig {
                 let key = key.trim();
                 let val = val.trim().trim_matches('"').trim_matches('\'');
                 match key {
-                    "proxy" => cfg.proxy = Some(val.to_string()),
                     "username" => cfg.username = Some(val.to_string()),
                     "password" => cfg.password = Some(val.to_string()),
                     _ => {}
