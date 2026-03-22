@@ -1108,13 +1108,16 @@ impl App {
         let folder_id = self.current_folder_id.clone();
         let breadcrumb = self.breadcrumb.clone();
         match self.client.ls(&folder_id) {
-            Ok(entries) => Some(PickerState {
-                folder_id,
-                breadcrumb,
-                entries,
-                selected: 0,
-                loading: false,
-            }),
+            Ok(mut entries) => {
+                crate::config::sort_entries(&mut entries, self.config.sort_field, self.config.sort_reverse);
+                Some(PickerState {
+                    folder_id,
+                    breadcrumb,
+                    entries,
+                    selected: 0,
+                    loading: false,
+                })
+            }
             Err(e) => {
                 self.push_log(format!("Picker load failed: {e:#}"));
                 None

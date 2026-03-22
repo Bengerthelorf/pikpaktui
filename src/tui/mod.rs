@@ -1155,13 +1155,23 @@ fn format_size(bytes: u64) -> String {
     }
 }
 
-fn truncate_name(name: &str, max_len: usize) -> String {
-    let char_count = name.chars().count();
-    if char_count <= max_len {
+fn truncate_name(name: &str, max_width: usize) -> String {
+    use unicode_width::UnicodeWidthStr;
+    if UnicodeWidthStr::width(name) <= max_width {
         name.to_string()
     } else {
-        let truncated: String = name.chars().take(max_len.saturating_sub(3)).collect();
-        format!("{}...", truncated)
+        let mut w = 0;
+        let mut out = String::new();
+        for ch in name.chars() {
+            let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+            if w + cw + 3 > max_width {
+                break;
+            }
+            out.push(ch);
+            w += cw;
+        }
+        out.push_str("...");
+        out
     }
 }
 
