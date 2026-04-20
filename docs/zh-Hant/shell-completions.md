@@ -1,10 +1,16 @@
-# Shell 補全
+---
+title: Shell 補全
+section: guide
+order: 4
+locale: zh-Hant
+---
+
 
 pikpaktui 提供動態 Shell 補全，可以**即時從你的 PikPak 網盤補全雲端路徑**——類似 `scp` 補全遠端路徑的體驗。
 
 ## Zsh
 
-::: code-group
+:::code-group
 
 ```bash [eval（最簡單）]
 # 加入 ~/.zshrc
@@ -29,7 +35,7 @@ pikpaktui completions zsh > \
 
 :::
 
-::: tip fzf-tab
+:::callout[fzf-tab]{kind="info"}
 搭配 [fzf-tab](https://github.com/Aloxaf/fzf-tab) 使用效果更佳——輸入路徑前綴後按 Tab 會彈出可模糊搜尋的雲端檔案清單。
 :::
 

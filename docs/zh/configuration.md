@@ -1,4 +1,10 @@
-# 配置
+---
+title: 配置
+section: guide
+order: 3
+locale: zh
+---
+
 
 所有配置文件位于 `~/.config/pikpaktui/` 目录下。
 
@@ -17,7 +23,7 @@ password: "your-password"
 PIKPAK_USER=you@example.com PIKPAK_PASS=yourpassword pikpaktui login
 ```
 
-::: warning
+:::callout[warning]{kind="warn"}
 凭据以明文存储，请确保 `~/.config/pikpaktui/` 目录权限为 `chmod 700`。
 :::
 
@@ -123,6 +129,6 @@ default  = [255, 255, 255]  # 白色
 update_check = "notify"
 ```
 
-::: tip 并发下载
+:::callout[并发下载]{kind="info"}
 将 `download_jobs` 设为 2–4 通常可以显著提升大批量下载速度，最大值为 16。
 :::

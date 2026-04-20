@@ -1,4 +1,10 @@
-# CLI 概覽
+---
+title: CLI 概覽
+section: cli
+order: 1
+locale: zh-Hant
+---
+
 
 pikpaktui 提供 27 條 CLI 子指令，適合腳本、自動化與進階使用者。所有指令均需有效工作階段——先執行 `pikpaktui`（TUI）登入，或使用 `pikpaktui login`。
 

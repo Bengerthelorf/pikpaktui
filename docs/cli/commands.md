@@ -1,4 +1,9 @@
-# Command Reference
+---
+title: Command Reference
+section: cli
+order: 2
+---
+
 
 All commands require a valid session. Run `pikpaktui` (TUI) to log in first, or use [`login`](#login).
 
@@ -133,7 +138,7 @@ pikpaktui rm -n "/My Pack/file.txt"          # dry run
 pikpaktui rm -n -rf "/My Pack/folder"        # dry run permanent
 ```
 
-::: warning
+:::callout[warning]{kind="warn"}
 `-f` deletes permanently. There is no recovery. Use dry-run first.
 :::
 
@@ -162,7 +167,7 @@ pikpaktui mkdir -n "/My Pack" NewFolder       # dry run
 pikpaktui mkdir -n -p "/My Pack/a/b/c"        # dry run nested
 ```
 
-::: tip
+:::callout[tip]{kind="info"}
 Without `-p`, the syntax is `<parent_path> <folder_name>` — two arguments.  
 With `-p`, pass the full path as a single argument.
 :::
@@ -253,7 +258,7 @@ pikpaktui play "/My Pack/video.mp4" original  # play original file
 pikpaktui play "/My Pack/video.mp4" 2         # play stream #2 by index
 ```
 
-::: tip Player configuration
+:::callout[Player configuration]{kind="info"}
 Set your player in `config.toml` (`player = "mpv"`) or via the TUI Settings panel. Any command-line video player works: `mpv`, `vlc`, `iina`, `celluloid`, etc.
 :::
 
@@ -286,7 +291,7 @@ pikpaktui download -j4 -t ./videos/ /a.mp4 /b.mp4      # 4 concurrent, batch
 pikpaktui download -n "/My Pack/folder"                 # dry run
 ```
 
-::: tip Concurrent downloads
+:::callout[Concurrent downloads]{kind="info"}
 `-j` / `--jobs` sets the number of parallel download threads. Values of 2–4 are typical; configurable in `config.toml` as `download_jobs`.
 :::
 
@@ -316,7 +321,7 @@ pikpaktui upload -t "/My Pack" ./a.txt ./b.txt   # batch upload
 pikpaktui upload -n ./file.txt "/My Pack"        # dry run
 ```
 
-::: tip Deduplication
+:::callout[Deduplication]{kind="info"}
 If you upload a file that already exists on PikPak (matching hash), the upload completes instantly — no data transfer occurs.
 :::
 
@@ -479,7 +484,7 @@ pikpaktui untrash "a.txt" "b.mp4"       # restore multiple
 pikpaktui untrash -n "file.txt"         # dry run
 ```
 
-::: tip
+:::callout[tip]{kind="info"}
 Match is by exact filename, not by path. If multiple trashed files share the same name, the first match is restored.
 :::
 

@@ -1,10 +1,16 @@
-# Shell 补全
+---
+title: Shell 补全
+section: guide
+order: 4
+locale: zh
+---
+
 
 pikpaktui 提供动态 Shell 补全，可以**实时从你的 PikPak 网盘补全云端路径**——类似 `scp` 补全远程路径的体验。
 
 ## Zsh
 
-::: code-group
+:::code-group
 
 ```bash [eval（最简单）]
 # 添加到 ~/.zshrc
@@ -29,7 +35,7 @@ pikpaktui completions zsh > \
 
 :::
 
-::: tip fzf-tab
+:::callout[fzf-tab]{kind="info"}
 搭配 [fzf-tab](https://github.com/Aloxaf/fzf-tab) 使用效果更佳——输入路径前缀后按 Tab 会弹出可模糊搜索的云端文件列表。
 :::
 

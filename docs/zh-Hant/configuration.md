@@ -1,4 +1,10 @@
-# 設定
+---
+title: 設定
+section: guide
+order: 3
+locale: zh-Hant
+---
+
 
 所有設定檔位於 `~/.config/pikpaktui/` 目錄下。
 
@@ -17,7 +23,7 @@ password: "your-password"
 PIKPAK_USER=you@example.com PIKPAK_PASS=yourpassword pikpaktui login
 ```
 
-::: warning
+:::callout[warning]{kind="warn"}
 憑證以純文字儲存，請確保 `~/.config/pikpaktui/` 目錄權限為 `chmod 700`。
 :::
 
@@ -123,6 +129,6 @@ default  = [255, 255, 255]  # 白色
 | `PIKPAK_CLIENT_SECRET` | 覆寫 OAuth Client Secret |
 | `PIKPAK_CAPTCHA_TOKEN` | 登入遭遇驗證碼時提供 token |
 
-::: tip 並行下載
+:::callout[並行下載]{kind="info"}
 將 `download_jobs` 設為 2–4 通常可以顯著提升大量下載速度，最大值為 16。
 :::

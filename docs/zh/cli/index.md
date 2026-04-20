@@ -1,4 +1,10 @@
-# CLI 概览
+---
+title: CLI 概览
+section: cli
+order: 1
+locale: zh
+---
+
 
 pikpaktui 提供 27 条 CLI 子命令，适合脚本、自动化和进阶用户。所有命令均需有效会话——先运行 `pikpaktui`（TUI）登录，或使用 `pikpaktui login`。
 

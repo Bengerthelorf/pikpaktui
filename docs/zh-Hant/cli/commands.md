@@ -1,4 +1,10 @@
-# 指令參考
+---
+title: 指令參考
+section: cli
+order: 2
+locale: zh-Hant
+---
+
 
 所有指令均需有效工作階段，請先執行 `pikpaktui`（TUI）登入，或使用 [`login`](#login)。
 
@@ -127,7 +133,7 @@ pikpaktui rm -rf "/My Pack/old-folder"       # 永久刪除資料夾
 pikpaktui rm -n -rf "/My Pack/folder"        # 預覽永久刪除
 ```
 
-::: warning
+:::callout[warning]{kind="warn"}
 `-f` 會永久刪除，無法復原。建議先以 dry-run 確認。
 :::
 
@@ -155,7 +161,7 @@ pikpaktui mkdir -p "/My Pack/a/b/c"            # 遞迴建立巢狀路徑
 pikpaktui mkdir -n "/My Pack" NewFolder        # 預覽
 ```
 
-::: tip
+:::callout[tip]{kind="info"}
 不帶 `-p` 時語法為 `<父路徑> <資料夾名稱>`（兩個參數）；帶 `-p` 時傳完整路徑一個參數。
 :::
 

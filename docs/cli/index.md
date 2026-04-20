@@ -1,4 +1,9 @@
-# CLI Overview
+---
+title: CLI Overview
+section: cli
+order: 1
+---
+
 
 pikpaktui provides 27 CLI subcommands for scripting, automation, and power-user workflows. All commands require a valid session — run `pikpaktui` (TUI) first to log in, or use `pikpaktui login`.
 

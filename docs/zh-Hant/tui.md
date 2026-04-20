@@ -1,4 +1,10 @@
-# TUI 指南
+---
+title: TUI 指南
+section: guide
+order: 2
+locale: zh-Hant
+---
+
 
 不帶參數執行 `pikpaktui` 即可進入 TUI。首次執行會顯示登入表單。登入後進入三欄檔案瀏覽器。按 `h` 檢視內建快捷鍵說明，按 `,` 開啟設定。
 
@@ -153,7 +159,7 @@
 | `Enter` | 使用設定的播放器播放所選畫質 |
 | `Esc` | 取消 |
 
-::: tip 播放器設定
+:::callout[播放器設定]{kind="info"}
 若未設定播放器，pikpaktui 會提示輸入播放器指令（如 `mpv`、`vlc`、`iina`），指令將儲存至 `config.toml` 供之後使用。
 :::
 

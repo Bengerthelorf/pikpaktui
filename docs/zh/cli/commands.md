@@ -1,4 +1,10 @@
-# 命令参考
+---
+title: 命令参考
+section: cli
+order: 2
+locale: zh
+---
+
 
 所有命令均需有效会话，请先运行 `pikpaktui`（TUI）登录，或使用 [`login`](#login)。
 
@@ -128,7 +134,7 @@ pikpaktui rm -rf "/My Pack/old-folder"       # 永久删除文件夹
 pikpaktui rm -n -rf "/My Pack/folder"        # 预览永久删除
 ```
 
-::: warning
+:::callout[warning]{kind="warn"}
 `-f` 会永久删除，无法恢复。建议先用 dry-run 确认。
 :::
 
@@ -157,7 +163,7 @@ pikpaktui mkdir -n "/My Pack" NewFolder        # 预览
 pikpaktui mkdir -n -p "/My Pack/a/b/c"         # 预览嵌套创建
 ```
 
-::: tip
+:::callout[tip]{kind="info"}
 不带 `-p` 时语法为 `<父路径> <文件夹名>`（两个参数）；带 `-p` 时传完整路径一个参数。
 :::
 
@@ -246,7 +252,7 @@ pikpaktui play "/My Pack/video.mp4" original   # 播放原始文件
 pikpaktui play "/My Pack/video.mp4" 2          # 按编号播放第 2 条流
 ```
 
-::: tip 播放器配置
+:::callout[播放器配置]{kind="info"}
 在 `config.toml` 中设置 `player = "mpv"`，或在 TUI 设置面板中配置。支持任意命令行视频播放器：`mpv`、`vlc`、`iina`、`celluloid` 等。
 :::
 
@@ -305,7 +311,7 @@ pikpaktui upload -t "/My Pack" ./a.txt ./b.txt     # 批量上传
 pikpaktui upload -n ./file.txt "/My Pack"          # 预览
 ```
 
-::: tip 秒传
+:::callout[秒传]{kind="info"}
 如果 PikPak 服务器上已存在相同 hash 的文件，上传瞬间完成，不传输任何数据。
 :::
 
@@ -467,7 +473,7 @@ pikpaktui untrash "a.txt" "b.mp4"      # 恢复多个
 pikpaktui untrash -n "file.txt"        # 预览
 ```
 
-::: tip
+:::callout[tip]{kind="info"}
 按精确文件名匹配，不是路径。若多个已删除文件同名，恢复第一个匹配项。
 :::
 
