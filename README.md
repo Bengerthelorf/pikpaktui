@@ -100,7 +100,7 @@ pikpaktui share -p -d 7 /movie.mkv
 
 Press `,` for settings, `h` for help, `q` to quit.
 
-> **Need help?** Check the [Getting Started](https://app.snaix.homes/pikpaktui/guide/getting-started) guide, or browse the full [Documentation](https://app.snaix.homes/pikpaktui/).
+> **Need help?** Check the [Getting Started](https://app.snaix.homes/pikpaktui/docs/getting-started) guide, or browse the full [Documentation](https://app.snaix.homes/pikpaktui/).
 
 ## Environment Variables
 
