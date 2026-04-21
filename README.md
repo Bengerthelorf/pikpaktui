@@ -47,7 +47,7 @@ CLI reference, TUI guide, configuration, shell completions, and more.
 ### Install Script (macOS / Linux / FreeBSD)
 
 ```bash
-curl -fsSL https://app.snaix.homes/pikpaktui/install | bash
+curl -fsSL https://app.snaix.homes/pikpaktui/install.sh | bash
 ```
 
 ### Homebrew (macOS / Linux)
