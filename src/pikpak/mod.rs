@@ -1,3 +1,7 @@
+mod models;
+
+pub use models::{Entry, EntryKind, SessionToken};
+
 use anyhow::{Context, Result, anyhow};
 use base64::Engine as _;
 use hmac::{Hmac, Mac};
@@ -17,37 +21,6 @@ const DEFAULT_DRIVE_BASE_URL: &str = "https://api-drive.mypikpak.com";
 const DEFAULT_CLIENT_ID: &str = "YNxT9w7GMdWvEOKa";
 const DEFAULT_CLIENT_SECRET: &str = "dbw2OtmVEeuUvIptb1Coyg";
 const USER_AGENT: &str = "ANDROID-com.pikcloud.pikpak/1.21.0";
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub enum EntryKind {
-    Folder,
-    File,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct Entry {
-    pub id: String,
-    pub name: String,
-    pub kind: EntryKind,
-    pub size: u64,
-    pub created_time: String,
-    pub modified_time: String,
-    pub starred: bool,
-    pub thumbnail_link: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionToken {
-    pub access_token: String,
-    pub refresh_token: String,
-    pub expires_at_unix: i64,
-}
-
-impl SessionToken {
-    pub fn is_expired(&self, now_unix: i64) -> bool {
-        now_unix >= self.expires_at_unix
-    }
-}
 
 pub struct PikPak {
     pub(crate) http: reqwest::blocking::Client,
