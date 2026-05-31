@@ -1,8 +1,10 @@
+mod auth;
 mod drive;
 mod file_info;
 mod models;
 mod responses;
 
+use auth::{CaptchaInitResponse, SigninResponse};
 use drive::{DriveFileResponse, DriveListResponse};
 pub use file_info::FileInfoResponse;
 pub use models::{Entry, EntryKind, SessionToken};
@@ -1722,21 +1724,6 @@ fn extract_xml_tag(xml: &str, tag: &str) -> Option<String> {
     let start = xml.find(&open)? + open.len();
     let end = xml[start..].find(&close)? + start;
     Some(xml[start..end].to_string())
-}
-
-#[derive(Debug, Deserialize)]
-struct SigninResponse {
-    access_token: String,
-    refresh_token: String,
-    expires_in: u64,
-}
-
-#[derive(Debug, Deserialize)]
-struct CaptchaInitResponse {
-    #[serde(default)]
-    captcha_token: Option<String>,
-    #[serde(default)]
-    url: Option<String>,
 }
 
 fn ensure_success(response: reqwest::blocking::Response, op: &str) -> Result<()> {
