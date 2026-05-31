@@ -3,6 +3,7 @@ mod drive;
 mod file_info;
 mod models;
 mod responses;
+mod upload;
 
 use auth::{CaptchaInitResponse, SigninResponse};
 use drive::{DriveFileResponse, DriveListResponse};
@@ -13,11 +14,11 @@ pub use responses::{
     OfflineTaskResponse, QuotaInfo, ShareInfoResponse, ShareListResponse, TransferBand,
     TransferQuotaResponse, VipInfoResponse,
 };
+use upload::{OssArgs, UploadInitResponse};
 
 use anyhow::{Context, Result, anyhow};
 use base64::Engine as _;
 use hmac::{Hmac, Mac};
-use serde::Deserialize;
 use sha1::Sha1;
 use std::collections::HashMap;
 use std::env;
@@ -1508,54 +1509,6 @@ impl PikPak {
         }
         Ok(())
     }
-}
-
-struct OssArgs {
-    endpoint: String,
-    access_key_id: String,
-    access_key_secret: String,
-    security_token: String,
-    bucket: String,
-    key: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct UploadInitResponse {
-    #[serde(default)]
-    upload_type: String,
-    file: UploadFileInfo,
-    #[serde(default)]
-    resumable: Option<ResumableContext>,
-}
-
-#[derive(Debug, Deserialize)]
-struct UploadFileInfo {
-    #[serde(default)]
-    phase: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ResumableContext {
-    #[serde(default)]
-    kind: String,
-    #[serde(default)]
-    params: ResumableParams,
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct ResumableParams {
-    #[serde(default)]
-    endpoint: Option<String>,
-    #[serde(default)]
-    access_key_id: Option<String>,
-    #[serde(default)]
-    access_key_secret: Option<String>,
-    #[serde(default)]
-    security_token: Option<String>,
-    #[serde(default)]
-    bucket: Option<String>,
-    #[serde(default)]
-    key: Option<String>,
 }
 
 /// Compute the PikPak proprietary file hash for upload deduplication.
