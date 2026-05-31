@@ -1,15 +1,13 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
-# Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
 echo -e "${BLUE}>>> pikpaktui Installer${NC}"
 
-# Detect OS and Architecture
 OS="$(uname -s)"
 ARCH="$(uname -m)"
 
@@ -53,20 +51,18 @@ else
     exit 1
 fi
 
-# Define URLs
 DOWNLOAD_URL="https://github.com/Bengerthelorf/pikpaktui/releases/latest/download/${ASSET_NAME}"
+CHECKSUM_URL="https://github.com/Bengerthelorf/pikpaktui/releases/latest/download/sha256sums.txt"
 
 echo -e "Target Asset: ${GREEN}${ASSET_NAME}${NC}"
 echo -e "Download URL: ${BLUE}${DOWNLOAD_URL}${NC}"
 
-# Create temp directory
 TMP_DIR=$(mktemp -d)
 cleanup() {
     rm -rf "$TMP_DIR"
 }
 trap cleanup EXIT
 
-# Download
 echo -e "${BLUE}>>> Downloading...${NC}"
 if curl -L --fail --progress-bar -o "${TMP_DIR}/${ASSET_NAME}" "$DOWNLOAD_URL"; then
     echo -e "${GREEN}Download successful.${NC}"
@@ -80,11 +76,24 @@ else
     fi
 fi
 
-# Extract
+echo -e "${BLUE}>>> Verifying checksum...${NC}"
+if curl -L --fail --silent --show-error -o "${TMP_DIR}/sha256sums.txt" "$CHECKSUM_URL"; then
+    if command -v sha256sum >/dev/null 2>&1; then
+        (cd "$TMP_DIR" && grep "  ${ASSET_NAME}$" sha256sums.txt | sha256sum -c -)
+    elif command -v shasum >/dev/null 2>&1; then
+        (cd "$TMP_DIR" && grep "  ${ASSET_NAME}$" sha256sums.txt | shasum -a 256 -c -)
+    else
+        echo -e "${RED}No sha256 tool found; install sha256sum or shasum to verify downloads.${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}Checksum verified.${NC}"
+else
+    echo -e "${RED}Checksum file not found; skipping verification for this release.${NC}"
+fi
+
 echo -e "${BLUE}>>> Extracting...${NC}"
 tar -xzf "${TMP_DIR}/${ASSET_NAME}" -C "$TMP_DIR"
 
-# Find binary
 BINARY_PATH=$(find "$TMP_DIR" -type f -name "pikpaktui" | head -n 1)
 
 if [ -z "$BINARY_PATH" ]; then
@@ -94,7 +103,6 @@ fi
 
 echo -e "Found binary at: ${BINARY_PATH}"
 
-# Install
 TARGET_PATH="${INSTALL_DIR}/pikpaktui"
 echo -e "${BLUE}>>> Installing to ${TARGET_PATH}...${NC}"
 

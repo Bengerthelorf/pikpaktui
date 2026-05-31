@@ -25,7 +25,13 @@ fn entry() -> Result<()> {
         return run_tui();
     }
 
-    if args.len() >= 2 && cmd::wants_help(&args[1..]) && !matches!(args[0].as_str(), "--help" | "-h" | "help" | "--version" | "-V") {
+    if args.len() >= 2
+        && cmd::wants_help(&args[1..])
+        && !matches!(
+            args[0].as_str(),
+            "--help" | "-h" | "help" | "--version" | "-V"
+        )
+    {
         return cmd::print_command_help(&args[0]);
     }
 
@@ -69,14 +75,14 @@ fn entry() -> Result<()> {
         )),
     };
 
-    if let Some(rx) = update_rx {
-        if let Ok(Some(version)) = rx.try_recv() {
-            eprintln!(
-                "\x1b[33m↑ Update available: v{} → v{} (run `pikpaktui update`)\x1b[0m",
-                env!("CARGO_PKG_VERSION"),
-                version
-            );
-        }
+    if let Some(rx) = update_rx
+        && let Ok(Some(version)) = rx.try_recv()
+    {
+        eprintln!(
+            "\x1b[33m↑ Update available: v{} → v{} (run `pikpaktui update`)\x1b[0m",
+            env!("CARGO_PKG_VERSION"),
+            version
+        );
     }
 
     result

@@ -51,14 +51,14 @@ pub fn categorize(entry: &Entry) -> FileCategory {
 pub fn icon(category: FileCategory, nerd_font: bool) -> &'static str {
     if nerd_font {
         match category {
-            FileCategory::Folder => "\u{f07b} ",   //
-            FileCategory::Archive => "\u{f1c6} ",  //
-            FileCategory::Image => "\u{f1c5} ",    //
-            FileCategory::Video => "\u{f03d} ",    //
-            FileCategory::Audio => "\u{f001} ",    //
-            FileCategory::Document => "\u{f15c} ", //
-            FileCategory::Code => "\u{f121} ",     //
-            FileCategory::Default => "\u{f15b} ",  //
+            FileCategory::Folder => "\u{f07b} ",
+            FileCategory::Archive => "\u{f1c6} ",
+            FileCategory::Image => "\u{f1c5} ",
+            FileCategory::Video => "\u{f03d} ",
+            FileCategory::Audio => "\u{f001} ",
+            FileCategory::Document => "\u{f15c} ",
+            FileCategory::Code => "\u{f121} ",
+            FileCategory::Default => "\u{f15b} ",
         }
     } else {
         match category {
@@ -86,7 +86,6 @@ pub fn color_for_scheme(category: FileCategory, scheme: ColorScheme) -> Color {
             FileCategory::Code => Color::Yellow,
             FileCategory::Default => Color::Reset,
         },
-        // Custom falls back to Vibrant (actual custom colors handled by TuiConfig::get_color())
         ColorScheme::Vibrant | ColorScheme::Custom => match category {
             FileCategory::Folder => Color::LightBlue,
             FileCategory::Archive => Color::LightRed,
@@ -96,16 +95,14 @@ pub fn color_for_scheme(category: FileCategory, scheme: ColorScheme) -> Color {
             FileCategory::Document => Color::LightGreen,
             FileCategory::Code => Color::LightYellow,
             FileCategory::Default => Color::Reset,
-        }
+        },
     }
 }
 
-/// Icon for CLI output. Returns "" when nerd_font is off (colors are enough).
 pub fn cli_icon(category: FileCategory, nerd_font: bool) -> &'static str {
     if nerd_font { icon(category, true) } else { "" }
 }
 
-/// Returns true if the file extension suggests a text file that can be previewed.
 pub fn is_text_previewable(entry: &Entry) -> bool {
     if entry.kind == EntryKind::Folder {
         return false;
@@ -120,13 +117,62 @@ pub fn is_text_previewable(entry: &Entry) -> bool {
 
     matches!(
         ext.as_str(),
-        "txt" | "md" | "csv" | "rtf"
-        | "rs" | "py" | "js" | "go" | "c" | "cpp" | "h" | "hpp" | "java" | "kt"
-        | "swift" | "rb" | "php" | "sh" | "bash" | "zsh" | "lua" | "zig" | "toml" | "yaml"
-        | "yml" | "json" | "xml" | "html" | "css" | "sql" | "r" | "dart" | "ex" | "exs"
-        | "hs" | "ml" | "scala" | "clj" | "nim" | "v" | "vue" | "jsx" | "tsx" | "svelte"
-        | "srt" | "ass" | "ssa" | "vtt" | "sub" | "log" | "ini" | "cfg" | "conf" | "env"
-        | "properties" | "nfo"
+        "txt"
+            | "md"
+            | "csv"
+            | "rtf"
+            | "rs"
+            | "py"
+            | "js"
+            | "go"
+            | "c"
+            | "cpp"
+            | "h"
+            | "hpp"
+            | "java"
+            | "kt"
+            | "swift"
+            | "rb"
+            | "php"
+            | "sh"
+            | "bash"
+            | "zsh"
+            | "lua"
+            | "zig"
+            | "toml"
+            | "yaml"
+            | "yml"
+            | "json"
+            | "xml"
+            | "html"
+            | "css"
+            | "sql"
+            | "r"
+            | "dart"
+            | "ex"
+            | "exs"
+            | "hs"
+            | "ml"
+            | "scala"
+            | "clj"
+            | "nim"
+            | "v"
+            | "vue"
+            | "jsx"
+            | "tsx"
+            | "svelte"
+            | "srt"
+            | "ass"
+            | "ssa"
+            | "vtt"
+            | "sub"
+            | "log"
+            | "ini"
+            | "cfg"
+            | "conf"
+            | "env"
+            | "properties"
+            | "nfo"
     )
 }
 

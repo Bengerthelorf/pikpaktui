@@ -23,19 +23,16 @@ impl AppConfig {
                 toml::from_str(&raw).with_context(|| "failed to parse login.toml")?;
             return Ok(cfg);
         }
-        // Backward compat: try legacy login.yaml
         let legacy = path.with_file_name("login.yaml");
         if legacy.exists() {
             let raw = fs::read_to_string(&legacy)
                 .with_context(|| format!("failed to read legacy config {}", legacy.display()))?;
-            // Parse simple key: value YAML manually to avoid serde_yaml dependency
             let cfg = Self::parse_legacy_yaml(&raw);
             return Ok(cfg);
         }
         Ok(Self::default())
     }
 
-    /// Minimal parser for legacy login.yaml (simple key: value format).
     fn parse_legacy_yaml(raw: &str) -> Self {
         let mut cfg = Self::default();
         for line in raw.lines() {
@@ -86,7 +83,6 @@ pub fn config_path() -> Result<PathBuf> {
     Ok(base.join("pikpaktui").join("login.toml"))
 }
 
-/// Restrict file permissions to owner-only (0600) on Unix.
 #[cfg(unix)]
 fn set_file_owner_only(path: &PathBuf) {
     use std::os::unix::fs::PermissionsExt;
@@ -96,7 +92,6 @@ fn set_file_owner_only(path: &PathBuf) {
 #[cfg(not(unix))]
 fn set_file_owner_only(_path: &PathBuf) {}
 
-/// Returns ~/.config on all platforms instead of platform-specific config dirs.
 fn home_config_dir() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".config"))
 }
@@ -109,7 +104,6 @@ pub enum QuotaBarStyle {
     Bar,
     Percent,
 }
-
 
 impl QuotaBarStyle {
     pub fn all() -> &'static [Self] {
@@ -146,7 +140,6 @@ pub enum BorderStyle {
     ThickRounded,
     Double,
 }
-
 
 impl BorderStyle {
     pub fn all() -> &'static [Self] {
@@ -196,7 +189,6 @@ pub enum ImageProtocol {
     Sixel,
 }
 
-
 impl ImageProtocol {
     pub fn all() -> &'static [Self] {
         &[Self::Auto, Self::Kitty, Self::Iterm2, Self::Sixel]
@@ -234,7 +226,6 @@ pub enum ThumbnailSize {
     Large,
 }
 
-
 impl ThumbnailSize {
     pub fn as_api_str(self) -> &'static str {
         match self {
@@ -256,10 +247,14 @@ pub enum ThumbnailMode {
     ForceGrayscale,
 }
 
-
 impl ThumbnailMode {
     pub fn all() -> &'static [Self] {
-        &[Self::Auto, Self::Off, Self::ForceColor, Self::ForceGrayscale]
+        &[
+            Self::Auto,
+            Self::Off,
+            Self::ForceColor,
+            Self::ForceGrayscale,
+        ]
     }
 
     pub fn display_name(&self) -> &'static str {
@@ -309,9 +304,10 @@ pub enum ThumbnailRenderMode {
 
 pub fn detect_truecolor_support() -> bool {
     if let Ok(ct) = env::var("COLORTERM")
-        && (ct.contains("truecolor") || ct.contains("24bit")) {
-            return true;
-        }
+        && (ct.contains("truecolor") || ct.contains("24bit"))
+    {
+        return true;
+    }
 
     if let Ok(term) = env::var("TERM") {
         if term.contains("truecolor") || term.contains("24bit") {
@@ -337,7 +333,6 @@ pub enum SortField {
     Extension,
     None,
 }
-
 
 impl SortField {
     pub fn all() -> &'static [Self] {
@@ -374,7 +369,6 @@ impl SortField {
         all[(idx + all.len() - 1) % all.len()]
     }
 }
-
 
 impl ColorScheme {
     pub fn all() -> &'static [Self] {
@@ -576,7 +570,9 @@ impl UpdateCheck {
     }
 }
 
-fn default_download_jobs() -> usize { 1 }
+fn default_download_jobs() -> usize {
+    1
+}
 
 fn default_preview_max_size() -> u64 {
     65536
@@ -585,7 +581,6 @@ fn default_preview_max_size() -> u64 {
 fn default_true() -> bool {
     true
 }
-
 
 impl Default for TuiConfig {
     fn default() -> Self {
@@ -685,10 +680,11 @@ impl TuiConfig {
             }
         };
         if let Some(proto) = cfg.image_protocol.take()
-            && cfg.image_protocols.is_empty() {
-                let term = Self::detect_terminal();
-                cfg.image_protocols.insert(term, proto);
-            }
+            && cfg.image_protocols.is_empty()
+        {
+            let term = Self::detect_terminal();
+            cfg.image_protocols.insert(term, proto);
+        }
         cfg
     }
 
@@ -703,8 +699,7 @@ impl TuiConfig {
                 .with_context(|| format!("failed to create dir {}", parent.display()))?;
         }
 
-        let raw = toml::to_string_pretty(self)
-            .context("failed to serialize config")?;
+        let raw = toml::to_string_pretty(self).context("failed to serialize config")?;
         let tmp_path = path.with_extension("tmp");
         fs::write(&tmp_path, &raw)
             .with_context(|| format!("failed to write config {}", tmp_path.display()))?;
@@ -745,7 +740,9 @@ pub fn sort_entries(entries: &mut [crate::pikpak::Entry], field: SortField, reve
                 kind_ord.then_with(|| {
                     let cat_a = category_order(crate::theme::categorize(a));
                     let cat_b = category_order(crate::theme::categorize(b));
-                    cat_a.cmp(&cat_b).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+                    cat_a
+                        .cmp(&cat_b)
+                        .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
                 })
             });
         }
@@ -763,14 +760,19 @@ pub fn sort_entries(entries: &mut [crate::pikpak::Entry], field: SortField, reve
                         .and_then(|e| e.to_str())
                         .unwrap_or("")
                         .to_lowercase();
-                    ext_a.cmp(&ext_b).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+                    ext_a
+                        .cmp(&ext_b)
+                        .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
                 })
             });
         }
     }
 
     if reverse {
-        let folder_end = entries.iter().position(|e| e.kind == EntryKind::File).unwrap_or(entries.len());
+        let folder_end = entries
+            .iter()
+            .position(|e| e.kind == EntryKind::File)
+            .unwrap_or(entries.len());
         entries[..folder_end].reverse();
         entries[folder_end..].reverse();
     }

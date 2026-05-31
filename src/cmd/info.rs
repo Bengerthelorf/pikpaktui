@@ -34,13 +34,21 @@ pub fn run(args: &[String]) -> Result<()> {
     println!("\x1b[36mName:\x1b[0m     {}", colored_name);
 
     if let Some(kind) = &info.kind {
-        let display = if kind.contains("folder") { "folder" } else { "file" };
+        let display = if kind.contains("folder") {
+            "folder"
+        } else {
+            "file"
+        };
         println!("\x1b[36mType:\x1b[0m     {}", display);
     }
 
     if let Some(size) = &info.size {
         if let Ok(bytes) = size.parse::<u64>() {
-            println!("\x1b[36mSize:\x1b[0m     \x1b[1;32m{}\x1b[0m ({})", super::format_size(bytes), size);
+            println!(
+                "\x1b[36mSize:\x1b[0m     \x1b[1;32m{}\x1b[0m ({})",
+                super::format_size(bytes),
+                size
+            );
         } else {
             println!("\x1b[36mSize:\x1b[0m     {}", size);
         }
@@ -63,7 +71,10 @@ pub fn run(args: &[String]) -> Result<()> {
         for media in medias {
             if let Some(video) = &media.video {
                 println!();
-                println!("\x1b[36mMedia:\x1b[0m    {}", media.media_name.as_deref().unwrap_or("-"));
+                println!(
+                    "\x1b[36mMedia:\x1b[0m    {}",
+                    media.media_name.as_deref().unwrap_or("-")
+                );
                 if let (Some(w), Some(h)) = (video.width, video.height) {
                     println!("  \x1b[36mResolution:\x1b[0m {}x{}", w, h);
                 }

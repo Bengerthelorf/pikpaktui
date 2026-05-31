@@ -12,9 +12,24 @@ pub fn run(args: &[String]) -> Result<()> {
 
     if json {
         let storage = quota.quota.as_ref().map(|d| {
-            let limit = d.limit.as_deref().unwrap_or("0").parse::<u64>().unwrap_or(0);
-            let used  = d.usage.as_deref().unwrap_or("0").parse::<u64>().unwrap_or(0);
-            let trash = d.usage_in_trash.as_deref().unwrap_or("0").parse::<u64>().unwrap_or(0);
+            let limit = d
+                .limit
+                .as_deref()
+                .unwrap_or("0")
+                .parse::<u64>()
+                .unwrap_or(0);
+            let used = d
+                .usage
+                .as_deref()
+                .unwrap_or("0")
+                .parse::<u64>()
+                .unwrap_or(0);
+            let trash = d
+                .usage_in_trash
+                .as_deref()
+                .unwrap_or("0")
+                .parse::<u64>()
+                .unwrap_or(0);
             serde_json::json!({
                 "limit": limit,
                 "used":  used,
@@ -25,10 +40,12 @@ pub fn run(args: &[String]) -> Result<()> {
 
         let bandwidth = tq.as_ref().and_then(|t| t.base.as_ref()).map(|b| {
             let band = |slot: Option<&crate::pikpak::TransferBand>| {
-                slot.map(|s| serde_json::json!({
-                    "used":  s.assets.unwrap_or(0),
-                    "total": s.total_assets.unwrap_or(0),
-                }))
+                slot.map(|s| {
+                    serde_json::json!({
+                        "used":  s.assets.unwrap_or(0),
+                        "total": s.total_assets.unwrap_or(0),
+                    })
+                })
             };
             serde_json::json!({
                 "download":    band(b.download.as_ref()),
@@ -49,20 +66,42 @@ pub fn run(args: &[String]) -> Result<()> {
     if let Some(detail) = quota.quota {
         let limit_n: u64 = detail.limit.as_deref().unwrap_or("0").parse().unwrap_or(0);
         let usage_n: u64 = detail.usage.as_deref().unwrap_or("0").parse().unwrap_or(0);
-        let trash_n: u64 = detail.usage_in_trash.as_deref().unwrap_or("0").parse().unwrap_or(0);
+        let trash_n: u64 = detail
+            .usage_in_trash
+            .as_deref()
+            .unwrap_or("0")
+            .parse()
+            .unwrap_or(0);
 
         println!("\x1b[1mStorage\x1b[0m");
-        println!("  \x1b[36mQuota:\x1b[0m     {}", super::format_size(limit_n));
+        println!(
+            "  \x1b[36mQuota:\x1b[0m     {}",
+            super::format_size(limit_n)
+        );
         if limit_n > 0 {
             let pct = (usage_n as f64 / limit_n as f64 * 100.0) as u64;
             let bar = usage_bar(pct, 20);
-            println!("  \x1b[36mUsed:\x1b[0m      {}  {} {:>3}%", super::format_size(usage_n), bar, pct);
+            println!(
+                "  \x1b[36mUsed:\x1b[0m      {}  {} {:>3}%",
+                super::format_size(usage_n),
+                bar,
+                pct
+            );
         } else {
-            println!("  \x1b[36mUsed:\x1b[0m      {}", super::format_size(usage_n));
+            println!(
+                "  \x1b[36mUsed:\x1b[0m      {}",
+                super::format_size(usage_n)
+            );
         }
-        println!("  \x1b[36mTrash:\x1b[0m     {}", super::format_size(trash_n));
+        println!(
+            "  \x1b[36mTrash:\x1b[0m     {}",
+            super::format_size(trash_n)
+        );
         if limit_n > 0 {
-            println!("  \x1b[36mFree:\x1b[0m      {}", super::format_size(limit_n.saturating_sub(usage_n)));
+            println!(
+                "  \x1b[36mFree:\x1b[0m      {}",
+                super::format_size(limit_n.saturating_sub(usage_n))
+            );
         }
     } else {
         println!("No quota info available");
@@ -76,23 +115,35 @@ pub fn run(args: &[String]) -> Result<()> {
         }
         if let Some(dl) = base.download {
             let total = dl.total_assets.unwrap_or(0);
-            let used  = dl.assets.unwrap_or(0);
+            let used = dl.assets.unwrap_or(0);
             if total > 0 {
-                println!("  \x1b[36mDownload:\x1b[0m  {} / {} used", super::format_size(used), super::format_size(total));
+                println!(
+                    "  \x1b[36mDownload:\x1b[0m  {} / {} used",
+                    super::format_size(used),
+                    super::format_size(total)
+                );
             }
         }
         if let Some(ul) = base.upload {
             let total = ul.total_assets.unwrap_or(0);
-            let used  = ul.assets.unwrap_or(0);
+            let used = ul.assets.unwrap_or(0);
             if total > 0 {
-                println!("  \x1b[36mUpload:\x1b[0m    {} / {} used", super::format_size(used), super::format_size(total));
+                println!(
+                    "  \x1b[36mUpload:\x1b[0m    {} / {} used",
+                    super::format_size(used),
+                    super::format_size(total)
+                );
             }
         }
         if let Some(of) = base.offline {
             let total = of.total_assets.unwrap_or(0);
-            let used  = of.assets.unwrap_or(0);
+            let used = of.assets.unwrap_or(0);
             if total > 0 {
-                println!("  \x1b[36mOffline:\x1b[0m   {} / {} used", super::format_size(used), super::format_size(total));
+                println!(
+                    "  \x1b[36mOffline:\x1b[0m   {} / {} used",
+                    super::format_size(used),
+                    super::format_size(total)
+                );
             }
         }
     }

@@ -1,13 +1,13 @@
 pub mod cat;
 pub mod complete_path;
 pub mod completions;
-pub mod login;
 pub mod cp;
 pub mod download;
 pub mod events;
 pub mod help;
 pub mod info;
 pub mod link;
+pub mod login;
 pub mod ls;
 pub mod mkdir;
 pub mod mv;
@@ -31,23 +31,31 @@ use crate::config::AppConfig;
 use crate::pikpak::{self, PikPak};
 use anyhow::{Result, anyhow};
 
-const G: &str = "\x1b[32m";  // green
-const D: &str = "\x1b[2m";   // dim
-const B: &str = "\x1b[1m";   // bold
-const R: &str = "\x1b[0m";   // reset
+const G: &str = "\x1b[32m"; // green
+const D: &str = "\x1b[2m"; // dim
+const B: &str = "\x1b[1m"; // bold
+const R: &str = "\x1b[0m"; // reset
 
 /// Single source of truth for command grouping. Used by both global --help
 /// and per-command --help.
 pub const COMMAND_GROUPS: &[(&str, &[&str])] = &[
-    ("File Management",   &["ls", "mv", "cp", "rename", "rm", "mkdir", "info", "link", "cat"]),
-    ("Playback",          &["play"]),
-    ("Transfer",          &["download", "upload", "share"]),
-    ("Cloud Download",    &["offline", "tasks"]),
-    ("Trash",             &["trash", "untrash"]),
-    ("Starred & Activity",&["star", "unstar", "starred", "events"]),
-    ("Auth",              &["login"]),
-    ("Account",           &["quota", "vip"]),
-    ("Utility",           &["update", "completions"]),
+    (
+        "File Management",
+        &[
+            "ls", "mv", "cp", "rename", "rm", "mkdir", "info", "link", "cat",
+        ],
+    ),
+    ("Playback", &["play"]),
+    ("Transfer", &["download", "upload", "share"]),
+    ("Cloud Download", &["offline", "tasks"]),
+    ("Trash", &["trash", "untrash"]),
+    (
+        "Starred & Activity",
+        &["star", "unstar", "starred", "events"],
+    ),
+    ("Auth", &["login"]),
+    ("Account", &["quota", "vip"]),
+    ("Utility", &["update", "completions"]),
 ];
 
 /// Returns (usage_line, short_description, detailed_body) for a command.
@@ -90,7 +98,9 @@ fn command_help_text_inner(cmd: &str) -> (&'static str, &'static str, String) {
                  {ex}  pikpaktui ls{R}\n\
                  {ex}  pikpaktui ls -l /Movies{R}\n\
                  {ex}  pikpaktui ls --tree --depth=2 /{R}\n",
-                opt = G, d = D, ex = D,
+                opt = G,
+                d = D,
+                ex = D,
             ),
         ),
         "mv" => (
@@ -103,7 +113,9 @@ fn command_help_text_inner(cmd: &str) -> (&'static str, &'static str, String) {
                  \n{B}EXAMPLES:{R}\n\
                  {ex}  pikpaktui mv /file.txt /Archive/{R}\n\
                  {ex}  pikpaktui mv -t /Dest /a.txt /b.txt{R}\n",
-                opt = G, d = D, ex = D,
+                opt = G,
+                d = D,
+                ex = D,
             ),
         ),
         "cp" => (
@@ -116,7 +128,9 @@ fn command_help_text_inner(cmd: &str) -> (&'static str, &'static str, String) {
                  \n{B}EXAMPLES:{R}\n\
                  {ex}  pikpaktui cp /file.txt /Backup/{R}\n\
                  {ex}  pikpaktui cp -t /Dest /a.txt /b.txt{R}\n",
-                opt = G, d = D, ex = D,
+                opt = G,
+                d = D,
+                ex = D,
             ),
         ),
         "rename" => (
@@ -127,7 +141,9 @@ fn command_help_text_inner(cmd: &str) -> (&'static str, &'static str, String) {
                  {opt}  -n, --dry-run    {d}Preview without executing{R}\n\
                  \n{B}EXAMPLES:{R}\n\
                  {ex}  pikpaktui rename /old.txt new.txt{R}\n",
-                opt = G, d = D, ex = D,
+                opt = G,
+                d = D,
+                ex = D,
             ),
         ),
         "rm" => (
@@ -140,7 +156,9 @@ fn command_help_text_inner(cmd: &str) -> (&'static str, &'static str, String) {
                  \n{B}EXAMPLES:{R}\n\
                  {ex}  pikpaktui rm /file.txt{R}\n\
                  {ex}  pikpaktui rm -rf /old-folder{R}\n",
-                opt = G, d = D, ex = D,
+                opt = G,
+                d = D,
+                ex = D,
             ),
         ),
         "mkdir" => (
@@ -153,7 +171,9 @@ fn command_help_text_inner(cmd: &str) -> (&'static str, &'static str, String) {
                  \n{B}EXAMPLES:{R}\n\
                  {ex}  pikpaktui mkdir / NewFolder{R}\n\
                  {ex}  pikpaktui mkdir -p / path/to/deep/folder{R}\n",
-                opt = G, d = D, ex = D,
+                opt = G,
+                d = D,
+                ex = D,
             ),
         ),
         "download" => (
@@ -168,7 +188,9 @@ fn command_help_text_inner(cmd: &str) -> (&'static str, &'static str, String) {
                  \n{B}EXAMPLES:{R}\n\
                  {ex}  pikpaktui download /movie.mkv{R}\n\
                  {ex}  pikpaktui download -j4 -t ./local /Movies{R}\n",
-                opt = G, d = D, ex = D,
+                opt = G,
+                d = D,
+                ex = D,
             ),
         ),
         "upload" => (
@@ -181,7 +203,9 @@ fn command_help_text_inner(cmd: &str) -> (&'static str, &'static str, String) {
                  \n{B}EXAMPLES:{R}\n\
                  {ex}  pikpaktui upload file.txt{R}\n\
                  {ex}  pikpaktui upload -t /Remote a.txt b.txt{R}\n",
-                opt = G, d = D, ex = D,
+                opt = G,
+                d = D,
+                ex = D,
             ),
         ),
         "share" => (
@@ -208,7 +232,9 @@ fn command_help_text_inner(cmd: &str) -> (&'static str, &'static str, String) {
                  {ex}  pikpaktui share -l{R}\n\
                  {ex}  pikpaktui share -S https://mypikpak.com/s/abc123{R}\n\
                  {ex}  pikpaktui share -D abc123{R}\n",
-                opt = G, d = D, ex = D,
+                opt = G,
+                d = D,
+                ex = D,
             ),
         ),
         "offline" => (
@@ -222,7 +248,9 @@ fn command_help_text_inner(cmd: &str) -> (&'static str, &'static str, String) {
                  \n{B}EXAMPLES:{R}\n\
                  {ex}  pikpaktui offline https://example.com/file.zip{R}\n\
                  {ex}  pikpaktui offline --to /Downloads magnet:?xt=...{R}\n",
-                opt = G, d = D, ex = D,
+                opt = G,
+                d = D,
+                ex = D,
             ),
         ),
         "tasks" => (
@@ -242,7 +270,9 @@ fn command_help_text_inner(cmd: &str) -> (&'static str, &'static str, String) {
                  {ex}  pikpaktui tasks list 10{R}\n\
                  {ex}  pikpaktui tasks retry abc12345{R}\n\
                  {ex}  pikpaktui tasks delete abc12345{R}\n",
-                opt = G, d = D, ex = D,
+                opt = G,
+                d = D,
+                ex = D,
             ),
         ),
         "info" => (
@@ -253,7 +283,9 @@ fn command_help_text_inner(cmd: &str) -> (&'static str, &'static str, String) {
                  {opt}  -J, --json       {d}Output as JSON{R}\n\
                  \n{B}EXAMPLES:{R}\n\
                  {ex}  pikpaktui info /movie.mkv{R}\n",
-                opt = G, d = D, ex = D,
+                opt = G,
+                d = D,
+                ex = D,
             ),
         ),
         "link" => (
@@ -267,7 +299,9 @@ fn command_help_text_inner(cmd: &str) -> (&'static str, &'static str, String) {
                  \n{B}EXAMPLES:{R}\n\
                  {ex}  pikpaktui link /movie.mkv{R}\n\
                  {ex}  pikpaktui link -mc /movie.mkv{R}\n",
-                opt = G, d = D, ex = D,
+                opt = G,
+                d = D,
+                ex = D,
             ),
         ),
         "cat" => (
@@ -288,7 +322,9 @@ fn command_help_text_inner(cmd: &str) -> (&'static str, &'static str, String) {
                  \n{B}EXAMPLES:{R}\n\
                  {ex}  pikpaktui play /movie.mkv{R}\n\
                  {ex}  pikpaktui play /movie.mkv 1080{R}\n",
-                opt = G, d = D, ex = D,
+                opt = G,
+                d = D,
+                ex = D,
             ),
         ),
         "quota" => (
@@ -299,7 +335,9 @@ fn command_help_text_inner(cmd: &str) -> (&'static str, &'static str, String) {
                  {opt}  -J, --json       {d}Output as JSON{R}\n\
                  \n{B}EXAMPLES:{R}\n\
                  {ex}  pikpaktui quota{R}\n",
-                opt = G, d = D, ex = D,
+                opt = G,
+                d = D,
+                ex = D,
             ),
         ),
         "events" => (
@@ -312,7 +350,9 @@ fn command_help_text_inner(cmd: &str) -> (&'static str, &'static str, String) {
                  \n{B}EXAMPLES:{R}\n\
                  {ex}  pikpaktui events{R}\n\
                  {ex}  pikpaktui events 50{R}\n",
-                opt = G, d = D, ex = D,
+                opt = G,
+                d = D,
+                ex = D,
             ),
         ),
         "trash" => (
@@ -377,19 +417,13 @@ fn command_help_text_inner(cmd: &str) -> (&'static str, &'static str, String) {
                  \n{B}EXAMPLES:{R}\n\
                  {ex}  pikpaktui login -u user@example.com -p mypassword{R}\n\
                  {ex}  PIKPAK_USER=user@example.com PIKPAK_PASS=pass pikpaktui login{R}\n",
-                opt = G, d = D, ex = D,
+                opt = G,
+                d = D,
+                ex = D,
             ),
         ),
-        "vip" => (
-            "vip",
-            "Show VIP and account info",
-            String::new(),
-        ),
-        "update" => (
-            "update",
-            "Check for updates and self-update",
-            String::new(),
-        ),
+        "vip" => ("vip", "Show VIP and account info", String::new()),
+        "update" => ("update", "Check for updates and self-update", String::new()),
         "completions" => (
             "completions <shell>",
             "Generate shell completions",
@@ -404,7 +438,8 @@ fn command_help_text_inner(cmd: &str) -> (&'static str, &'static str, String) {
                  {ex}  pikpaktui completions bash > /etc/bash_completion.d/pikpaktui{R}\n\
                  {ex}  pikpaktui completions fish > ~/.config/fish/completions/pikpaktui.fish{R}\n\
                  {ex}  pikpaktui completions powershell | Out-String | Invoke-Expression{R}\n",
-                opt = G, ex = D,
+                opt = G,
+                ex = D,
             ),
         ),
         _ => (
@@ -558,8 +593,8 @@ pub struct Spinner {
 impl Spinner {
     pub fn new(msg: &str) -> Self {
         use std::io::Write;
-        use std::sync::atomic::{AtomicBool, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
 
         // Only show spinner if stderr is a terminal
         if !std::io::stderr().is_terminal() {

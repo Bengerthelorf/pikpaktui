@@ -8,9 +8,9 @@ pub fn run(args: &[String]) -> Result<()> {
         ));
     }
 
-    let list_mode   = args.iter().any(|a| a == "-l" || a == "--list");
+    let list_mode = args.iter().any(|a| a == "-l" || a == "--list");
     let delete_mode = args.iter().any(|a| a == "-D" || a == "--delete");
-    let save_mode   = args.iter().any(|a| a == "-S" || a == "--save");
+    let save_mode = args.iter().any(|a| a == "-S" || a == "--save");
 
     if list_mode {
         run_list(args)
@@ -80,7 +80,10 @@ fn run_create(args: &[String]) -> Result<()> {
     } else {
         println!("\x1b[1;36m{}\x1b[0m", result.share_url);
         if !result.pass_code.is_empty() {
-            println!("\x1b[33mPassword:\x1b[0m \x1b[1;33m{}\x1b[0m", result.pass_code);
+            println!(
+                "\x1b[33mPassword:\x1b[0m \x1b[1;33m{}\x1b[0m",
+                result.pass_code
+            );
         }
         if let Some(out_path) = output_file {
             let mut f = std::fs::File::create(out_path)
@@ -166,7 +169,11 @@ fn run_save(args: &[String]) -> Result<()> {
     }
 
     if dry_run {
-        println!("[dry-run] Would save {} item(s) to '{}'", info.files.len(), dest_display);
+        println!(
+            "[dry-run] Would save {} item(s) to '{}'",
+            info.files.len(),
+            dest_display
+        );
         return Ok(());
     }
 
@@ -214,19 +221,24 @@ fn run_list(args: &[String]) -> Result<()> {
     }
 
     if json {
-        let out: Vec<_> = shares.iter().map(|s| serde_json::json!({
-            "share_id":      s.share_id,
-            "share_url":     s.share_url,
-            "title":         s.title,
-            "pass_code":     if s.pass_code.is_empty() { None } else { Some(&s.pass_code) },
-            "share_to":      s.share_to,
-            "create_time":   s.create_time,
-            "expiration_days": s.expiration_days.parse::<i64>().unwrap_or(-1),
-            "view_count":    s.view_count.parse::<u64>().unwrap_or(0),
-            "restore_count": s.restore_count.parse::<u64>().unwrap_or(0),
-            "file_num":      s.file_num.parse::<u64>().unwrap_or(0),
-            "share_status":  s.share_status,
-        })).collect();
+        let out: Vec<_> = shares
+            .iter()
+            .map(|s| {
+                serde_json::json!({
+                    "share_id":      s.share_id,
+                    "share_url":     s.share_url,
+                    "title":         s.title,
+                    "pass_code":     if s.pass_code.is_empty() { None } else { Some(&s.pass_code) },
+                    "share_to":      s.share_to,
+                    "create_time":   s.create_time,
+                    "expiration_days": s.expiration_days.parse::<i64>().unwrap_or(-1),
+                    "view_count":    s.view_count.parse::<u64>().unwrap_or(0),
+                    "restore_count": s.restore_count.parse::<u64>().unwrap_or(0),
+                    "file_num":      s.file_num.parse::<u64>().unwrap_or(0),
+                    "share_status":  s.share_status,
+                })
+            })
+            .collect();
         println!("{}", serde_json::to_string_pretty(&out)?);
         return Ok(());
     }
@@ -275,8 +287,18 @@ fn run_list(args: &[String]) -> Result<()> {
         .collect();
 
     let w_type = 7usize; // "private"
-    let w_title = rows.iter().map(|r| UnicodeWidthStr::width(r.title.as_str())).max().unwrap_or(5).max(5);
-    let w_expiry = rows.iter().map(|r| r.expiry.len()).max().unwrap_or(6).max(6);
+    let w_title = rows
+        .iter()
+        .map(|r| UnicodeWidthStr::width(r.title.as_str()))
+        .max()
+        .unwrap_or(5)
+        .max(5);
+    let w_expiry = rows
+        .iter()
+        .map(|r| r.expiry.len())
+        .max()
+        .unwrap_or(6)
+        .max(6);
     let w_files = rows.iter().map(|r| r.files.len()).max().unwrap_or(5).max(5);
     let w_views = rows.iter().map(|r| r.views.len()).max().unwrap_or(5).max(5);
     let w_saves = rows.iter().map(|r| r.saves.len()).max().unwrap_or(5).max(5);
@@ -311,7 +333,6 @@ fn run_list(args: &[String]) -> Result<()> {
 
     Ok(())
 }
-
 
 fn run_delete(args: &[String]) -> Result<()> {
     let ids: Vec<&str> = args

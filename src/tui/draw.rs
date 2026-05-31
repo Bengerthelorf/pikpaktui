@@ -11,10 +11,16 @@ use crate::pikpak::{Entry, EntryKind};
 use crate::theme;
 
 use super::completion::PathInput;
-use super::image_render::{center_image_rect, render_image_to_colored_lines, render_image_to_grayscale_lines, upscale_for_rect};
+use super::image_render::{
+    center_image_rect, render_image_to_colored_lines, render_image_to_grayscale_lines,
+    upscale_for_rect,
+};
 use super::local_completion::LocalPathInput;
 use super::widgets;
-use super::{App, InputMode, LoginField, PickerState, PreviewState, SPINNER_FRAMES, centered_rect, format_size, truncate_name};
+use super::{
+    App, InputMode, LoginField, PickerState, PreviewState, SPINNER_FRAMES, centered_rect,
+    format_size, truncate_name,
+};
 
 impl App {
     /// Returns `true` when a popup overlay is active that may cover the preview pane.
@@ -36,13 +42,7 @@ impl App {
         )
     }
 
-    fn draw_trash_view(
-        &self,
-        f: &mut Frame,
-        entries: &[Entry],
-        selected: usize,
-        expanded: bool,
-    ) {
+    fn draw_trash_view(&self, f: &mut Frame, entries: &[Entry], selected: usize, expanded: bool) {
         let title = format!(" Trash ({}) ", entries.len());
         let (tr_bc, tr_tc) = if self.is_vibrant() {
             (Color::LightRed, Color::LightRed)
@@ -54,10 +54,7 @@ impl App {
             let (list_area, help_bar_area) = self.layout_with_help_bar(f.area());
 
             if entries.is_empty() {
-                let lines = vec![
-                    Line::from(""),
-                    widgets::empty_state_line("Trash is empty."),
-                ];
+                let lines = vec![Line::from(""), widgets::empty_state_line("Trash is empty.")];
                 let p = Paragraph::new(Text::from(lines)).block(
                     self.styled_block()
                         .title(title)
@@ -71,7 +68,12 @@ impl App {
                 let scroll_offset = widgets::scroll_offset(selected, max_visible);
                 let name_max = list_area.width.saturating_sub(20) as usize;
 
-                for (i, entry) in entries.iter().enumerate().skip(scroll_offset).take(max_visible) {
+                for (i, entry) in entries
+                    .iter()
+                    .enumerate()
+                    .skip(scroll_offset)
+                    .take(max_visible)
+                {
                     let is_sel = i == selected;
                     let prefix = if is_sel { " \u{203a} " } else { "   " };
                     let cat = theme::categorize(entry);
@@ -83,7 +85,9 @@ impl App {
                         format_size(entry.size)
                     };
                     let name_style = if is_sel {
-                        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD)
                     } else {
                         Style::default().fg(Color::Reset)
                     };
@@ -98,7 +102,12 @@ impl App {
                     ]));
                 }
 
-                widgets::push_remaining_indicator(&mut lines, entries.len(), scroll_offset, max_visible);
+                widgets::push_remaining_indicator(
+                    &mut lines,
+                    entries.len(),
+                    scroll_offset,
+                    max_visible,
+                );
 
                 let p = Paragraph::new(Text::from(lines)).block(
                     self.styled_block()
@@ -122,10 +131,7 @@ impl App {
             clear_overlay_area(f, area);
 
             if entries.is_empty() {
-                let mut lines = vec![
-                    Line::from(""),
-                    widgets::empty_state_line("Trash is empty."),
-                ];
+                let mut lines = vec![Line::from(""), widgets::empty_state_line("Trash is empty.")];
                 lines.push(Line::from(""));
                 let hints = vec![("r", "refresh"), ("Esc", "close")];
                 let mut hint_spans = vec![Span::raw("  ")];
@@ -144,7 +150,12 @@ impl App {
                 let max_visible = 15;
                 let scroll_offset = widgets::scroll_offset(selected, max_visible);
 
-                for (i, entry) in entries.iter().enumerate().skip(scroll_offset).take(max_visible) {
+                for (i, entry) in entries
+                    .iter()
+                    .enumerate()
+                    .skip(scroll_offset)
+                    .take(max_visible)
+                {
                     let is_sel = i == selected;
                     let prefix = if is_sel { " \u{203a} " } else { "   " };
                     let cat = theme::categorize(entry);
@@ -156,7 +167,9 @@ impl App {
                         format_size(entry.size)
                     };
                     let name_style = if is_sel {
-                        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD)
                     } else {
                         Style::default().fg(Color::Reset)
                     };
@@ -171,7 +184,12 @@ impl App {
                     ]));
                 }
 
-                widgets::push_remaining_indicator(&mut lines, entries.len(), scroll_offset, max_visible);
+                widgets::push_remaining_indicator(
+                    &mut lines,
+                    entries.len(),
+                    scroll_offset,
+                    max_visible,
+                );
 
                 lines.push(Line::from(""));
                 let hints = vec![
@@ -219,7 +237,9 @@ impl App {
                     Span::styled("  Play ", Style::default().fg(Color::Cyan)),
                     Span::styled(
                         format!("\"{}\"", truncated_name),
-                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
                     ),
                     Span::styled("?", Style::default().fg(Color::Cyan)),
                 ]),
@@ -327,7 +347,10 @@ impl App {
                 Line::from(""),
                 Line::from(vec![
                     Span::styled("  > ", Style::default().fg(Color::Cyan)),
-                    Span::styled(format!("{}{}", value, cur), Style::default().fg(Color::Yellow)),
+                    Span::styled(
+                        format!("{}{}", value, cur),
+                        Style::default().fg(Color::Yellow),
+                    ),
                 ]),
                 Line::from(""),
                 Self::hint_line(&[("Enter", "confirm"), ("Esc", "cancel")]),
@@ -381,7 +404,11 @@ impl App {
                     self.draw_log_overlay(f, log_area);
                 }
             }
-            InputMode::InfoView { info, image, has_thumbnail } if !self.trash_entries.is_empty() => {
+            InputMode::InfoView {
+                info,
+                image,
+                has_thumbnail,
+            } if !self.trash_entries.is_empty() => {
                 self.draw_trash_view(
                     f,
                     &self.trash_entries,
@@ -625,15 +652,24 @@ impl App {
                             let filled = (pct * BAR_W as f64).round() as usize;
                             let used_str = format_size(used);
                             let limit_str = format_size(limit);
-                            let total_w = (3 + used_str.len() + 3 + limit_str.len() + 2 + BAR_W + 1) as u16;
+                            let total_w =
+                                (3 + used_str.len() + 3 + limit_str.len() + 2 + BAR_W + 1) as u16;
                             let spans: Vec<Span<'static>> = vec![
                                 Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
-                                Span::styled(used_str, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                                Span::styled(
+                                    used_str,
+                                    Style::default()
+                                        .fg(Color::White)
+                                        .add_modifier(Modifier::BOLD),
+                                ),
                                 Span::styled(" / ", Style::default().fg(Color::DarkGray)),
                                 Span::styled(limit_str, Style::default().fg(Color::DarkGray)),
                                 Span::styled("  ", Style::default()),
                                 Span::styled("▪".repeat(filled), Style::default().fg(bar_color)),
-                                Span::styled("▫".repeat(BAR_W - filled), Style::default().fg(Color::DarkGray)),
+                                Span::styled(
+                                    "▫".repeat(BAR_W - filled),
+                                    Style::default().fg(Color::DarkGray),
+                                ),
                                 Span::styled(" ", Style::default()),
                             ];
                             Some((spans, total_w))
@@ -643,14 +679,24 @@ impl App {
                             let used_str = format_size(used);
                             let limit_str = format_size(limit);
                             // " │ " + used + " / " + limit + " " + pct + " "
-                            let total_w = (3 + used_str.len() + 3 + limit_str.len() + 1 + pct_str.len() + 1) as u16;
+                            let total_w =
+                                (3 + used_str.len() + 3 + limit_str.len() + 1 + pct_str.len() + 1)
+                                    as u16;
                             let spans: Vec<Span<'static>> = vec![
                                 Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
-                                Span::styled(used_str, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                                Span::styled(
+                                    used_str,
+                                    Style::default()
+                                        .fg(Color::White)
+                                        .add_modifier(Modifier::BOLD),
+                                ),
                                 Span::styled(" / ", Style::default().fg(Color::DarkGray)),
                                 Span::styled(limit_str, Style::default().fg(Color::DarkGray)),
                                 Span::styled(" ", Style::default()),
-                                Span::styled(pct_str, Style::default().fg(bar_color).add_modifier(Modifier::BOLD)),
+                                Span::styled(
+                                    pct_str,
+                                    Style::default().fg(bar_color).add_modifier(Modifier::BOLD),
+                                ),
                                 Span::styled(" ", Style::default()),
                             ];
                             Some((spans, total_w))
@@ -662,7 +708,12 @@ impl App {
                     let total_w = (3 + used_str.len() + 6) as u16;
                     let spans: Vec<Span<'static>> = vec![
                         Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
-                        Span::styled(used_str, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                        Span::styled(
+                            used_str,
+                            Style::default()
+                                .fg(Color::White)
+                                .add_modifier(Modifier::BOLD),
+                        ),
                         Span::styled(" used ", Style::default().fg(Color::DarkGray)),
                     ];
                     Some((spans, total_w))
@@ -677,7 +728,12 @@ impl App {
                         let w = text.len() as u16 + 3;
                         let spans = vec![
                             Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
-                            Span::styled(text, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                            Span::styled(
+                                text,
+                                Style::default()
+                                    .fg(Color::Yellow)
+                                    .add_modifier(Modifier::BOLD),
+                            ),
                         ];
                         (spans, w)
                     })
@@ -931,8 +987,12 @@ impl App {
                 let max_lines = inner_height.saturating_sub(if *truncated { 1 } else { 0 });
                 let max_scroll = highlighted.len().saturating_sub(max_lines.max(1));
                 let scroll = self.preview_scroll.min(max_scroll);
-                let mut lines: Vec<Line> =
-                    highlighted.iter().skip(scroll).take(max_lines).cloned().collect();
+                let mut lines: Vec<Line> = highlighted
+                    .iter()
+                    .skip(scroll)
+                    .take(max_lines)
+                    .cloned()
+                    .collect();
 
                 if *truncated {
                     lines.push(Line::from(Span::styled(
@@ -961,7 +1021,8 @@ impl App {
                 let mut lines = vec![Line::from("")];
                 if let Some(entry) = self.entries.get(self.selected) {
                     lines.extend(wrap_labeled_field(
-                        "  Name:  ", &entry.name,
+                        "  Name:  ",
+                        &entry.name,
                         Style::default().fg(Color::Cyan),
                         Style::default().fg(Color::Reset),
                         wrap_w,
@@ -984,18 +1045,28 @@ impl App {
                     if !entry.modified_time.is_empty() {
                         lines.push(Line::from(vec![
                             Span::styled("  Modified:", Style::default().fg(Color::Cyan)),
-                            Span::styled(&entry.modified_time, Style::default().fg(Color::DarkGray)),
+                            Span::styled(
+                                &entry.modified_time,
+                                Style::default().fg(Color::DarkGray),
+                            ),
                         ]));
                     }
                     let mut markers = Vec::new();
                     if entry.starred {
-                        markers.push(Span::styled("\u{2605} Starred", Style::default().fg(Color::Yellow)));
+                        markers.push(Span::styled(
+                            "\u{2605} Starred",
+                            Style::default().fg(Color::Yellow),
+                        ));
                     }
                     if self.cart_ids.contains(&entry.id) {
-                        if !markers.is_empty() { markers.push(Span::raw("  ")); }
+                        if !markers.is_empty() {
+                            markers.push(Span::raw("  "));
+                        }
                         markers.push(Span::styled(
                             "\u{2606} In cart",
-                            Style::default().fg(Color::Yellow).add_modifier(Modifier::DIM),
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(Modifier::DIM),
                         ));
                     }
                     if !markers.is_empty() {
@@ -1028,7 +1099,10 @@ impl App {
             }
             PreviewState::ThumbnailImage { image } if !self.has_overlay() => {
                 use crate::config::ThumbnailRenderMode;
-                use ratatui_image::{picker::{Picker, ProtocolType}, StatefulImage};
+                use ratatui_image::{
+                    StatefulImage,
+                    picker::{Picker, ProtocolType},
+                };
 
                 let panel_width = area.width.saturating_sub(2);
                 let panel_height = area.height.saturating_sub(2);
@@ -1036,7 +1110,8 @@ impl App {
                 let mut info_lines: Vec<Line> = vec![];
                 if let Some(entry) = self.entries.get(self.selected) {
                     info_lines.extend(wrap_labeled_field(
-                        "  Name:  ", &entry.name,
+                        "  Name:  ",
+                        &entry.name,
                         Style::default().fg(Color::Cyan),
                         Style::default().fg(Color::Reset),
                         wrap_w,
@@ -1059,18 +1134,28 @@ impl App {
                     if !entry.modified_time.is_empty() {
                         info_lines.push(Line::from(vec![
                             Span::styled("  Modified:", Style::default().fg(Color::Cyan)),
-                            Span::styled(&entry.modified_time, Style::default().fg(Color::DarkGray)),
+                            Span::styled(
+                                &entry.modified_time,
+                                Style::default().fg(Color::DarkGray),
+                            ),
                         ]));
                     }
                     let mut markers = Vec::new();
                     if entry.starred {
-                        markers.push(Span::styled("\u{2605} Starred", Style::default().fg(Color::Yellow)));
+                        markers.push(Span::styled(
+                            "\u{2605} Starred",
+                            Style::default().fg(Color::Yellow),
+                        ));
                     }
                     if self.cart_ids.contains(&entry.id) {
-                        if !markers.is_empty() { markers.push(Span::raw("  ")); }
+                        if !markers.is_empty() {
+                            markers.push(Span::raw("  "));
+                        }
                         markers.push(Span::styled(
                             "\u{2606} In cart",
-                            Style::default().fg(Color::Yellow).add_modifier(Modifier::DIM),
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(Modifier::DIM),
                         ));
                     }
                     if !markers.is_empty() {
@@ -1082,7 +1167,8 @@ impl App {
 
                 let info_visual_lines = info_lines.len() as u16;
                 let min_image_height = (panel_height / 2).max(4);
-                let info_height = info_visual_lines.min(panel_height.saturating_sub(min_image_height));
+                let info_height =
+                    info_visual_lines.min(panel_height.saturating_sub(min_image_height));
                 let image_height = panel_height.saturating_sub(info_height);
 
                 let inner_rect = ratatui::layout::Rect {
@@ -1113,9 +1199,10 @@ impl App {
                                     // Fix: iTerm2 incorrectly detected as Kitty
                                     if picker.protocol_type() == ProtocolType::Kitty
                                         && let Ok(term_program) = std::env::var("TERM_PROGRAM")
-                                            && term_program.contains("iTerm") {
-                                                picker.set_protocol_type(ProtocolType::Iterm2);
-                                            }
+                                        && term_program.contains("iTerm")
+                                    {
+                                        picker.set_protocol_type(ProtocolType::Iterm2);
+                                    }
                                 }
                                 crate::config::ImageProtocol::Kitty => {
                                     picker.set_protocol_type(ProtocolType::Kitty);
@@ -1129,7 +1216,8 @@ impl App {
                             }
 
                             let render_rect = center_image_rect(image, image_area);
-                            let img_display = upscale_for_rect(image, render_rect, picker.font_size());
+                            let img_display =
+                                upscale_for_rect(image, render_rect, picker.font_size());
                             let mut protocol = picker.new_resize_protocol(img_display);
                             let img_widget = StatefulImage::default();
                             f.render_stateful_widget(img_widget, render_rect, &mut protocol);
@@ -1209,7 +1297,8 @@ impl App {
                 let wrap_w = area.width.saturating_sub(2) as usize;
                 let mut lines = vec![Line::from("")];
                 lines.extend(wrap_labeled_field(
-                    "  Name:  ", &info.name,
+                    "  Name:  ",
+                    &info.name,
                     Style::default().fg(Color::Cyan),
                     Style::default().fg(Color::Reset),
                     wrap_w,
@@ -1226,7 +1315,8 @@ impl App {
                 }
                 if let Some(hash) = &info.hash {
                     lines.extend(wrap_labeled_field(
-                        "  Hash:  ", hash,
+                        "  Hash:  ",
+                        hash,
                         Style::default().fg(Color::Cyan),
                         Style::default().fg(Color::DarkGray),
                         wrap_w,
@@ -1234,7 +1324,8 @@ impl App {
                 }
                 if let Some(link) = &info.web_content_link {
                     lines.extend(wrap_labeled_field(
-                        "  Link:  ", link,
+                        "  Link:  ",
+                        link,
                         Style::default().fg(Color::Cyan),
                         Style::default().fg(Color::Blue),
                         wrap_w,
@@ -1262,10 +1353,7 @@ impl App {
         let visible = area.height.saturating_sub(2) as usize;
         let content_width = area.width.saturating_sub(2).max(1) as usize;
 
-        let all_lines = super::wrap_logs(
-            self.logs.iter().map(|s| s.as_str()),
-            content_width,
-        );
+        let all_lines = super::wrap_logs(self.logs.iter().map(|s| s.as_str()), content_width);
         let total_visual = all_lines.len();
         let max_scroll = total_visual.saturating_sub(visible);
 
@@ -1293,7 +1381,8 @@ impl App {
             format!("Logs [{}] (l to close)", self.logs.len())
         };
         f.render_widget(
-            Paragraph::new(Text::from(visible_lines)).block(self.overlay_block(&title, log_bc, log_tc)),
+            Paragraph::new(Text::from(visible_lines))
+                .block(self.overlay_block(&title, log_bc, log_tc)),
             area,
         );
     }
@@ -1461,10 +1550,18 @@ impl App {
                 vec![("Enter", "confirm"), ("Esc", "cancel")]
             }
             InputMode::SharePrompt => {
-                vec![("p", "public share"), ("P", "with password"), ("Esc", "cancel")]
+                vec![
+                    ("p", "public share"),
+                    ("P", "with password"),
+                    ("Esc", "cancel"),
+                ]
             }
             InputMode::ShareCreatedView { .. } => {
-                vec![("y", "copy URL"), ("Esc", "close top"), ("Ctrl+Esc", "close all")]
+                vec![
+                    ("y", "copy URL"),
+                    ("Esc", "close top"),
+                    ("Ctrl+Esc", "close all"),
+                ]
             }
             InputMode::MySharesView { confirm_delete, .. } => {
                 if confirm_delete.is_some() {
@@ -1521,10 +1618,22 @@ impl App {
                 self.draw_path_input_overlay(f, "Copy", "Copy to path", input, cur);
             }
             InputMode::CartMoveInput { input } => {
-                self.draw_path_input_overlay(f, "Move Cart", "Move all cart items to path", input, cur);
+                self.draw_path_input_overlay(
+                    f,
+                    "Move Cart",
+                    "Move all cart items to path",
+                    input,
+                    cur,
+                );
             }
             InputMode::CartCopyInput { input } => {
-                self.draw_path_input_overlay(f, "Copy Cart", "Copy all cart items to path", input, cur);
+                self.draw_path_input_overlay(
+                    f,
+                    "Copy Cart",
+                    "Copy all cart items to path",
+                    input,
+                    cur,
+                );
             }
             InputMode::Rename { value } => {
                 self.draw_rename_overlay(f, value, cur);
@@ -1576,7 +1685,11 @@ impl App {
             InputMode::InfoLoading => {
                 self.draw_info_loading_overlay(f);
             }
-            InputMode::InfoView { info, image, has_thumbnail } => {
+            InputMode::InfoView {
+                info,
+                image,
+                has_thumbnail,
+            } => {
                 self.draw_info_overlay(f, info, image.as_ref(), *has_thumbnail);
             }
             InputMode::InfoFolderView { name, entries } => {
@@ -1605,7 +1718,15 @@ impl App {
                 rgb_input,
                 rgb_component,
             } => {
-                self.draw_custom_color_overlay(f, *selected, draft, *modified, *editing_rgb, rgb_input, *rgb_component);
+                self.draw_custom_color_overlay(
+                    f,
+                    *selected,
+                    draft,
+                    *modified,
+                    *editing_rgb,
+                    rgb_input,
+                    *rgb_component,
+                );
             }
             InputMode::ImageProtocolSettings {
                 selected,
@@ -1614,7 +1735,14 @@ impl App {
                 current_terminal,
                 terminals,
             } => {
-                self.draw_image_protocol_overlay(f, *selected, draft, *modified, current_terminal, terminals);
+                self.draw_image_protocol_overlay(
+                    f,
+                    *selected,
+                    draft,
+                    *modified,
+                    current_terminal,
+                    terminals,
+                );
             }
             InputMode::ConfirmPlay { name, url } => {
                 self.draw_confirm_play_overlay(f, name, url);
@@ -1652,7 +1780,10 @@ impl App {
                 Line::from(""),
                 Line::from(vec![
                     Span::styled("  New name: ", Style::default().fg(Color::Cyan)),
-                    Span::styled(format!("{}{}", value, cur), Style::default().fg(Color::Yellow)),
+                    Span::styled(
+                        format!("{}{}", value, cur),
+                        Style::default().fg(Color::Yellow),
+                    ),
                 ]),
                 Line::from(""),
                 Self::hint_line(&[("Enter", "confirm"), ("Esc", "cancel")]),
@@ -1674,7 +1805,10 @@ impl App {
                 Line::from(""),
                 Line::from(vec![
                     Span::styled("  Folder name: ", Style::default().fg(Color::Cyan)),
-                    Span::styled(format!("{}{}", value, cur), Style::default().fg(Color::Yellow)),
+                    Span::styled(
+                        format!("{}{}", value, cur),
+                        Style::default().fg(Color::Yellow),
+                    ),
                 ]),
                 Line::from(""),
                 Self::hint_line(&[("Enter", "confirm"), ("Esc", "cancel")]),
@@ -1692,7 +1826,10 @@ impl App {
                 Line::from(""),
                 Line::from(vec![
                     Span::styled("  Path: ", Style::default().fg(Color::Cyan)),
-                    Span::styled(format!("{}{}", query, cur), Style::default().fg(Color::Yellow)),
+                    Span::styled(
+                        format!("{}{}", query, cur),
+                        Style::default().fg(Color::Yellow),
+                    ),
                 ]),
                 Line::from(Span::styled(
                     "  e.g. /My Files/Movies",
@@ -1707,7 +1844,13 @@ impl App {
     }
 
     /// Draw a simple confirmation overlay with title, body lines, and base color.
-    fn draw_simple_confirm(&self, f: &mut Frame, title: &str, body: Vec<Line<'_>>, base_color: Color) {
+    fn draw_simple_confirm(
+        &self,
+        f: &mut Frame,
+        title: &str,
+        body: Vec<Line<'_>>,
+        base_color: Color,
+    ) {
         let area = self.prepare_overlay(f, 60, 20);
         let (bc, tc) = self.themed_colors(base_color);
         f.render_widget(
@@ -1721,21 +1864,36 @@ impl App {
             .download_state
             .tasks
             .iter()
-            .filter(|t| matches!(t.status, super::download::TaskStatus::Downloading | super::download::TaskStatus::Pending))
+            .filter(|t| {
+                matches!(
+                    t.status,
+                    super::download::TaskStatus::Downloading | super::download::TaskStatus::Pending
+                )
+            })
             .count();
-        self.draw_simple_confirm(f, "Confirm Quit", vec![
-            Line::from(""),
-            Line::from(vec![
-                Span::styled("  ", Style::default()),
-                Span::styled(
-                    format!("{} download(s) still active.", active),
-                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-                ),
-            ]),
-            Line::from(Span::styled("  Quit anyway?", Style::default().fg(Color::Yellow))),
-            Line::from(""),
-            Self::hint_line(&[("y", "quit"), ("n/Esc", "cancel")]),
-        ], Color::Yellow);
+        self.draw_simple_confirm(
+            f,
+            "Confirm Quit",
+            vec![
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("  ", Style::default()),
+                    Span::styled(
+                        format!("{} download(s) still active.", active),
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                ]),
+                Line::from(Span::styled(
+                    "  Quit anyway?",
+                    Style::default().fg(Color::Yellow),
+                )),
+                Line::from(""),
+                Self::hint_line(&[("y", "quit"), ("n/Esc", "cancel")]),
+            ],
+            Color::Yellow,
+        );
     }
 
     fn draw_confirm_delete_overlay(&self, f: &mut Frame) {
@@ -1743,19 +1901,26 @@ impl App {
             .current_entry()
             .map(|e| e.name.as_str())
             .unwrap_or("<none>");
-        self.draw_simple_confirm(f, "Confirm Remove", vec![
-            Line::from(""),
-            Line::from(vec![
-                Span::styled("  Delete ", Style::default().fg(Color::Red)),
-                Span::styled(
-                    format!("`{}`", name),
-                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(" to trash?", Style::default().fg(Color::Red)),
-            ]),
-            Line::from(""),
-            Self::hint_line(&[("y", "trash"), ("p", "permanent"), ("n/Esc", "cancel")]),
-        ], Color::Red);
+        self.draw_simple_confirm(
+            f,
+            "Confirm Remove",
+            vec![
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("  Delete ", Style::default().fg(Color::Red)),
+                    Span::styled(
+                        format!("`{}`", name),
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(" to trash?", Style::default().fg(Color::Red)),
+                ]),
+                Line::from(""),
+                Self::hint_line(&[("y", "trash"), ("p", "permanent"), ("n/Esc", "cancel")]),
+            ],
+            Color::Red,
+        );
     }
 
     fn draw_confirm_permanent_delete_overlay(&self, f: &mut Frame, value: &str, cur: &str) {
@@ -1775,7 +1940,9 @@ impl App {
             ),
             Span::styled(
                 format!("`{}`", name),
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
             ),
         ]));
         lines.push(Line::from(Span::styled(
@@ -1784,8 +1951,14 @@ impl App {
         )));
         lines.push(Line::from(""));
         lines.push(Line::from(vec![
-            Span::styled("  Type 'yes' to confirm: ", Style::default().fg(Color::Reset)),
-            Span::styled(format!("{}{}", value, cur), Style::default().fg(Color::Yellow)),
+            Span::styled(
+                "  Type 'yes' to confirm: ",
+                Style::default().fg(Color::Reset),
+            ),
+            Span::styled(
+                format!("{}{}", value, cur),
+                Style::default().fg(Color::Yellow),
+            ),
         ]));
         lines.push(Line::from(""));
         lines.push(Self::hint_line(&[("Enter", "confirm"), ("Esc", "cancel")]));
@@ -1804,19 +1977,26 @@ impl App {
 
     fn draw_confirm_cart_delete_overlay(&self, f: &mut Frame) {
         let count = self.cart.len();
-        self.draw_simple_confirm(f, "Confirm Trash Cart", vec![
-            Line::from(""),
-            Line::from(vec![
-                Span::styled("  Trash ", Style::default().fg(Color::Red)),
-                Span::styled(
-                    format!("{} item(s)", count),
-                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(" from cart?", Style::default().fg(Color::Red)),
-            ]),
-            Line::from(""),
-            Self::hint_line(&[("y/Enter", "trash"), ("n/Esc", "cancel")]),
-        ], Color::Red);
+        self.draw_simple_confirm(
+            f,
+            "Confirm Trash Cart",
+            vec![
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("  Trash ", Style::default().fg(Color::Red)),
+                    Span::styled(
+                        format!("{} item(s)", count),
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(" from cart?", Style::default().fg(Color::Red)),
+                ]),
+                Line::from(""),
+                Self::hint_line(&[("y/Enter", "trash"), ("n/Esc", "cancel")]),
+            ],
+            Color::Red,
+        );
     }
 
     fn draw_path_input_overlay(
@@ -2180,11 +2360,16 @@ impl App {
 
         let key_w: usize = 7;
 
-        // ≤3 sections: one column each. >3: first two share column 0.
-        let columns: Vec<Vec<(&str, &Vec<(&str, &str)>)>> = if sections.len() <= 3 {
-            sections.iter().map(|(name, items)| vec![(*name, items)]).collect()
+        type HelpGroupRef<'a> = (&'a str, &'a Vec<(&'a str, &'a str)>);
+
+        // <=3 sections: one column each. >3: first two share column 0.
+        let columns: Vec<Vec<HelpGroupRef<'_>>> = if sections.len() <= 3 {
+            sections
+                .iter()
+                .map(|(name, items)| vec![(*name, items)])
+                .collect()
         } else {
-            let mut cols: Vec<Vec<(&str, &Vec<(&str, &str)>)>> = Vec::new();
+            let mut cols: Vec<Vec<HelpGroupRef<'_>>> = Vec::new();
             cols.push(vec![
                 (sections[0].0, &sections[0].1),
                 (sections[1].0, &sections[1].1),
@@ -2198,15 +2383,20 @@ impl App {
         let col_count = columns.len();
         let col_w = inner_w / col_count;
 
-        let col_heights: Vec<usize> = columns.iter().map(|groups| {
-            let mut h = 0;
-            for (i, (_, items)) in groups.iter().enumerate() {
-                if i > 0 { h += 1; } // blank separator between groups
-                h += 1; // title
-                h += items.len(); // items
-            }
-            h
-        }).collect();
+        let col_heights: Vec<usize> = columns
+            .iter()
+            .map(|groups| {
+                let mut h = 0;
+                for (i, (_, items)) in groups.iter().enumerate() {
+                    if i > 0 {
+                        h += 1;
+                    } // blank separator between groups
+                    h += 1; // title
+                    h += items.len(); // items
+                }
+                h
+            })
+            .collect();
         let max_rows = col_heights.iter().copied().max().unwrap_or(0);
 
         let min_content_h = max_rows + 2 + 2; // items + hint/blank + borders
@@ -2260,18 +2450,27 @@ impl App {
             lines.push(Line::from(""));
         }
 
-        enum RowKind<'a> { Title(&'a str), Item(&'a str, &'a str), Blank }
-        let col_rows: Vec<Vec<RowKind>> = columns.iter().map(|groups| {
-            let mut rows = Vec::new();
-            for (i, (name, items)) in groups.iter().enumerate() {
-                if i > 0 { rows.push(RowKind::Blank); }
-                rows.push(RowKind::Title(name));
-                for &(key, desc) in *items {
-                    rows.push(RowKind::Item(key, desc));
+        enum RowKind<'a> {
+            Title(&'a str),
+            Item(&'a str, &'a str),
+            Blank,
+        }
+        let col_rows: Vec<Vec<RowKind>> = columns
+            .iter()
+            .map(|groups| {
+                let mut rows = Vec::new();
+                for (i, (name, items)) in groups.iter().enumerate() {
+                    if i > 0 {
+                        rows.push(RowKind::Blank);
+                    }
+                    rows.push(RowKind::Title(name));
+                    for &(key, desc) in *items {
+                        rows.push(RowKind::Item(key, desc));
+                    }
                 }
-            }
-            rows
-        }).collect();
+                rows
+            })
+            .collect();
 
         for row in 0..max_rows {
             let mut spans = Vec::new();
@@ -2292,10 +2491,7 @@ impl App {
                                 format!("{}{:<kw$} ", prefix, key, kw = key_w),
                                 key_style,
                             ));
-                            spans.push(Span::styled(
-                                format!("{:<dw$}", desc, dw = dw),
-                                desc_style,
-                            ));
+                            spans.push(Span::styled(format!("{:<dw$}", desc, dw = dw), desc_style));
                         }
                         RowKind::Blank => {
                             spans.push(Span::raw(format!("{:<width$}", "", width = col_w)));
@@ -2337,17 +2533,26 @@ impl App {
         );
 
         let max_items = 12;
-        let pct = widgets::dynamic_overlay_height(self.cart.len(), max_items, f.area().height, 25, 70);
+        let pct =
+            widgets::dynamic_overlay_height(self.cart.len(), max_items, f.area().height, 25, 70);
         let area = centered_rect(65, pct, f.area());
         clear_overlay_area(f, area);
 
         let mut lines = vec![Line::from("")];
 
         if self.cart.is_empty() {
-            lines.push(widgets::empty_state_line("Cart is empty. Press 'a' on files to add them."));
+            lines.push(widgets::empty_state_line(
+                "Cart is empty. Press 'a' on files to add them.",
+            ));
         } else {
             let cart_offset = widgets::scroll_offset(self.cart_selected, max_items);
-            for (i, entry) in self.cart.iter().enumerate().skip(cart_offset).take(max_items) {
+            for (i, entry) in self
+                .cart
+                .iter()
+                .enumerate()
+                .skip(cart_offset)
+                .take(max_items)
+            {
                 let is_sel = i == self.cart_selected;
                 let prefix = if is_sel { " \u{203a} " } else { "   " };
                 let style = if is_sel {
@@ -2417,11 +2622,18 @@ impl App {
                 Style::default().fg(Color::DarkGray),
             )));
         }
-        for (i, (name, is_dir)) in candidates.iter().enumerate().skip(window_start).take(window_end - window_start) {
+        for (i, (name, is_dir)) in candidates
+            .iter()
+            .enumerate()
+            .skip(window_start)
+            .take(window_end - window_start)
+        {
             let is_sel = selected_idx == Some(i);
             let row_prefix = if is_sel { "  > " } else { "    " };
             let style = if is_sel {
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(Color::Blue)
             };
@@ -2466,7 +2678,11 @@ impl App {
         self.draw_candidate_list(&mut lines, &input.candidates, input.candidate_idx);
 
         lines.push(Line::from(""));
-        lines.push(Self::hint_line(&[("Tab", "complete"), ("Enter", "confirm"), ("Esc", "cancel")]));
+        lines.push(Self::hint_line(&[
+            ("Tab", "complete"),
+            ("Enter", "confirm"),
+            ("Esc", "cancel"),
+        ]));
 
         let (dl_bc, dl_tc) = if self.is_vibrant() {
             (Color::LightGreen, Color::LightGreen)
@@ -2475,8 +2691,11 @@ impl App {
         };
         let cart_count = self.cart.len();
         f.render_widget(
-            Paragraph::new(Text::from(lines))
-                .block(self.overlay_block(&format!("Download {} files", cart_count), dl_bc, dl_tc)),
+            Paragraph::new(Text::from(lines)).block(self.overlay_block(
+                &format!("Download {} files", cart_count),
+                dl_bc,
+                dl_tc,
+            )),
             area,
         );
     }
@@ -2484,7 +2703,12 @@ impl App {
     fn draw_upload_input_overlay(&self, f: &mut Frame, input: &LocalPathInput, cur: &str) {
         let candidate_lines = input.candidates.len().min(8);
         let base_height = 7;
-        let total_lines = base_height + if candidate_lines > 0 { candidate_lines + 1 } else { 0 };
+        let total_lines = base_height
+            + if candidate_lines > 0 {
+                candidate_lines + 1
+            } else {
+                0
+            };
         let pct = ((total_lines as u16 * 100) / f.area().height.max(1)).clamp(20, 60);
         let area = centered_rect(70, pct, f.area());
         clear_overlay_area(f, area);
@@ -2508,7 +2732,11 @@ impl App {
         self.draw_candidate_list(&mut lines, &input.candidates, input.candidate_idx);
 
         lines.push(Line::from(""));
-        lines.push(Self::hint_line(&[("Tab", "complete"), ("Enter", "upload"), ("Esc", "cancel")]));
+        lines.push(Self::hint_line(&[
+            ("Tab", "complete"),
+            ("Enter", "upload"),
+            ("Esc", "cancel"),
+        ]));
 
         let (ul_bc, ul_tc) = self.themed_colors(Color::Yellow);
         f.render_widget(
@@ -2541,7 +2769,10 @@ impl App {
                 Line::from(""),
                 Line::from(vec![
                     Span::styled("  URL: ", Style::default().fg(Color::Cyan)),
-                    Span::styled(format!("{}{}", value, cur), Style::default().fg(Color::Yellow)),
+                    Span::styled(
+                        format!("{}{}", value, cur),
+                        Style::default().fg(Color::Yellow),
+                    ),
                 ]),
                 Line::from(""),
                 Self::hint_line(&[("Enter", "submit"), ("Esc", "cancel")]),
@@ -2624,12 +2855,13 @@ impl App {
                     Span::styled(format!("  {}", size), Style::default().fg(Color::DarkGray)),
                 ];
                 if task.phase == "PHASE_TYPE_ERROR"
-                    && let Some(msg) = &task.message {
-                        spans.push(Span::styled(
-                            format!("  {}", truncate_name(msg, 20)),
-                            Style::default().fg(Color::Red),
-                        ));
-                    }
+                    && let Some(msg) = &task.message
+                {
+                    spans.push(Span::styled(
+                        format!("  {}", truncate_name(msg, 20)),
+                        Style::default().fg(Color::Red),
+                    ));
+                }
 
                 lines.push(Line::from(spans));
             }
@@ -2695,7 +2927,11 @@ impl App {
 
         let inner_w = area.width.saturating_sub(2);
         // Reserve ~40% of width for thumbnail column; text wraps within the left 60%.
-        let thumb_col_w: u16 = if has_thumb { (inner_w * 2 / 5).max(10) } else { 0 };
+        let thumb_col_w: u16 = if has_thumb {
+            (inner_w * 2 / 5).max(10)
+        } else {
+            0
+        };
         let wrap_w = inner_w.saturating_sub(thumb_col_w) as usize;
         let footer_wrap_w = inner_w as usize;
 
@@ -2703,7 +2939,8 @@ impl App {
 
         if let Some(id) = &info.id {
             meta_lines.extend(wrap_labeled_field(
-                "  ID:    ", id,
+                "  ID:    ",
+                id,
                 Style::default().fg(Color::Cyan),
                 Style::default().fg(Color::DarkGray),
                 wrap_w,
@@ -2711,7 +2948,8 @@ impl App {
         }
 
         meta_lines.extend(wrap_labeled_field(
-            "  Name:  ", &info.name,
+            "  Name:  ",
+            &info.name,
             Style::default().fg(Color::Cyan),
             Style::default().fg(Color::Reset),
             wrap_w,
@@ -2759,7 +2997,8 @@ impl App {
 
         if let Some(hash) = &info.hash {
             meta_lines.extend(wrap_labeled_field(
-                "  Hash:  ", hash,
+                "  Hash:  ",
+                hash,
                 Style::default().fg(Color::Cyan),
                 Style::default().fg(Color::DarkGray),
                 wrap_w,
@@ -2769,13 +3008,20 @@ impl App {
         if let Some(entry) = self.entries.get(self.selected) {
             let mut markers = Vec::new();
             if entry.starred {
-                markers.push(Span::styled("\u{2605} Starred", Style::default().fg(Color::Yellow)));
+                markers.push(Span::styled(
+                    "\u{2605} Starred",
+                    Style::default().fg(Color::Yellow),
+                ));
             }
             if self.cart_ids.contains(&entry.id) {
-                if !markers.is_empty() { markers.push(Span::raw("  ")); }
+                if !markers.is_empty() {
+                    markers.push(Span::raw("  "));
+                }
                 markers.push(Span::styled(
                     "\u{2606} In cart",
-                    Style::default().fg(Color::Yellow).add_modifier(Modifier::DIM),
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::DIM),
                 ));
             }
             if !markers.is_empty() {
@@ -2789,7 +3035,8 @@ impl App {
 
         if let Some(link) = &info.web_content_link {
             footer_lines.extend(wrap_labeled_field(
-                "  Link:  ", link,
+                "  Link:  ",
+                link,
                 Style::default().fg(Color::Cyan),
                 Style::default().fg(Color::Blue),
                 footer_wrap_w,
@@ -2813,7 +3060,10 @@ impl App {
 
         if has_thumb {
             use crate::config::ThumbnailRenderMode;
-            use ratatui_image::{picker::{Picker, ProtocolType}, StatefulImage};
+            use ratatui_image::{
+                StatefulImage,
+                picker::{Picker, ProtocolType},
+            };
 
             let inner_h = area.height.saturating_sub(2);
             let footer_h = footer_lines.len() as u16;
@@ -2827,15 +3077,20 @@ impl App {
                     match self.config.current_image_protocol() {
                         crate::config::ImageProtocol::Auto => {
                             if p.protocol_type() == ProtocolType::Kitty
-                                && std::env::var("TERM_PROGRAM")
-                                    .is_ok_and(|t| t.contains("iTerm"))
-                                {
-                                    p.set_protocol_type(ProtocolType::Iterm2);
-                                }
+                                && std::env::var("TERM_PROGRAM").is_ok_and(|t| t.contains("iTerm"))
+                            {
+                                p.set_protocol_type(ProtocolType::Iterm2);
+                            }
                         }
-                        crate::config::ImageProtocol::Kitty => p.set_protocol_type(ProtocolType::Kitty),
-                        crate::config::ImageProtocol::Iterm2 => p.set_protocol_type(ProtocolType::Iterm2),
-                        crate::config::ImageProtocol::Sixel => p.set_protocol_type(ProtocolType::Sixel),
+                        crate::config::ImageProtocol::Kitty => {
+                            p.set_protocol_type(ProtocolType::Kitty)
+                        }
+                        crate::config::ImageProtocol::Iterm2 => {
+                            p.set_protocol_type(ProtocolType::Iterm2)
+                        }
+                        crate::config::ImageProtocol::Sixel => {
+                            p.set_protocol_type(ProtocolType::Sixel)
+                        }
                     }
                     p
                 })
@@ -2846,11 +3101,16 @@ impl App {
             let image_rows: u16 = if let Some(img) = image {
                 match render_mode {
                     ThumbnailRenderMode::Auto => {
-                        let (cw, ch) = auto_picker.as_ref()
-                            .map(|p| { let f = p.font_size(); (f.0 as u32, f.1 as u32) })
+                        let (cw, ch) = auto_picker
+                            .as_ref()
+                            .map(|p| {
+                                let f = p.font_size();
+                                (f.0 as u32, f.1 as u32)
+                            })
                             .unwrap_or((10, 20));
                         if cw > 0 && ch > 0 && img.width() > 0 {
-                            let rows = (img.height() * thumb_col_w as u32 * cw).div_ceil(img.width() * ch);
+                            let rows =
+                                (img.height() * thumb_col_w as u32 * cw).div_ceil(img.width() * ch);
                             (rows as u16).min(top_h)
                         } else {
                             top_h
@@ -2907,22 +3167,40 @@ impl App {
                     ThumbnailRenderMode::Auto => {
                         if let Some(picker) = auto_picker {
                             let render_rect = center_image_rect(img, img_rect);
-                            let img_display = upscale_for_rect(img, render_rect, picker.font_size());
+                            let img_display =
+                                upscale_for_rect(img, render_rect, picker.font_size());
                             let mut protocol = picker.new_resize_protocol(img_display);
-                            f.render_stateful_widget(StatefulImage::default(), render_rect, &mut protocol);
+                            f.render_stateful_widget(
+                                StatefulImage::default(),
+                                render_rect,
+                                &mut protocol,
+                            );
                         } else {
-                            let colored_lines = render_image_to_colored_lines(img, thumb_col_w as u32, image_rows as u32);
+                            let colored_lines = render_image_to_colored_lines(
+                                img,
+                                thumb_col_w as u32,
+                                image_rows as u32,
+                            );
                             f.render_widget(Paragraph::new(Text::from(colored_lines)), img_rect);
                         }
                     }
                     ThumbnailRenderMode::ColoredHalf => {
-                        let colored_lines = render_image_to_colored_lines(img, thumb_col_w as u32, image_rows as u32);
+                        let colored_lines = render_image_to_colored_lines(
+                            img,
+                            thumb_col_w as u32,
+                            image_rows as u32,
+                        );
                         f.render_widget(Paragraph::new(Text::from(colored_lines)), img_rect);
                     }
                     ThumbnailRenderMode::Grayscale => {
-                        let ascii_lines = render_image_to_grayscale_lines(img, thumb_col_w as u32, image_rows as u32);
+                        let ascii_lines = render_image_to_grayscale_lines(
+                            img,
+                            thumb_col_w as u32,
+                            image_rows as u32,
+                        );
                         f.render_widget(
-                            Paragraph::new(Text::from(ascii_lines)).style(Style::default().fg(Color::DarkGray)),
+                            Paragraph::new(Text::from(ascii_lines))
+                                .style(Style::default().fg(Color::DarkGray)),
                             img_rect,
                         );
                     }
@@ -2936,11 +3214,17 @@ impl App {
                         format!(" {} Loading...", frame),
                         Style::default().fg(Color::DarkGray),
                     ))),
-                    ratatui::layout::Rect { x: thumb_area.x, y: spinner_y, width: thumb_col_w, height: 1 },
+                    ratatui::layout::Rect {
+                        x: thumb_area.x,
+                        y: spinner_y,
+                        width: thumb_col_w,
+                        height: 1,
+                    },
                 );
             }
 
-            let block = self.styled_block()
+            let block = self
+                .styled_block()
                 .title(title)
                 .title_style(title_style)
                 .border_style(border_style);
@@ -2998,9 +3282,7 @@ impl App {
     fn draw_info_folder_overlay(&self, f: &mut Frame, name: &str, entries: &[Entry]) {
         let visible = entries.len().min(20);
         let total_lines = 2 + visible + 2; // padding + items + hint + padding
-        let pct = ((total_lines as u16 * 100) / f.area().height.max(1))
-            .max(25)
-            .min(70);
+        let pct = ((total_lines as u16 * 100) / f.area().height.max(1)).clamp(25, 70);
         let area = centered_rect(60, pct, f.area());
         clear_overlay_area(f, area);
 
@@ -3133,7 +3415,12 @@ impl App {
                     (
                         "Reverse Order".to_string(),
                         "Reverse sort direction".to_string(),
-                        if draft.sort_reverse { "[\u{2713}]" } else { "[ ]" }.to_string(),
+                        if draft.sort_reverse {
+                            "[\u{2713}]"
+                        } else {
+                            "[ ]"
+                        }
+                        .to_string(),
                     ),
                 ],
             ),
@@ -3148,39 +3435,38 @@ impl App {
                     (
                         "CLI Nerd Font".to_string(),
                         "Use icons in CLI output".to_string(),
-                        if draft.cli_nerd_font { "[\u{2713}]" } else { "[ ]" }.to_string(),
+                        if draft.cli_nerd_font {
+                            "[\u{2713}]"
+                        } else {
+                            "[ ]"
+                        }
+                        .to_string(),
                     ),
                 ],
             ),
             (
                 "Playback Settings",
-                vec![
-                    (
-                        "Player Command".to_string(),
-                        "External player for video playback".to_string(),
-                        draft.player.as_deref().unwrap_or("(none)").to_string(),
-                    ),
-                ],
+                vec![(
+                    "Player Command".to_string(),
+                    "External player for video playback".to_string(),
+                    draft.player.as_deref().unwrap_or("(none)").to_string(),
+                )],
             ),
             (
                 "Download Settings",
-                vec![
-                    (
-                        "Concurrent Downloads".to_string(),
-                        "Simultaneous cart downloads (1 = sequential)".to_string(),
-                        draft.download_jobs.to_string(),
-                    ),
-                ],
+                vec![(
+                    "Concurrent Downloads".to_string(),
+                    "Simultaneous cart downloads (1 = sequential)".to_string(),
+                    draft.download_jobs.to_string(),
+                )],
             ),
             (
                 "Update Settings",
-                vec![
-                    (
-                        "Update Check".to_string(),
-                        draft.update_check.description().to_string(),
-                        draft.update_check.as_str().to_string(),
-                    ),
-                ],
+                vec![(
+                    "Update Check".to_string(),
+                    draft.update_check.description().to_string(),
+                    draft.update_check.as_str().to_string(),
+                )],
             ),
         ];
 
@@ -3305,7 +3591,8 @@ impl App {
 
         let title = if modified { "Settings *" } else { "Settings" };
         f.render_widget(
-            Paragraph::new(Text::from(visible_lines)).block(self.overlay_block(title, st_bc, st_tc)),
+            Paragraph::new(Text::from(visible_lines))
+                .block(self.overlay_block(title, st_bc, st_tc)),
             area,
         );
     }
@@ -3329,7 +3616,9 @@ impl App {
                 Span::styled("  Current terminal: ", Style::default().fg(Color::DarkGray)),
                 Span::styled(
                     current_terminal,
-                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
                 ),
             ]),
             Line::from(""),
@@ -3393,13 +3682,18 @@ impl App {
             (Color::Cyan, Color::Yellow)
         };
 
-        let title = if modified { "Image Protocol *" } else { "Image Protocol" };
+        let title = if modified {
+            "Image Protocol *"
+        } else {
+            "Image Protocol"
+        };
         f.render_widget(
             Paragraph::new(Text::from(lines)).block(self.overlay_block(title, st_bc, st_tc)),
             area,
         );
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn draw_custom_color_overlay(
         &self,
         f: &mut Frame,
@@ -3474,7 +3768,12 @@ impl App {
         let hints: &[(&str, &str)] = if editing_rgb {
             &[("0-9", "input"), ("Enter", "confirm"), ("Esc", "cancel")]
         } else {
-            &[("j/k", "nav"), ("r/g/b", "edit RGB"), ("s", "save"), ("Esc", "back")]
+            &[
+                ("j/k", "nav"),
+                ("r/g/b", "edit RGB"),
+                ("s", "save"),
+                ("Esc", "back"),
+            ]
         };
         lines.push(Self::hint_line(hints));
 
@@ -3484,7 +3783,11 @@ impl App {
             (Color::Cyan, Color::Yellow)
         };
 
-        let title = if modified { "Custom Colors *" } else { "Custom Colors" };
+        let title = if modified {
+            "Custom Colors *"
+        } else {
+            "Custom Colors"
+        };
         f.render_widget(
             Paragraph::new(Text::from(lines)).block(self.overlay_block(title, st_bc, st_tc)),
             area,
@@ -3505,7 +3808,11 @@ impl App {
                 Style::default().fg(Color::Reset),
             )),
             Line::from(""),
-            Self::hint_line(&[("p", "public share"), ("P", "with password"), ("Esc", "cancel")]),
+            Self::hint_line(&[
+                ("p", "public share"),
+                ("P", "with password"),
+                ("Esc", "cancel"),
+            ]),
         ];
         f.render_widget(
             Paragraph::new(Text::from(lines)).block(self.overlay_block("Create Share", bc, tc)),
@@ -3523,12 +3830,14 @@ impl App {
             (Color::Cyan, Color::LightBlue)
         };
         let frame = f.area();
-        let card_w = (frame.width * 65 / 100).max(30).min(frame.width.saturating_sub(4));
+        let card_w = (frame.width * 65 / 100)
+            .max(30)
+            .min(frame.width.saturating_sub(4));
         let card_h = 8u16;
 
         for (i, (title, url, pass_code)) in shares.iter().enumerate() {
             let ox = (i as u16) * 3;
-            let oy = i as u16 ;
+            let oy = i as u16;
             let area = Rect {
                 x: 2 + ox,
                 y: 1 + oy,
@@ -3550,7 +3859,11 @@ impl App {
                 Span::raw("  "),
                 Span::styled(
                     truncate_name(url, name_max),
-                    Style::default().fg(if is_top { Color::Reset } else { Color::DarkGray }),
+                    Style::default().fg(if is_top {
+                        Color::Reset
+                    } else {
+                        Color::DarkGray
+                    }),
                 ),
             ]));
             if !pass_code.is_empty() {
@@ -3558,7 +3871,11 @@ impl App {
                     Span::raw("  Password: "),
                     Span::styled(
                         pass_code.clone(),
-                        Style::default().fg(if is_top { Color::Yellow } else { Color::DarkGray }),
+                        Style::default().fg(if is_top {
+                            Color::Yellow
+                        } else {
+                            Color::DarkGray
+                        }),
                     ),
                 ]));
             } else {
@@ -3631,7 +3948,9 @@ impl App {
                 let is_sel = i == selected;
                 let prefix = if is_sel { " \u{203a} " } else { "   " };
                 let name_style = if is_sel {
-                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default().fg(Color::Reset)
                 };
@@ -3667,10 +3986,23 @@ impl App {
             if confirm_delete.is_some() {
                 list_lines.push(Line::from(""));
                 list_lines.push(Line::from(vec![
-                    Span::styled("  Delete? ", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
-                    Span::styled("y", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        "  Delete? ",
+                        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        "y",
+                        Style::default()
+                            .fg(Color::White)
+                            .add_modifier(Modifier::BOLD),
+                    ),
                     Span::styled(" yes  ", Style::default().fg(Color::DarkGray)),
-                    Span::styled("n", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        "n",
+                        Style::default()
+                            .fg(Color::White)
+                            .add_modifier(Modifier::BOLD),
+                    ),
                     Span::styled("/Esc no", Style::default().fg(Color::DarkGray)),
                 ]));
             }
@@ -3692,7 +4024,10 @@ impl App {
             f.render_widget(
                 Paragraph::new(Text::from(detail_lines)).block(
                     self.styled_block()
-                        .title(Span::styled(" Detail ", Style::default().fg(Color::DarkGray)))
+                        .title(Span::styled(
+                            " Detail ",
+                            Style::default().fg(Color::DarkGray),
+                        ))
                         .border_style(Style::default().fg(Color::DarkGray)),
                 ),
                 detail_area,
@@ -3745,7 +4080,11 @@ fn share_detail_lines(share: &crate::pikpak::MyShare, width: u16) -> Vec<Line<'s
     let expiry_str = share_expiry_label(&share.expiration_days);
     let expiry_color = share_expiry_color(&share.expiration_days);
 
-    let date = share.create_time.get(..10).unwrap_or(share.create_time.as_str()).to_string();
+    let date = share
+        .create_time
+        .get(..10)
+        .unwrap_or(share.create_time.as_str())
+        .to_string();
     let views = share.view_count.parse::<u64>().unwrap_or(0);
     let saves = share.restore_count.parse::<u64>().unwrap_or(0);
     let files = share.file_num.parse::<u64>().unwrap_or(0);
@@ -3779,7 +4118,9 @@ fn share_detail_lines(share: &crate::pikpak::MyShare, width: u16) -> Vec<Line<'s
             Span::styled("  Pass    ", label),
             Span::styled(
                 share.pass_code.clone(),
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
             ),
         ]));
     }
@@ -3790,10 +4131,7 @@ fn share_detail_lines(share: &crate::pikpak::MyShare, width: u16) -> Vec<Line<'s
     ]));
     lines.push(Line::from(""));
 
-    let stats = format!(
-        "{}   saves {}   files {}",
-        views, saves, files
-    );
+    let stats = format!("{}   saves {}   files {}", views, saves, files);
     lines.push(Line::from(vec![
         Span::styled("  Views   ", label),
         Span::styled(stats, value),
@@ -3828,7 +4166,10 @@ fn wrap_labeled_field<'a>(
 ) -> Vec<Line<'a>> {
     use unicode_width::UnicodeWidthChar;
 
-    let label_w: usize = label.chars().map(|c| UnicodeWidthChar::width(c).unwrap_or(0)).sum();
+    let label_w: usize = label
+        .chars()
+        .map(|c| UnicodeWidthChar::width(c).unwrap_or(0))
+        .sum();
     let first_line_budget = total_width.saturating_sub(label_w);
     if first_line_budget == 0 {
         return vec![Line::from(vec![
@@ -3846,7 +4187,11 @@ fn wrap_labeled_field<'a>(
 
     for ch in value.chars() {
         let ch_w = UnicodeWidthChar::width(ch).unwrap_or(0);
-        let budget = if first { first_line_budget } else { cont_budget };
+        let budget = if first {
+            first_line_budget
+        } else {
+            cont_budget
+        };
 
         if current_w + ch_w > budget && !current.is_empty() {
             if let Some((brk_byte, _)) = last_break {
@@ -3855,7 +4200,8 @@ fn wrap_labeled_field<'a>(
                     current.truncate(brk_byte);
                     segments.push(current.trim_end().to_string());
                     current = remainder.trim_start().to_string();
-                    current_w = current.chars()
+                    current_w = current
+                        .chars()
                         .map(|c| UnicodeWidthChar::width(c).unwrap_or(0))
                         .sum();
                 } else {
@@ -3870,7 +4216,11 @@ fn wrap_labeled_field<'a>(
             if first {
                 first = false;
             }
-            let new_budget = if first { first_line_budget } else { cont_budget };
+            let new_budget = if first {
+                first_line_budget
+            } else {
+                cont_budget
+            };
             if current_w + ch_w > new_budget && !current.is_empty() {
                 segments.push(std::mem::take(&mut current));
                 current_w = 0;
@@ -3988,4 +4338,3 @@ fn vibrant(c: Color) -> Color {
         other => other,
     }
 }
-

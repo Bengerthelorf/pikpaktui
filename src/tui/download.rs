@@ -90,11 +90,18 @@ impl DownloadState {
     /// Start pending tasks up to max_concurrent slots.
     pub fn start_next(&mut self, client: &Arc<PikPak>) {
         loop {
-            let active = self.tasks.iter().filter(|t| t.status == TaskStatus::Downloading).count();
+            let active = self
+                .tasks
+                .iter()
+                .filter(|t| t.status == TaskStatus::Downloading)
+                .count();
             if active >= self.max_concurrent {
                 break;
             }
-            let next = self.tasks.iter().position(|t| t.status == TaskStatus::Pending);
+            let next = self
+                .tasks
+                .iter()
+                .position(|t| t.status == TaskStatus::Pending);
             match next {
                 Some(idx) => {
                     self.tasks[idx].status = TaskStatus::Downloading;
@@ -220,7 +227,11 @@ fn download_worker(
     }
 
     let mut file = if existing_size > 0 && status == reqwest::StatusCode::PARTIAL_CONTENT {
-        let mut f = fs::OpenOptions::new().write(true).create(true).open(dest)?;
+        let mut f = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(dest)?;
         f.seek(SeekFrom::Start(existing_size))?;
         f
     } else {
@@ -276,7 +287,6 @@ fn download_worker(
     let _ = msg_tx.send(DownloadMsg::Done { index });
     Ok(())
 }
-
 
 #[derive(Serialize, Deserialize)]
 struct PersistedTask {

@@ -62,7 +62,10 @@ pub fn run(args: &[String]) -> Result<()> {
         let dest_id = client.resolve_path(paths[1])?;
 
         if dry_run {
-            println!("[dry-run] Would move '{}' -> '{}' (id: {})", paths[0], paths[1], entry.id);
+            println!(
+                "[dry-run] Would move '{}' -> '{}' (id: {})",
+                paths[0], paths[1], entry.id
+            );
             return Ok(());
         }
 

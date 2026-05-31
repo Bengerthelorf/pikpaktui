@@ -24,7 +24,9 @@ fn parse_sort_field(s: &str) -> Result<SortField> {
         "type" => Ok(SortField::Type),
         "extension" | "ext" => Ok(SortField::Extension),
         "none" => Ok(SortField::None),
-        _ => Err(anyhow!("unknown sort field: {s}\nValid fields: name, size, created, type, extension, none")),
+        _ => Err(anyhow!(
+            "unknown sort field: {s}\nValid fields: name, size, created, type, extension, none"
+        )),
     }
 }
 
@@ -47,20 +49,44 @@ fn parse_args(args: &[String]) -> Result<LsArgs> {
             continue;
         }
         if expect_depth {
-            max_depth = Some(arg.parse::<usize>().map_err(|_| anyhow!("--depth requires a positive integer"))?);
+            max_depth = Some(
+                arg.parse::<usize>()
+                    .map_err(|_| anyhow!("--depth requires a positive integer"))?,
+            );
             expect_depth = false;
             continue;
         }
 
         if !options_done {
             match arg.as_str() {
-                "-l" | "--long" => { long = true; continue; }
-                "-J" | "--json" => { json = true; continue; }
-                "-r" | "--reverse" => { reverse = true; continue; }
-                "--tree" => { tree = true; continue; }
-                "-s" | "--sort" => { expect_sort = true; continue; }
-                "--depth" => { expect_depth = true; continue; }
-                "--" => { options_done = true; continue; }
+                "-l" | "--long" => {
+                    long = true;
+                    continue;
+                }
+                "-J" | "--json" => {
+                    json = true;
+                    continue;
+                }
+                "-r" | "--reverse" => {
+                    reverse = true;
+                    continue;
+                }
+                "--tree" => {
+                    tree = true;
+                    continue;
+                }
+                "-s" | "--sort" => {
+                    expect_sort = true;
+                    continue;
+                }
+                "--depth" => {
+                    expect_depth = true;
+                    continue;
+                }
+                "--" => {
+                    options_done = true;
+                    continue;
+                }
                 _ if arg.starts_with("--sort=") => {
                     sort_field = parse_sort_field(&arg["--sort=".len()..])?;
                     continue;
@@ -71,7 +97,10 @@ fn parse_args(args: &[String]) -> Result<LsArgs> {
                 }
                 _ if arg.starts_with("--depth=") => {
                     let val = &arg["--depth=".len()..];
-                    max_depth = Some(val.parse::<usize>().map_err(|_| anyhow!("--depth requires a positive integer"))?);
+                    max_depth = Some(
+                        val.parse::<usize>()
+                            .map_err(|_| anyhow!("--depth requires a positive integer"))?,
+                    );
                     continue;
                 }
                 _ if arg.starts_with('-') => {
@@ -108,6 +137,7 @@ fn parse_args(args: &[String]) -> Result<LsArgs> {
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn print_tree(
     client: &PikPak,
     folder_id: &str,
@@ -138,7 +168,13 @@ fn print_tree(
         let colored_name = theme::cli_colored(&name_display, cat);
 
         if long {
-            println!("{}{}{}{}", super::long_entry_prefix(entry), prefix, connector, colored_name);
+            println!(
+                "{}{}{}{}",
+                super::long_entry_prefix(entry),
+                prefix,
+                connector,
+                colored_name
+            );
         } else {
             println!("{}{}{}", prefix, connector, colored_name);
         }
@@ -149,7 +185,17 @@ fn print_tree(
             } else {
                 format!("{}│   ", prefix)
             };
-            print_tree(client, &entry.id, &child_prefix, sort_field, reverse, long, nerd_font, depth + 1, max_depth)?;
+            print_tree(
+                client,
+                &entry.id,
+                &child_prefix,
+                sort_field,
+                reverse,
+                long,
+                nerd_font,
+                depth + 1,
+                max_depth,
+            )?;
         }
     }
 
@@ -165,9 +211,23 @@ pub fn run(args: &[String]) -> Result<()> {
 
     if parsed.tree {
         let root_label = parsed.path.trim_end_matches('/');
-        let root_label = if root_label.is_empty() { "/" } else { root_label };
+        let root_label = if root_label.is_empty() {
+            "/"
+        } else {
+            root_label
+        };
         println!("{}", root_label);
-        print_tree(&client, &folder_id, "", parsed.sort_field, parsed.reverse, parsed.long, nerd_font, 1, parsed.max_depth)?;
+        print_tree(
+            &client,
+            &folder_id,
+            "",
+            parsed.sort_field,
+            parsed.reverse,
+            parsed.long,
+            nerd_font,
+            1,
+            parsed.max_depth,
+        )?;
         return Ok(());
     }
 
@@ -195,8 +255,8 @@ pub fn run(args: &[String]) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{LsArgs, parse_args};
     use super::super::format_date;
+    use super::{LsArgs, parse_args};
     use crate::config::SortField;
 
     fn s(v: &[&str]) -> Vec<String> {

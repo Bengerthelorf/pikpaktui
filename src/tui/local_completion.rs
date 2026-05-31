@@ -85,14 +85,18 @@ impl LocalPathInput {
         }
 
         matches.sort_by(|a, b| {
-            b.2.cmp(&a.2)                    // higher score = better
+            b.2.cmp(&a.2) // higher score = better
                 .then_with(|| b.1.cmp(&a.1)) // dirs before files within same score
                 .then_with(|| a.0.cmp(&b.0)) // alphabetical tiebreak
         });
 
         self.completion_base = dir_part;
         self.candidates = matches.into_iter().map(|(n, d, _)| (n, d)).collect();
-        self.candidate_idx = if self.candidates.is_empty() { None } else { Some(0) };
+        self.candidate_idx = if self.candidates.is_empty() {
+            None
+        } else {
+            Some(0)
+        };
     }
 
     pub fn navigate_next(&mut self) {
@@ -120,14 +124,15 @@ impl LocalPathInput {
     /// Write the selected candidate into value. Returns true if applied.
     pub fn confirm_selected(&mut self) -> bool {
         if let Some(idx) = self.candidate_idx
-            && let Some((name, is_dir)) = self.candidates.get(idx) {
-                let suffix = if *is_dir { "/" } else { "" };
-                self.value = join_path(&self.completion_base, &format!("{}{}", name, suffix));
-                self.candidates.clear();
-                self.candidate_idx = None;
-                self.completion_base.clear();
-                return true;
-            }
+            && let Some((name, is_dir)) = self.candidates.get(idx)
+        {
+            let suffix = if *is_dir { "/" } else { "" };
+            self.value = join_path(&self.completion_base, &format!("{}{}", name, suffix));
+            self.candidates.clear();
+            self.candidate_idx = None;
+            self.completion_base.clear();
+            return true;
+        }
         false
     }
 
@@ -209,8 +214,7 @@ fn fuzzy_score_lower(name: &str, pattern: &str) -> Option<i32> {
         if prev_pos == Some(pos.wrapping_sub(1)) {
             score += 15;
         }
-        let at_boundary = pos == 0
-            || matches!(nc[pos - 1], '-' | '_' | ' ' | '.' | '(' | '[');
+        let at_boundary = pos == 0 || matches!(nc[pos - 1], '-' | '_' | ' ' | '.' | '(' | '[');
         if at_boundary {
             score += 10;
         }

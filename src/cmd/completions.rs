@@ -581,14 +581,37 @@ mod tests {
     #[test]
     fn zsh_output_contains_all_commands() {
         let commands = [
-            "ls:", "mv:", "cp:", "rename:", "rm:", "mkdir:",
-            "download:", "upload:", "share:", "offline:", "tasks:",
-            "star:", "unstar:", "starred:", "events:",
-            "trash:", "untrash:", "info:", "cat:", "play:",
-            "quota:", "vip:", "completions:", "help:", "version:",
+            "ls:",
+            "mv:",
+            "cp:",
+            "rename:",
+            "rm:",
+            "mkdir:",
+            "download:",
+            "upload:",
+            "share:",
+            "offline:",
+            "tasks:",
+            "star:",
+            "unstar:",
+            "starred:",
+            "events:",
+            "trash:",
+            "untrash:",
+            "info:",
+            "cat:",
+            "play:",
+            "quota:",
+            "vip:",
+            "completions:",
+            "help:",
+            "version:",
         ];
         for cmd in commands {
-            assert!(ZSH_COMPLETION.contains(cmd), "Missing command in zsh completion: {cmd}");
+            assert!(
+                ZSH_COMPLETION.contains(cmd),
+                "Missing command in zsh completion: {cmd}"
+            );
         }
     }
 
@@ -625,14 +648,37 @@ mod tests {
     #[test]
     fn bash_output_contains_all_commands() {
         let commands = [
-            "ls", "mv", "cp", "rename", "rm", "mkdir",
-            "download", "upload", "share", "offline", "tasks",
-            "star", "unstar", "starred", "events",
-            "trash", "untrash", "info", "cat", "play",
-            "quota", "vip", "completions", "help", "version",
+            "ls",
+            "mv",
+            "cp",
+            "rename",
+            "rm",
+            "mkdir",
+            "download",
+            "upload",
+            "share",
+            "offline",
+            "tasks",
+            "star",
+            "unstar",
+            "starred",
+            "events",
+            "trash",
+            "untrash",
+            "info",
+            "cat",
+            "play",
+            "quota",
+            "vip",
+            "completions",
+            "help",
+            "version",
         ];
         for cmd in commands {
-            assert!(BASH_COMPLETION.contains(cmd), "Missing command in bash completion: {cmd}");
+            assert!(
+                BASH_COMPLETION.contains(cmd),
+                "Missing command in bash completion: {cmd}"
+            );
         }
     }
 
@@ -651,14 +697,37 @@ mod tests {
     #[test]
     fn fish_output_contains_all_commands() {
         let commands = [
-            "ls", "mv", "cp", "rename", "rm", "mkdir",
-            "download", "upload", "share", "offline", "tasks",
-            "star", "unstar", "starred", "events",
-            "trash", "untrash", "info", "cat", "play",
-            "quota", "vip", "completions", "help", "version",
+            "ls",
+            "mv",
+            "cp",
+            "rename",
+            "rm",
+            "mkdir",
+            "download",
+            "upload",
+            "share",
+            "offline",
+            "tasks",
+            "star",
+            "unstar",
+            "starred",
+            "events",
+            "trash",
+            "untrash",
+            "info",
+            "cat",
+            "play",
+            "quota",
+            "vip",
+            "completions",
+            "help",
+            "version",
         ];
         for cmd in commands {
-            assert!(FISH_COMPLETION.contains(cmd), "Missing command in fish completion: {cmd}");
+            assert!(
+                FISH_COMPLETION.contains(cmd),
+                "Missing command in fish completion: {cmd}"
+            );
         }
     }
 
@@ -687,14 +756,37 @@ mod tests {
     #[test]
     fn powershell_output_contains_all_commands() {
         let commands = [
-            "'ls'", "'mv'", "'cp'", "'rename'", "'rm'", "'mkdir'",
-            "'download'", "'upload'", "'share'", "'offline'", "'tasks'",
-            "'star'", "'unstar'", "'starred'", "'events'",
-            "'trash'", "'untrash'", "'info'", "'cat'", "'play'",
-            "'quota'", "'vip'", "'completions'", "'help'", "'version'",
+            "'ls'",
+            "'mv'",
+            "'cp'",
+            "'rename'",
+            "'rm'",
+            "'mkdir'",
+            "'download'",
+            "'upload'",
+            "'share'",
+            "'offline'",
+            "'tasks'",
+            "'star'",
+            "'unstar'",
+            "'starred'",
+            "'events'",
+            "'trash'",
+            "'untrash'",
+            "'info'",
+            "'cat'",
+            "'play'",
+            "'quota'",
+            "'vip'",
+            "'completions'",
+            "'help'",
+            "'version'",
         ];
         for cmd in commands {
-            assert!(POWERSHELL_COMPLETION.contains(cmd), "Missing command in powershell completion: {cmd}");
+            assert!(
+                POWERSHELL_COMPLETION.contains(cmd),
+                "Missing command in powershell completion: {cmd}"
+            );
         }
     }
 

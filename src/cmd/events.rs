@@ -50,7 +50,11 @@ pub fn run(args: &[String]) -> Result<()> {
             // API returns "TYPE_RESTORE", "TYPE_DELETE", etc. — use type_name for display
             let raw_type = ev.event_type.as_deref().unwrap_or("");
             let display = ev.type_name.as_deref().unwrap_or(raw_type);
-            let event = if display.is_empty() { raw_type.to_string() } else { display.to_string() };
+            let event = if display.is_empty() {
+                raw_type.to_string()
+            } else {
+                display.to_string()
+            };
             let event_color = match raw_type {
                 t if t.contains("CREATE") || t.contains("UPLOAD") || t.contains("RESTORE") => "32",
                 t if t.contains("DELETE") || t.contains("TRASH") => "31",
@@ -58,20 +62,42 @@ pub fn run(args: &[String]) -> Result<()> {
                 _ => "33",
             };
             let name = ev.file_name.as_deref().unwrap_or("?").to_string();
-            let is_folder = ev.reference_resource.as_ref()
+            let is_folder = ev
+                .reference_resource
+                .as_ref()
                 .and_then(|r| r.kind.as_deref())
                 .is_some_and(|k| k.contains("folder"));
             let kind_icon = if is_folder {
                 if nerd_font { "\u{f07b} " } else { "[D]" }
-            } else if nerd_font { "\u{f15b} " } else { "[F]" };
+            } else if nerd_font {
+                "\u{f15b} "
+            } else {
+                "[F]"
+            };
             let date = super::format_date(ev.created_time.as_deref().unwrap_or(""));
-            Row { event, event_color, name, kind_icon, date }
+            Row {
+                event,
+                event_color,
+                name,
+                kind_icon,
+                date,
+            }
         })
         .collect();
 
     let w_event = rows.iter().map(|r| r.event.len()).max().unwrap_or(5).max(5);
-    let w_icon = rows.iter().map(|r| UnicodeWidthStr::width(r.kind_icon)).max().unwrap_or(3).max(3);
-    let w_name = rows.iter().map(|r| UnicodeWidthStr::width(r.name.as_str())).max().unwrap_or(4).max(4);
+    let w_icon = rows
+        .iter()
+        .map(|r| UnicodeWidthStr::width(r.kind_icon))
+        .max()
+        .unwrap_or(3)
+        .max(3);
+    let w_name = rows
+        .iter()
+        .map(|r| UnicodeWidthStr::width(r.name.as_str()))
+        .max()
+        .unwrap_or(4)
+        .max(4);
     let w_date = rows.iter().map(|r| r.date.len()).max().unwrap_or(7).max(7);
 
     let term_width = crossterm::terminal::size()
@@ -99,4 +125,3 @@ pub fn run(args: &[String]) -> Result<()> {
 
     Ok(())
 }
-

@@ -11,7 +11,9 @@ use crate::theme;
 use super::completion::PathInput;
 use super::download::{DownloadTask, TaskStatus};
 use super::local_completion::LocalPathInput;
-use super::{App, InputMode, LoginField, OpResult, PickerState, PlayOption, PreviewState, handle_text_input};
+use super::{
+    App, InputMode, LoginField, OpResult, PickerState, PlayOption, PreviewState, handle_text_input,
+};
 
 enum PickerKeyResult {
     Navigated,
@@ -155,13 +157,12 @@ impl App {
             InputMode::Normal => self.handle_normal_key(code, modifiers),
             InputMode::Rename { mut value } => {
                 if let Some(done) = handle_text_input(&mut value, code) {
-                    if done
-                        && let Some(entry) = self.current_entry().cloned() {
-                            let new_name = value.trim().to_string();
-                            if !new_name.is_empty() {
-                                self.spawn_rename(entry, new_name);
-                            }
+                    if done && let Some(entry) = self.current_entry().cloned() {
+                        let new_name = value.trim().to_string();
+                        if !new_name.is_empty() {
+                            self.spawn_rename(entry, new_name);
                         }
+                    }
                 } else {
                     self.input = InputMode::Rename { value };
                 }
@@ -185,8 +186,7 @@ impl App {
                     KeyCode::Char('y') => {
                         return Ok(true);
                     }
-                    KeyCode::Char('n') | KeyCode::Esc => {
-                    }
+                    KeyCode::Char('n') | KeyCode::Esc => {}
                     _ => {
                         self.input = InputMode::ConfirmQuit;
                     }
@@ -453,31 +453,19 @@ impl App {
                             self.config.player = Some(cmd);
                             let _ = self.config.save();
                         } else {
-                            self.input = InputMode::PlayerInput {
-                                value,
-                                pending_url,
-                            };
+                            self.input = InputMode::PlayerInput { value, pending_url };
                         }
                     }
                     KeyCode::Backspace => {
                         value.pop();
-                        self.input = InputMode::PlayerInput {
-                            value,
-                            pending_url,
-                        };
+                        self.input = InputMode::PlayerInput { value, pending_url };
                     }
                     KeyCode::Char(c) => {
                         value.push(c);
-                        self.input = InputMode::PlayerInput {
-                            value,
-                            pending_url,
-                        };
+                        self.input = InputMode::PlayerInput { value, pending_url };
                     }
                     _ => {
-                        self.input = InputMode::PlayerInput {
-                            value,
-                            pending_url,
-                        };
+                        self.input = InputMode::PlayerInput { value, pending_url };
                     }
                 }
                 Ok(false)
@@ -511,16 +499,20 @@ impl App {
                 self.preview_state = PreviewState::FolderListing(entries);
                 Ok(false)
             }
-            InputMode::TextPreviewView { .. } => {
-                Ok(false)
-            }
+            InputMode::TextPreviewView { .. } => Ok(false),
             InputMode::Settings {
                 mut selected,
                 mut editing,
                 mut draft,
                 mut modified,
             } => {
-                let result = self.handle_settings_key(code, &mut selected, &mut editing, &mut draft, &mut modified);
+                let result = self.handle_settings_key(
+                    code,
+                    &mut selected,
+                    &mut editing,
+                    &mut draft,
+                    &mut modified,
+                );
 
                 if !matches!(self.input, InputMode::Normal) {
                     return Ok(false);
@@ -600,6 +592,7 @@ impl App {
         }
     }
 
+    #[allow(clippy::collapsible_match)]
     fn handle_normal_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> Result<bool> {
         match code {
             KeyCode::Char('q') => {
@@ -809,21 +802,22 @@ impl App {
             }
             KeyCode::Char('y') => {
                 if let Some(entry) = self.current_entry().cloned()
-                    && entry.kind == EntryKind::File {
-                        let client = Arc::clone(&self.client);
-                        let tx = self.result_tx.clone();
-                        let eid = entry.id;
-                        let ename = entry.name;
-                        std::thread::spawn(move || {
-                            let _ = tx.send(match client.download_url(&eid) {
-                                Ok((url, _)) => match write_clipboard(&url) {
-                                    Ok(()) => OpResult::Ok(format!("Copied link: '{}'", ename)),
-                                    Err(e) => OpResult::Err(format!("Clipboard failed: {e:#}")),
-                                },
-                                Err(e) => OpResult::Err(format!("Link failed: {e:#}")),
-                            });
+                    && entry.kind == EntryKind::File
+                {
+                    let client = Arc::clone(&self.client);
+                    let tx = self.result_tx.clone();
+                    let eid = entry.id;
+                    let ename = entry.name;
+                    std::thread::spawn(move || {
+                        let _ = tx.send(match client.download_url(&eid) {
+                            Ok((url, _)) => match write_clipboard(&url) {
+                                Ok(()) => OpResult::Ok(format!("Copied link: '{}'", ename)),
+                                Err(e) => OpResult::Err(format!("Clipboard failed: {e:#}")),
+                            },
+                            Err(e) => OpResult::Err(format!("Link failed: {e:#}")),
                         });
-                    }
+                    });
+                }
             }
             KeyCode::Char('u') => {
                 if modifiers.contains(KeyModifiers::CONTROL) {
@@ -862,65 +856,66 @@ impl App {
             KeyCode::Char('w') => {
                 if let Some(entry) = self.current_entry().cloned()
                     && entry.kind == EntryKind::File
-                        && theme::categorize(&entry) == theme::FileCategory::Video
-                    {
-                        self.loading = true;
-                        let client = Arc::clone(&self.client);
-                        let tx = self.result_tx.clone();
-                        let eid = entry.id.clone();
-                        std::thread::spawn(move || {
-                            let result = client.file_info(&eid);
-                            let _ = tx.send(match result {
-                                Ok(info) => {
-                                    let mut options = Vec::new();
-                                    if let Some(ref url) = info.web_content_link
-                                        && !url.is_empty() {
-                                            let size_str = info
-                                                .size
-                                                .as_deref()
-                                                .and_then(|s| s.parse::<u64>().ok())
-                                                .map(super::format_size)
-                                                .unwrap_or_default();
-                                            options.push(PlayOption {
-                                                label: format!("Original ({})", size_str),
-                                                url: url.clone(),
-                                                available: true,
-                                            });
-                                        }
-                                    if let Some(ref medias) = info.medias {
-                                        for m in medias {
-                                            if m.is_origin.unwrap_or(false) {
-                                                continue; // skip origin duplicate
-                                            }
-                                            let url = m
-                                                .link
-                                                .as_ref()
-                                                .and_then(|l| l.url.as_deref())
-                                                .unwrap_or("")
-                                                .to_string();
-                                            if url.is_empty() {
-                                                continue;
-                                            }
-                                            let label = m
-                                                .media_name
-                                                .as_deref()
-                                                .unwrap_or("Unknown")
-                                                .to_string();
-                                            let available =
-                                                crate::pikpak::PikPak::check_stream_available(&url);
-                                            options.push(PlayOption {
-                                                label,
-                                                url,
-                                                available,
-                                            });
-                                        }
-                                    }
-                                    OpResult::PlayPickerInfo(Ok((info, options)))
+                    && theme::categorize(&entry) == theme::FileCategory::Video
+                {
+                    self.loading = true;
+                    let client = Arc::clone(&self.client);
+                    let tx = self.result_tx.clone();
+                    let eid = entry.id.clone();
+                    std::thread::spawn(move || {
+                        let result = client.file_info(&eid);
+                        let _ = tx.send(match result {
+                            Ok(info) => {
+                                let mut options = Vec::new();
+                                if let Some(ref url) = info.web_content_link
+                                    && !url.is_empty()
+                                {
+                                    let size_str = info
+                                        .size
+                                        .as_deref()
+                                        .and_then(|s| s.parse::<u64>().ok())
+                                        .map(super::format_size)
+                                        .unwrap_or_default();
+                                    options.push(PlayOption {
+                                        label: format!("Original ({})", size_str),
+                                        url: url.clone(),
+                                        available: true,
+                                    });
                                 }
-                                Err(e) => OpResult::PlayPickerInfo(Err(e)),
-                            });
+                                if let Some(ref medias) = info.medias {
+                                    for m in medias {
+                                        if m.is_origin.unwrap_or(false) {
+                                            continue; // skip origin duplicate
+                                        }
+                                        let url = m
+                                            .link
+                                            .as_ref()
+                                            .and_then(|l| l.url.as_deref())
+                                            .unwrap_or("")
+                                            .to_string();
+                                        if url.is_empty() {
+                                            continue;
+                                        }
+                                        let label = m
+                                            .media_name
+                                            .as_deref()
+                                            .unwrap_or("Unknown")
+                                            .to_string();
+                                        let available =
+                                            crate::pikpak::PikPak::check_stream_available(&url);
+                                        options.push(PlayOption {
+                                            label,
+                                            url,
+                                            available,
+                                        });
+                                    }
+                                }
+                                OpResult::PlayPickerInfo(Ok((info, options)))
+                            }
+                            Err(e) => OpResult::PlayPickerInfo(Err(e)),
                         });
-                    }
+                    });
+                }
             }
             KeyCode::Char('p') => {
                 if let Some(entry) = self.current_entry().cloned() {
@@ -1057,7 +1052,13 @@ impl App {
         input: &mut PathInput,
         is_move: bool,
     ) {
-        self.handle_generic_path_input_key(code, modifiers, input, is_move, PathInputContext::SingleItem { source });
+        self.handle_generic_path_input_key(
+            code,
+            modifiers,
+            input,
+            is_move,
+            PathInputContext::SingleItem { source },
+        );
     }
 
     fn handle_generic_path_input_key(
@@ -1070,7 +1071,9 @@ impl App {
     ) {
         match self.apply_path_input_key(code, modifiers, input) {
             PathInputKeyResult::Updated => match &context {
-                PathInputContext::SingleItem { source } => self.restore_path_input(source.clone(), input, is_move),
+                PathInputContext::SingleItem { source } => {
+                    self.restore_path_input(source.clone(), input, is_move)
+                }
                 PathInputContext::Cart => self.restore_cart_path_input(input, is_move),
             },
             PathInputKeyResult::Confirmed(target) => match context {
@@ -1098,9 +1101,15 @@ impl App {
     fn restore_path_input(&mut self, source: Entry, input: &mut PathInput, is_move: bool) {
         let owned = std::mem::take(input);
         self.input = if is_move {
-            InputMode::MoveInput { source, input: owned }
+            InputMode::MoveInput {
+                source,
+                input: owned,
+            }
         } else {
-            InputMode::CopyInput { source, input: owned }
+            InputMode::CopyInput {
+                source,
+                input: owned,
+            }
         };
     }
 
@@ -1109,7 +1118,11 @@ impl App {
         let breadcrumb = self.breadcrumb.clone();
         match self.client.ls(&folder_id) {
             Ok(mut entries) => {
-                crate::config::sort_entries(&mut entries, self.config.sort_field, self.config.sort_reverse);
+                crate::config::sort_entries(
+                    &mut entries,
+                    self.config.sort_field,
+                    self.config.sort_reverse,
+                );
                 Some(PickerState {
                     folder_id,
                     breadcrumb,
@@ -1214,7 +1227,12 @@ impl App {
         picker: &mut PickerState,
         is_move: bool,
     ) {
-        self.handle_generic_picker_key(code, picker, is_move, PathInputContext::SingleItem { source });
+        self.handle_generic_picker_key(
+            code,
+            picker,
+            is_move,
+            PathInputContext::SingleItem { source },
+        );
     }
 
     fn handle_generic_picker_key(
@@ -1226,7 +1244,9 @@ impl App {
     ) {
         match self.apply_picker_key(code, picker) {
             PickerKeyResult::Navigated => match &context {
-                PathInputContext::SingleItem { source } => self.restore_picker(source.clone(), picker, is_move),
+                PathInputContext::SingleItem { source } => {
+                    self.restore_picker(source.clone(), picker, is_move)
+                }
                 PathInputContext::Cart => self.restore_cart_picker(picker, is_move),
             },
             PickerKeyResult::Confirmed(dest_id) => {
@@ -1250,7 +1270,9 @@ impl App {
             PickerKeyResult::ShowHelp => {
                 self.show_help_sheet = true;
                 match &context {
-                    PathInputContext::SingleItem { source } => self.restore_picker(source.clone(), picker, is_move),
+                    PathInputContext::SingleItem { source } => {
+                        self.restore_picker(source.clone(), picker, is_move)
+                    }
                     PathInputContext::Cart => self.restore_cart_picker(picker, is_move),
                 }
             }
@@ -1264,9 +1286,15 @@ impl App {
     fn restore_picker(&mut self, source: Entry, picker: &mut PickerState, is_move: bool) {
         let owned = std::mem::take(picker);
         self.input = if is_move {
-            InputMode::MovePicker { source, picker: owned }
+            InputMode::MovePicker {
+                source,
+                picker: owned,
+            }
         } else {
-            InputMode::CopyPicker { source, picker: owned }
+            InputMode::CopyPicker {
+                source,
+                picker: owned,
+            }
         };
     }
 
@@ -1336,8 +1364,7 @@ impl App {
 
     fn handle_cart_view_key(&mut self, code: KeyCode) {
         match code {
-            KeyCode::Esc => {
-            }
+            KeyCode::Esc => {}
             KeyCode::Down | KeyCode::Char('j') => {
                 if !self.cart.is_empty() {
                     self.cart_selected = (self.cart_selected + 1).min(self.cart.len() - 1);
@@ -1478,12 +1505,7 @@ impl App {
         }
     }
 
-    fn handle_cart_picker_key(
-        &mut self,
-        code: KeyCode,
-        picker: &mut PickerState,
-        is_move: bool,
-    ) {
+    fn handle_cart_picker_key(&mut self, code: KeyCode, picker: &mut PickerState, is_move: bool) {
         self.handle_generic_picker_key(code, picker, is_move, PathInputContext::Cart);
     }
 
@@ -1497,8 +1519,11 @@ impl App {
     }
 
     fn spawn_cart_move_copy(&mut self, dest_id: String, dest_path: String, is_move: bool) {
-        let (ids, names): (Vec<String>, Vec<String>) =
-            self.cart.iter().map(|e| (e.id.clone(), e.name.clone())).unzip();
+        let (ids, names): (Vec<String>, Vec<String>) = self
+            .cart
+            .iter()
+            .map(|e| (e.id.clone(), e.name.clone()))
+            .unzip();
         let client = Arc::clone(&self.client);
         let tx = self.result_tx.clone();
         let op = if is_move { "Move" } else { "Copy" };
@@ -1512,10 +1537,7 @@ impl App {
                 client.cp(&id_refs, &dest_id)
             };
             let _ = tx.send(match result {
-                Ok(()) => OpResult::Ok(format!(
-                    "{}d {} item(s) -> '{}'",
-                    op, count, dest_path
-                )),
+                Ok(()) => OpResult::Ok(format!("{}d {} item(s) -> '{}'", op, count, dest_path)),
                 Err(e) => OpResult::Err(format!("{} failed: {e:#}", op)),
             });
         });
@@ -1648,7 +1670,9 @@ impl App {
         if confirm_delete.is_some() {
             match code {
                 KeyCode::Char('y') | KeyCode::Enter => {
-                    let Some(share_id) = confirm_delete.take() else { return; };
+                    let Some(share_id) = confirm_delete.take() else {
+                        return;
+                    };
                     let client = Arc::clone(&self.client);
                     let tx = self.result_tx.clone();
                     self.loading = true;
@@ -1894,37 +1918,52 @@ impl App {
                     let folder_id = self.current_folder_id.clone();
                     let client = Arc::clone(&self.client);
                     let tx = self.result_tx.clone();
-                    let name = local_path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                    let name = local_path
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string();
                     self.loading = true;
                     self.loading_label = Some(format!("Uploading folder {}…", name));
                     self.input = InputMode::Normal;
                     std::thread::spawn(move || {
-                        let result = client.upload_dir(&folder_id, &local_path).map(|(ok, failed)| {
-                            if failed == 0 {
-                                format!("Uploaded folder '{}' ({} files)", name, ok)
-                            } else {
-                                format!("Uploaded folder '{}' ({} ok, {} failed)", name, ok, failed)
-                            }
-                        });
+                        let result =
+                            client
+                                .upload_dir(&folder_id, &local_path)
+                                .map(|(ok, failed)| {
+                                    if failed == 0 {
+                                        format!("Uploaded folder '{}' ({} files)", name, ok)
+                                    } else {
+                                        format!(
+                                            "Uploaded folder '{}' ({} ok, {} failed)",
+                                            name, ok, failed
+                                        )
+                                    }
+                                });
                         let _ = tx.send(OpResult::Upload(result));
                     });
                 } else if local_path.is_file() {
                     let folder_id = self.current_folder_id.clone();
                     let client = Arc::clone(&self.client);
                     let tx = self.result_tx.clone();
-                    let name = local_path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                    let name = local_path
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string();
                     self.loading = true;
                     self.loading_label = Some(format!("Uploading {}…", name));
                     self.input = InputMode::Normal;
                     std::thread::spawn(move || {
-                        let result = client.upload_file(Some(&folder_id), &local_path)
-                            .map(|(name, dedup)| {
+                        let result = client.upload_file(Some(&folder_id), &local_path).map(
+                            |(name, dedup)| {
                                 if dedup {
                                     format!("Uploaded '{}' (instant, dedup)", name)
                                 } else {
                                     format!("Uploaded '{}'", name)
                                 }
-                            });
+                            },
+                        );
                         let _ = tx.send(OpResult::Upload(result));
                     });
                 } else {
@@ -1969,8 +2008,7 @@ impl App {
         let task_count = self.download_state.tasks.len();
 
         match code {
-            KeyCode::Esc => {
-            }
+            KeyCode::Esc => {}
             KeyCode::Enter => {
                 use crate::tui::DownloadViewMode;
                 self.download_view_mode = match self.download_view_mode {
@@ -2026,18 +2064,19 @@ impl App {
                     && matches!(
                         task.status,
                         TaskStatus::Downloading | TaskStatus::Paused | TaskStatus::Pending
-                    ) {
-                        task.cancel_flag.store(true, Ordering::Relaxed);
-                        let name = task.name.clone();
-                        self.download_state.tasks.remove(sel);
-                        if self.download_state.selected >= self.download_state.tasks.len()
-                            && self.download_state.selected > 0
-                        {
-                            self.download_state.selected -= 1;
-                        }
-                        self.push_log(format!("Cancelled '{}'", name));
-                        self.download_state.start_next(&self.client);
+                    )
+                {
+                    task.cancel_flag.store(true, Ordering::Relaxed);
+                    let name = task.name.clone();
+                    self.download_state.tasks.remove(sel);
+                    if self.download_state.selected >= self.download_state.tasks.len()
+                        && self.download_state.selected > 0
+                    {
+                        self.download_state.selected -= 1;
                     }
+                    self.push_log(format!("Cancelled '{}'", name));
+                    self.download_state.start_next(&self.client);
+                }
                 self.input = InputMode::DownloadView;
             }
             KeyCode::Char('r') => {
@@ -2045,13 +2084,14 @@ impl App {
                 let mut log_msg = None;
                 let mut need_start = false;
                 if let Some(task) = self.download_state.tasks.get_mut(sel)
-                    && matches!(task.status, TaskStatus::Failed(_)) {
-                        task.status = TaskStatus::Pending;
-                        task.cancel_flag.store(false, Ordering::Relaxed);
-                        task.pause_flag.store(false, Ordering::Relaxed);
-                        log_msg = Some(format!("Retrying '{}'", task.name));
-                        need_start = true;
-                    }
+                    && matches!(task.status, TaskStatus::Failed(_))
+                {
+                    task.status = TaskStatus::Pending;
+                    task.cancel_flag.store(false, Ordering::Relaxed);
+                    task.pause_flag.store(false, Ordering::Relaxed);
+                    log_msg = Some(format!("Retrying '{}'", task.name));
+                    need_start = true;
+                }
                 if let Some(msg) = log_msg {
                     self.push_log(msg);
                 }
@@ -2173,8 +2213,7 @@ impl App {
         selected: &mut usize,
     ) {
         match code {
-            KeyCode::Esc => {
-            }
+            KeyCode::Esc => {}
             KeyCode::Down | KeyCode::Char('j') => {
                 if !tasks.is_empty() {
                     *selected = (*selected + 1).min(tasks.len() - 1);
@@ -2198,25 +2237,25 @@ impl App {
             }
             KeyCode::Char('R') => {
                 if let Some(task) = tasks.get(*selected)
-                    && task.phase == "PHASE_TYPE_ERROR" {
-                        let client = Arc::clone(&self.client);
-                        let tx = self.result_tx.clone();
-                        let task_id = task.id.clone();
-                        let task_name = task.name.clone();
-                        self.input = InputMode::InfoLoading;
-                        self.loading = true;
-                        self.loading_label = Some("Retrying task...".into());
-                        std::thread::spawn(move || match client.offline_task_retry(&task_id) {
-                            Ok(()) => {
-                                let _ =
-                                    tx.send(OpResult::Ok(format!("Retrying task: {}", task_name)));
-                            }
-                            Err(e) => {
-                                let _ = tx.send(OpResult::Err(format!("Retry failed: {e:#}")));
-                            }
-                        });
-                        return;
-                    }
+                    && task.phase == "PHASE_TYPE_ERROR"
+                {
+                    let client = Arc::clone(&self.client);
+                    let tx = self.result_tx.clone();
+                    let task_id = task.id.clone();
+                    let task_name = task.name.clone();
+                    self.input = InputMode::InfoLoading;
+                    self.loading = true;
+                    self.loading_label = Some("Retrying task...".into());
+                    std::thread::spawn(move || match client.offline_task_retry(&task_id) {
+                        Ok(()) => {
+                            let _ = tx.send(OpResult::Ok(format!("Retrying task: {}", task_name)));
+                        }
+                        Err(e) => {
+                            let _ = tx.send(OpResult::Err(format!("Retry failed: {e:#}")));
+                        }
+                    });
+                    return;
+                }
                 self.input = InputMode::OfflineTasksView {
                     tasks: std::mem::take(tasks),
                     selected: *selected,
@@ -2389,12 +2428,8 @@ impl App {
                     self.loading_label = Some("Deleting...".into());
                     std::thread::spawn(move || {
                         let _ = tx.send(match client.delete_permanent(&[eid.as_str()]) {
-                            Ok(()) => {
-                                OpResult::TrashOp(format!("Permanently deleted '{}'", name))
-                            }
-                            Err(e) => {
-                                OpResult::TrashOp(format!("Permanent delete failed: {e:#}"))
-                            }
+                            Ok(()) => OpResult::TrashOp(format!("Permanently deleted '{}'", name)),
+                            Err(e) => OpResult::TrashOp(format!("Permanent delete failed: {e:#}")),
                         });
                     });
                     return;
@@ -2417,20 +2452,35 @@ impl App {
                             crate::pikpak::EntryKind::Folder => "drive#folder".to_string(),
                             crate::pikpak::EntryKind::File => "drive#file".to_string(),
                         }),
-                        size: if entry.size > 0 { Some(entry.size.to_string()) } else { None },
+                        size: if entry.size > 0 {
+                            Some(entry.size.to_string())
+                        } else {
+                            None
+                        },
                         hash: None,
                         mime_type: None,
-                        created_time: if entry.created_time.is_empty() { None } else { Some(entry.created_time) },
-                        modified_time: if entry.modified_time.is_empty() { None } else { Some(entry.modified_time) },
+                        created_time: if entry.created_time.is_empty() {
+                            None
+                        } else {
+                            Some(entry.created_time)
+                        },
+                        modified_time: if entry.modified_time.is_empty() {
+                            None
+                        } else {
+                            Some(entry.modified_time)
+                        },
                         web_content_link: None,
                         thumbnail_link: entry.thumbnail_link,
                         links: None,
                         medias: None,
                     };
-                    let thumb_url = info.thumbnail_link.clone()
-                        .filter(|u| !u.is_empty());
+                    let thumb_url = info.thumbnail_link.clone().filter(|u| !u.is_empty());
                     let has_thumbnail = thumb_url.is_some();
-                    self.input = InputMode::InfoView { info, image: None, has_thumbnail };
+                    self.input = InputMode::InfoView {
+                        info,
+                        image: None,
+                        has_thumbnail,
+                    };
                     if let Some(url) = thumb_url {
                         self.spawn_thumbnail_fetch(url, super::OpResult::InfoThumbnail);
                     }
@@ -2557,16 +2607,12 @@ impl App {
 
     fn handle_mouse_scroll(&mut self, col: u16, row: u16, up: bool) {
         if matches!(self.input, InputMode::Normal) {
-            if self.show_logs_overlay
-                && self.is_in_rect(col, row, self.logs_overlay_area.get())
-            {
+            if self.show_logs_overlay && self.is_in_rect(col, row, self.logs_overlay_area.get()) {
                 let area = self.logs_overlay_area.get();
                 let visible = area.height.saturating_sub(2) as usize;
                 let content_width = area.width.saturating_sub(2).max(1) as usize;
-                let total_visual = super::wrap_logs(
-                    self.logs.iter().map(|s| s.as_str()),
-                    content_width,
-                ).len();
+                let total_visual =
+                    super::wrap_logs(self.logs.iter().map(|s| s.as_str()), content_width).len();
                 let max_scroll = total_visual.saturating_sub(visible);
                 let current = self.logs_scroll.unwrap_or(max_scroll);
                 if up {
@@ -2608,9 +2654,7 @@ impl App {
                     PreviewState::FileTextPreview { lines, .. } => {
                         lines.len().saturating_sub(visible)
                     }
-                    PreviewState::FolderListing(children) => {
-                        children.len().saturating_sub(visible)
-                    }
+                    PreviewState::FolderListing(children) => children.len().saturating_sub(visible),
                     _ => 0,
                 };
                 if up {
@@ -2645,8 +2689,7 @@ impl App {
                     self.download_state.selected -= 1;
                 }
             } else if count > 0 {
-                self.download_state.selected =
-                    (self.download_state.selected + 1).min(count - 1);
+                self.download_state.selected = (self.download_state.selected + 1).min(count - 1);
             }
         } else if let InputMode::TrashView {
             entries, selected, ..
@@ -2660,7 +2703,13 @@ impl App {
                 *selected = (*selected + 1).min(entries.len() - 1);
             }
             self.trash_selected = *selected;
-        } else if let InputMode::Settings { selected, editing, draft, modified } = &mut self.input {
+        } else if let InputMode::Settings {
+            selected,
+            editing,
+            draft,
+            modified,
+        } = &mut self.input
+        {
             if up {
                 if *selected > 0 {
                     *selected -= 1;
@@ -2680,7 +2729,13 @@ impl App {
     fn handle_mouse_click(&mut self, col: u16, row: u16, double: bool) {
         if matches!(self.input, InputMode::Settings { .. }) {
             let area = self.settings_area.get();
-            if let InputMode::Settings { mut selected, mut editing, mut draft, mut modified } = std::mem::replace(&mut self.input, InputMode::Normal) {
+            if let InputMode::Settings {
+                mut selected,
+                mut editing,
+                mut draft,
+                mut modified,
+            } = std::mem::replace(&mut self.input, InputMode::Normal)
+            {
                 if self.is_in_rect(col, row, area) && !editing {
                     let content_y = row.saturating_sub(area.y + 1) as usize;
                     let content_x = col.saturating_sub(area.x + 1) as usize;
@@ -2808,6 +2863,7 @@ impl App {
         });
     }
 
+    #[allow(clippy::collapsible_match)]
     fn handle_image_protocol_key(
         &mut self,
         code: KeyCode,
@@ -2930,6 +2986,7 @@ impl App {
         }
     }
 
+    #[allow(clippy::collapsible_match, clippy::too_many_arguments)]
     fn handle_custom_color_key(
         &mut self,
         code: KeyCode,
@@ -3117,334 +3174,282 @@ impl App {
         draft: &mut crate::config::TuiConfig,
         modified: &mut bool,
     ) -> Option<bool> {
-
         if *editing {
             match *selected {
-                0 => {
-                    match code {
-                        KeyCode::Char(' ')
-                        | KeyCode::Enter
-                        | KeyCode::Left
-                        | KeyCode::Right => {
-                            draft.nerd_font = !draft.nerd_font;
-                            *modified = true;
-                            *editing = false;
-                        }
-                        KeyCode::Esc => {
-                            *editing = false;
-                        }
-                        _ => {}
+                0 => match code {
+                    KeyCode::Char(' ') | KeyCode::Enter | KeyCode::Left | KeyCode::Right => {
+                        draft.nerd_font = !draft.nerd_font;
+                        *modified = true;
+                        *editing = false;
                     }
-                }
-                1 => {
-                    match code {
-                        KeyCode::Left => {
-                            draft.border_style = draft.border_style.prev();
-                            *modified = true;
-                        }
-                        KeyCode::Right => {
-                            draft.border_style = draft.border_style.next();
-                            *modified = true;
-                        }
-                        KeyCode::Enter => {
-                            *editing = false;
-                        }
-                        KeyCode::Esc => {
-                            *editing = false;
-                        }
-                        _ => {}
+                    KeyCode::Esc => {
+                        *editing = false;
                     }
-                }
-                2 => {
-                    match code {
-                        KeyCode::Left => {
-                            draft.color_scheme = draft.color_scheme.prev();
-                            *modified = true;
-                        }
-                        KeyCode::Right => {
-                            draft.color_scheme = draft.color_scheme.next();
-                            *modified = true;
-                        }
-                        KeyCode::Enter => {
-                            use crate::config::ColorScheme;
-                            if draft.color_scheme == ColorScheme::Custom {
-                                self.input = InputMode::CustomColorSettings {
-                                    selected: 0,
-                                    draft: draft.clone(),
-                                    modified: *modified,
-                                    editing_rgb: false,
-                                    rgb_input: String::new(),
-                                    rgb_component: 0,
-                                };
-                                return None;
-                            }
-                            *editing = false;
-                        }
-                        KeyCode::Esc => {
-                            *editing = false;
-                        }
-                        _ => {}
+                    _ => {}
+                },
+                1 => match code {
+                    KeyCode::Left => {
+                        draft.border_style = draft.border_style.prev();
+                        *modified = true;
                     }
-                }
-                3 => {
-                    match code {
-                        KeyCode::Char(' ')
-                        | KeyCode::Enter
-                        | KeyCode::Left
-                        | KeyCode::Right => {
-                            draft.show_help_bar = !draft.show_help_bar;
-                            *modified = true;
-                            *editing = false;
-                        }
-                        KeyCode::Esc => {
-                            *editing = false;
-                        }
-                        _ => {}
+                    KeyCode::Right => {
+                        draft.border_style = draft.border_style.next();
+                        *modified = true;
                     }
-                }
-                4 => {
-                    match code {
-                        KeyCode::Left => {
-                            draft.quota_bar_style = draft.quota_bar_style.prev();
-                            *modified = true;
-                        }
-                        KeyCode::Right => {
-                            draft.quota_bar_style = draft.quota_bar_style.next();
-                            *modified = true;
-                        }
-                        KeyCode::Enter => {
-                            *editing = false;
-                        }
-                        KeyCode::Esc => {
-                            *editing = false;
-                        }
-                        _ => {}
+                    KeyCode::Enter => {
+                        *editing = false;
                     }
-                }
-                5 => {
-                    match code {
-                        KeyCode::Char(' ')
-                        | KeyCode::Enter
-                        | KeyCode::Left
-                        | KeyCode::Right => {
-                            draft.show_preview = !draft.show_preview;
-                            *modified = true;
-                            *editing = false;
-                        }
-                        KeyCode::Esc => {
-                            *editing = false;
-                        }
-                        _ => {}
+                    KeyCode::Esc => {
+                        *editing = false;
                     }
-                }
-                6 => {
-                    match code {
-                        KeyCode::Char(' ')
-                        | KeyCode::Enter
-                        | KeyCode::Left
-                        | KeyCode::Right => {
-                            draft.lazy_preview = !draft.lazy_preview;
-                            *modified = true;
-                            *editing = false;
-                        }
-                        KeyCode::Esc => {
-                            *editing = false;
-                        }
-                        _ => {}
+                    _ => {}
+                },
+                2 => match code {
+                    KeyCode::Left => {
+                        draft.color_scheme = draft.color_scheme.prev();
+                        *modified = true;
                     }
-                }
-                7 => {
-                    match code {
-                        KeyCode::Char('+') | KeyCode::Up => {
-                            draft.preview_max_size = (draft.preview_max_size + 1024).min(10485760);
-                            *modified = true;
-                        }
-                        KeyCode::Char('-') | KeyCode::Down => {
-                            draft.preview_max_size = (draft.preview_max_size.saturating_sub(1024)).max(1024);
-                            *modified = true;
-                        }
-                        KeyCode::Enter => {
-                            *editing = false;
-                        }
-                        KeyCode::Esc => {
-                            *editing = false;
-                        }
-                        _ => {}
+                    KeyCode::Right => {
+                        draft.color_scheme = draft.color_scheme.next();
+                        *modified = true;
                     }
-                }
-                8 => {
-                    match code {
-                        KeyCode::Left => {
-                            draft.thumbnail_mode = draft.thumbnail_mode.prev();
-                            *modified = true;
-                        }
-                        KeyCode::Right => {
-                            draft.thumbnail_mode = draft.thumbnail_mode.next();
-                            *modified = true;
-                        }
-                        KeyCode::Enter => {
-                            *editing = false;
-                        }
-                        KeyCode::Esc => {
-                            *editing = false;
-                        }
-                        _ => {}
-                    }
-                }
-                9 => {
-                    match code {
-                        KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Left | KeyCode::Right => {
-                            let current_terminal = draft.ensure_current_terminal();
-                            let terminals: Vec<String> =
-                                draft.image_protocols.keys().cloned().collect();
-                            let sel = terminals
-                                .iter()
-                                .position(|t| t == &current_terminal)
-                                .unwrap_or(0);
-                            self.input = InputMode::ImageProtocolSettings {
-                                selected: sel,
+                    KeyCode::Enter => {
+                        use crate::config::ColorScheme;
+                        if draft.color_scheme == ColorScheme::Custom {
+                            self.input = InputMode::CustomColorSettings {
+                                selected: 0,
                                 draft: draft.clone(),
                                 modified: *modified,
-                                current_terminal,
-                                terminals,
+                                editing_rgb: false,
+                                rgb_input: String::new(),
+                                rgb_component: 0,
                             };
                             return None;
                         }
-                        KeyCode::Esc => {
-                            *editing = false;
-                        }
-                        _ => {}
+                        *editing = false;
                     }
-                }
-                10 => {
-                    match code {
-                        KeyCode::Left => {
-                            draft.sort_field = draft.sort_field.prev();
-                            *modified = true;
-                        }
-                        KeyCode::Right => {
-                            draft.sort_field = draft.sort_field.next();
-                            *modified = true;
-                        }
-                        KeyCode::Enter => {
-                            *editing = false;
-                        }
-                        KeyCode::Esc => {
-                            *editing = false;
-                        }
-                        _ => {}
+                    KeyCode::Esc => {
+                        *editing = false;
                     }
-                }
-                11 => {
-                    match code {
-                        KeyCode::Char(' ')
-                        | KeyCode::Enter
-                        | KeyCode::Left
-                        | KeyCode::Right => {
-                            draft.sort_reverse = !draft.sort_reverse;
-                            *modified = true;
-                            *editing = false;
-                        }
-                        KeyCode::Esc => {
-                            *editing = false;
-                        }
-                        _ => {}
+                    _ => {}
+                },
+                3 => match code {
+                    KeyCode::Char(' ') | KeyCode::Enter | KeyCode::Left | KeyCode::Right => {
+                        draft.show_help_bar = !draft.show_help_bar;
+                        *modified = true;
+                        *editing = false;
                     }
-                }
-                12 => {
-                    match code {
-                        KeyCode::Left => {
-                            draft.move_mode = draft.move_mode.toggle();
-                            *modified = true;
-                        }
-                        KeyCode::Right => {
-                            draft.move_mode = draft.move_mode.toggle();
-                            *modified = true;
-                        }
-                        KeyCode::Enter => {
-                            *editing = false;
-                        }
-                        KeyCode::Esc => {
-                            *editing = false;
-                        }
-                        _ => {}
+                    KeyCode::Esc => {
+                        *editing = false;
                     }
-                }
-                13 => {
-                    match code {
-                        KeyCode::Char(' ')
-                        | KeyCode::Enter
-                        | KeyCode::Left
-                        | KeyCode::Right => {
-                            draft.cli_nerd_font = !draft.cli_nerd_font;
-                            *modified = true;
-                            *editing = false;
-                        }
-                        KeyCode::Esc => {
-                            *editing = false;
-                        }
-                        _ => {}
+                    _ => {}
+                },
+                4 => match code {
+                    KeyCode::Left => {
+                        draft.quota_bar_style = draft.quota_bar_style.prev();
+                        *modified = true;
                     }
-                }
-                14 => {
-                    match code {
-                        KeyCode::Esc => {
-                            *editing = false;
-                        }
-                        KeyCode::Enter => {
-                            *editing = false;
-                        }
-                        KeyCode::Backspace => {
-                            if let Some(ref mut p) = draft.player {
-                                p.pop();
-                                if p.is_empty() {
-                                    draft.player = None;
-                                }
+                    KeyCode::Right => {
+                        draft.quota_bar_style = draft.quota_bar_style.next();
+                        *modified = true;
+                    }
+                    KeyCode::Enter => {
+                        *editing = false;
+                    }
+                    KeyCode::Esc => {
+                        *editing = false;
+                    }
+                    _ => {}
+                },
+                5 => match code {
+                    KeyCode::Char(' ') | KeyCode::Enter | KeyCode::Left | KeyCode::Right => {
+                        draft.show_preview = !draft.show_preview;
+                        *modified = true;
+                        *editing = false;
+                    }
+                    KeyCode::Esc => {
+                        *editing = false;
+                    }
+                    _ => {}
+                },
+                6 => match code {
+                    KeyCode::Char(' ') | KeyCode::Enter | KeyCode::Left | KeyCode::Right => {
+                        draft.lazy_preview = !draft.lazy_preview;
+                        *modified = true;
+                        *editing = false;
+                    }
+                    KeyCode::Esc => {
+                        *editing = false;
+                    }
+                    _ => {}
+                },
+                7 => match code {
+                    KeyCode::Char('+') | KeyCode::Up => {
+                        draft.preview_max_size = (draft.preview_max_size + 1024).min(10485760);
+                        *modified = true;
+                    }
+                    KeyCode::Char('-') | KeyCode::Down => {
+                        draft.preview_max_size =
+                            (draft.preview_max_size.saturating_sub(1024)).max(1024);
+                        *modified = true;
+                    }
+                    KeyCode::Enter => {
+                        *editing = false;
+                    }
+                    KeyCode::Esc => {
+                        *editing = false;
+                    }
+                    _ => {}
+                },
+                8 => match code {
+                    KeyCode::Left => {
+                        draft.thumbnail_mode = draft.thumbnail_mode.prev();
+                        *modified = true;
+                    }
+                    KeyCode::Right => {
+                        draft.thumbnail_mode = draft.thumbnail_mode.next();
+                        *modified = true;
+                    }
+                    KeyCode::Enter => {
+                        *editing = false;
+                    }
+                    KeyCode::Esc => {
+                        *editing = false;
+                    }
+                    _ => {}
+                },
+                9 => match code {
+                    KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Left | KeyCode::Right => {
+                        let current_terminal = draft.ensure_current_terminal();
+                        let terminals: Vec<String> =
+                            draft.image_protocols.keys().cloned().collect();
+                        let sel = terminals
+                            .iter()
+                            .position(|t| t == &current_terminal)
+                            .unwrap_or(0);
+                        self.input = InputMode::ImageProtocolSettings {
+                            selected: sel,
+                            draft: draft.clone(),
+                            modified: *modified,
+                            current_terminal,
+                            terminals,
+                        };
+                        return None;
+                    }
+                    KeyCode::Esc => {
+                        *editing = false;
+                    }
+                    _ => {}
+                },
+                10 => match code {
+                    KeyCode::Left => {
+                        draft.sort_field = draft.sort_field.prev();
+                        *modified = true;
+                    }
+                    KeyCode::Right => {
+                        draft.sort_field = draft.sort_field.next();
+                        *modified = true;
+                    }
+                    KeyCode::Enter => {
+                        *editing = false;
+                    }
+                    KeyCode::Esc => {
+                        *editing = false;
+                    }
+                    _ => {}
+                },
+                11 => match code {
+                    KeyCode::Char(' ') | KeyCode::Enter | KeyCode::Left | KeyCode::Right => {
+                        draft.sort_reverse = !draft.sort_reverse;
+                        *modified = true;
+                        *editing = false;
+                    }
+                    KeyCode::Esc => {
+                        *editing = false;
+                    }
+                    _ => {}
+                },
+                12 => match code {
+                    KeyCode::Left => {
+                        draft.move_mode = draft.move_mode.toggle();
+                        *modified = true;
+                    }
+                    KeyCode::Right => {
+                        draft.move_mode = draft.move_mode.toggle();
+                        *modified = true;
+                    }
+                    KeyCode::Enter => {
+                        *editing = false;
+                    }
+                    KeyCode::Esc => {
+                        *editing = false;
+                    }
+                    _ => {}
+                },
+                13 => match code {
+                    KeyCode::Char(' ') | KeyCode::Enter | KeyCode::Left | KeyCode::Right => {
+                        draft.cli_nerd_font = !draft.cli_nerd_font;
+                        *modified = true;
+                        *editing = false;
+                    }
+                    KeyCode::Esc => {
+                        *editing = false;
+                    }
+                    _ => {}
+                },
+                14 => match code {
+                    KeyCode::Esc => {
+                        *editing = false;
+                    }
+                    KeyCode::Enter => {
+                        *editing = false;
+                    }
+                    KeyCode::Backspace => {
+                        if let Some(ref mut p) = draft.player {
+                            p.pop();
+                            if p.is_empty() {
+                                draft.player = None;
                             }
-                            *modified = true;
                         }
-                        KeyCode::Char(c) => {
-                            match draft.player {
-                                Some(ref mut p) => p.push(c),
-                                None => draft.player = Some(String::from(c)),
-                            }
-                            *modified = true;
-                        }
-                        _ => {}
+                        *modified = true;
                     }
-                }
-                15 => {
-                    match code {
-                        KeyCode::Char('+') | KeyCode::Up | KeyCode::Right => {
-                            draft.download_jobs = (draft.download_jobs + 1).min(16);
-                            *modified = true;
+                    KeyCode::Char(c) => {
+                        match draft.player {
+                            Some(ref mut p) => p.push(c),
+                            None => draft.player = Some(String::from(c)),
                         }
-                        KeyCode::Char('-') | KeyCode::Down | KeyCode::Left => {
-                            draft.download_jobs = draft.download_jobs.saturating_sub(1).max(1);
-                            *modified = true;
-                        }
-                        KeyCode::Enter | KeyCode::Esc => {
-                            *editing = false;
-                        }
-                        _ => {}
+                        *modified = true;
                     }
-                }
-                16 => {
-                    match code {
-                        KeyCode::Right | KeyCode::Char('+') | KeyCode::Char('l') => {
-                            draft.update_check = draft.update_check.next();
-                            *modified = true;
-                        }
-                        KeyCode::Left | KeyCode::Char('-') | KeyCode::Char('h') => {
-                            draft.update_check = draft.update_check.prev();
-                            *modified = true;
-                        }
-                        KeyCode::Enter | KeyCode::Esc => {
-                            *editing = false;
-                        }
-                        _ => {}
+                    _ => {}
+                },
+                15 => match code {
+                    KeyCode::Char('+') | KeyCode::Up | KeyCode::Right => {
+                        draft.download_jobs = (draft.download_jobs + 1).min(16);
+                        *modified = true;
                     }
-                }
+                    KeyCode::Char('-') | KeyCode::Down | KeyCode::Left => {
+                        draft.download_jobs = draft.download_jobs.saturating_sub(1).max(1);
+                        *modified = true;
+                    }
+                    KeyCode::Enter | KeyCode::Esc => {
+                        *editing = false;
+                    }
+                    _ => {}
+                },
+                16 => match code {
+                    KeyCode::Right | KeyCode::Char('+') | KeyCode::Char('l') => {
+                        draft.update_check = draft.update_check.next();
+                        *modified = true;
+                    }
+                    KeyCode::Left | KeyCode::Char('-') | KeyCode::Char('h') => {
+                        draft.update_check = draft.update_check.prev();
+                        *modified = true;
+                    }
+                    KeyCode::Enter | KeyCode::Esc => {
+                        *editing = false;
+                    }
+                    _ => {}
+                },
                 _ => {}
             }
             None
@@ -3486,14 +3491,11 @@ impl App {
                         None // Nothing to save, stay in settings
                     }
                 }
-                KeyCode::Esc => {
-                    Some(false)
-                }
+                KeyCode::Esc => Some(false),
                 _ => None,
             }
         }
     }
-
 }
 
 /// Write `text` to the system clipboard using the best available tool.

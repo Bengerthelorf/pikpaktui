@@ -1,5 +1,5 @@
-use anyhow::{Result, anyhow};
 use crate::pikpak::EntryKind;
+use anyhow::{Result, anyhow};
 
 pub fn run(args: &[String]) -> Result<()> {
     if args.is_empty() {
@@ -15,7 +15,10 @@ pub fn run(args: &[String]) -> Result<()> {
         match arg.as_str() {
             "-f" => force = true,
             "-r" => recursive = true,
-            "-rf" | "-fr" => { recursive = true; force = true; }
+            "-rf" | "-fr" => {
+                recursive = true;
+                force = true;
+            }
             "-n" | "--dry-run" => dry_run = true,
             _ => paths.push(arg),
         }
@@ -41,19 +44,25 @@ pub fn run(args: &[String]) -> Result<()> {
         let entry = super::find_entry(&client, &parent_id, &name)?;
 
         if entry.kind == EntryKind::Folder && !recursive {
-            return Err(anyhow!(
-                "'{}' is a folder. Use -r to remove folders.",
-                path
-            ));
+            return Err(anyhow!("'{}' is a folder. Use -r to remove folders.", path));
         }
-        resolved.push(Resolved { path, id: entry.id, kind: entry.kind, size: entry.size });
+        resolved.push(Resolved {
+            path,
+            id: entry.id,
+            kind: entry.kind,
+            size: entry.size,
+        });
     }
 
     if dry_run {
         let action = if force { "permanently delete" } else { "trash" };
         println!("[dry-run] Would {} {} item(s):", action, resolved.len());
         for r in &resolved {
-            let kind_tag = if r.kind == EntryKind::Folder { "folder" } else { &super::format_size(r.size) };
+            let kind_tag = if r.kind == EntryKind::Folder {
+                "folder"
+            } else {
+                &super::format_size(r.size)
+            };
             println!("  {} (id: {}, {})", r.path, r.id, kind_tag);
         }
         return Ok(());

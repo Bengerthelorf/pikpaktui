@@ -1,6 +1,6 @@
-use anyhow::{Result, anyhow};
 use crate::config::AppConfig;
 use crate::pikpak::PikPak;
+use anyhow::{Result, anyhow};
 
 pub fn run(args: &[String]) -> Result<()> {
     if super::wants_help(args) {
@@ -30,7 +30,9 @@ pub fn run(args: &[String]) -> Result<()> {
                 );
             }
             other => {
-                return Err(anyhow!("unknown flag: {other}\nRun `pikpaktui login --help` for usage."));
+                return Err(anyhow!(
+                    "unknown flag: {other}\nRun `pikpaktui login --help` for usage."
+                ));
             }
         }
         i += 1;

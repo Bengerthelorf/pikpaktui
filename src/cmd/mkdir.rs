@@ -39,10 +39,15 @@ pub fn run(args: &[String]) -> Result<()> {
         let mut created_count = 0u32;
 
         if dry_run {
-            println!("[dry-run] Would create folder(s) at '/{}':", segments.join("/"));
+            println!(
+                "[dry-run] Would create folder(s) at '/{}':",
+                segments.join("/")
+            );
             let mut accumulated = String::new();
             for (i, seg) in segments.iter().enumerate() {
-                if !accumulated.is_empty() { accumulated.push('/'); }
+                if !accumulated.is_empty() {
+                    accumulated.push('/');
+                }
                 accumulated.push_str(seg);
                 let entries = client.ls(&current_id)?;
                 if let Some(existing) = entries.into_iter().find(|e| e.name == *seg) {
@@ -71,7 +76,11 @@ pub fn run(args: &[String]) -> Result<()> {
                 created_count += 1;
             }
         }
-        println!("Created {} folder(s) at '/{}'", created_count, segments.join("/"));
+        println!(
+            "Created {} folder(s) at '/{}'",
+            created_count,
+            segments.join("/")
+        );
     } else {
         if rest.len() < 2 {
             return Err(anyhow!(

@@ -1,5 +1,5 @@
-use anyhow::{Result, anyhow};
 use crate::pikpak::EntryKind;
+use anyhow::{Result, anyhow};
 
 pub fn run(args: &[String]) -> Result<()> {
     if args.is_empty() {
@@ -20,7 +20,9 @@ pub fn run(args: &[String]) -> Result<()> {
             "-n" | "--dry-run" => dry_run = true,
             "-j" | "--jobs" => {
                 let val = iter.next().ok_or_else(|| anyhow!("-j requires a number"))?;
-                jobs = val.parse::<usize>().map_err(|_| anyhow!("-j requires a positive integer"))?;
+                jobs = val
+                    .parse::<usize>()
+                    .map_err(|_| anyhow!("-j requires a positive integer"))?;
                 if jobs == 0 {
                     return Err(anyhow!("-j must be at least 1"));
                 }
@@ -64,24 +66,41 @@ pub fn run(args: &[String]) -> Result<()> {
                 };
                 println!(
                     "[dry-run] Would download '{}' ({}) -> '{}'",
-                    name, kind_tag,
+                    name,
+                    kind_tag,
                     dir.join(&name).display()
                 );
                 continue;
             }
 
             if entry.kind == EntryKind::Folder {
-                println!("Downloading folder '{}' -> '{}'{}", name, dir.display(),
-                    if jobs > 1 { format!(" ({jobs} concurrent)") } else { String::new() });
+                println!(
+                    "Downloading folder '{}' -> '{}'{}",
+                    name,
+                    dir.display(),
+                    if jobs > 1 {
+                        format!(" ({jobs} concurrent)")
+                    } else {
+                        String::new()
+                    }
+                );
                 let (ok, failed) = client.download_dir(&entry.id, &name, dir, jobs)?;
-                println!("Folder '{}' done: {} file(s) ok, {} failed", name, ok, failed);
+                println!(
+                    "Folder '{}' done: {} file(s) ok, {} failed",
+                    name, ok, failed
+                );
                 if failed > 0 {
                     return Err(anyhow!("{} file(s) failed in '{}'", failed, name));
                 }
             } else {
                 let dest = dir.join(&name);
                 let total = client.download_to(&entry.id, &dest)?;
-                println!("Downloaded '{}' -> '{}' ({})", name, dest.display(), super::format_size(total));
+                println!(
+                    "Downloaded '{}' -> '{}' ({})",
+                    name,
+                    dest.display(),
+                    super::format_size(total)
+                );
             }
         }
     } else {
@@ -99,7 +118,12 @@ pub fn run(args: &[String]) -> Result<()> {
             } else {
                 super::format_size(entry.size)
             };
-            println!("[dry-run] Would download '{}' ({}) -> '{}'", name, kind_tag, dest.display());
+            println!(
+                "[dry-run] Would download '{}' ({}) -> '{}'",
+                name,
+                kind_tag,
+                dest.display()
+            );
             return Ok(());
         }
 
@@ -113,16 +137,32 @@ pub fn run(args: &[String]) -> Result<()> {
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_else(|| name.clone());
-            println!("Downloading folder '{}' -> '{}'{}", name, dest.display(),
-                if jobs > 1 { format!(" ({jobs} concurrent)") } else { String::new() });
+            println!(
+                "Downloading folder '{}' -> '{}'{}",
+                name,
+                dest.display(),
+                if jobs > 1 {
+                    format!(" ({jobs} concurrent)")
+                } else {
+                    String::new()
+                }
+            );
             let (ok, failed) = client.download_dir(&entry.id, &folder_name, &parent_dest, jobs)?;
-            println!("Folder '{}' done: {} file(s) ok, {} failed", name, ok, failed);
+            println!(
+                "Folder '{}' done: {} file(s) ok, {} failed",
+                name, ok, failed
+            );
             if failed > 0 {
                 return Err(anyhow!("{} file(s) failed in '{}'", failed, name));
             }
         } else {
             let total = client.download_to(&entry.id, &dest)?;
-            println!("Downloaded '{}' -> '{}' ({})", name, dest.display(), super::format_size(total));
+            println!(
+                "Downloaded '{}' -> '{}' ({})",
+                name,
+                dest.display(),
+                super::format_size(total)
+            );
         }
     }
     Ok(())

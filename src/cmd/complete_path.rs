@@ -90,7 +90,10 @@ mod tests {
 
     #[test]
     fn single_name_at_root() {
-        assert_eq!(split_for_completion("/Movies"), ("/".into(), "Movies".into()));
+        assert_eq!(
+            split_for_completion("/Movies"),
+            ("/".into(), "Movies".into())
+        );
     }
 
     #[test]
@@ -111,10 +114,7 @@ mod tests {
 
     #[test]
     fn deep_nested() {
-        assert_eq!(
-            split_for_completion("/a/b/c"),
-            ("/a/b".into(), "c".into())
-        );
+        assert_eq!(split_for_completion("/a/b/c"), ("/a/b".into(), "c".into()));
     }
 
     #[test]

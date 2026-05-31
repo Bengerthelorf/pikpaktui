@@ -38,13 +38,11 @@ jobs:
       - name: Run unit tests
         run: cargo test --verbose
 
-      - name: Run clippy (advisory only)
-        run: cargo clippy -- -W clippy::all
-        continue-on-error: true
+      - name: Run clippy
+        run: cargo clippy --all-targets -- -D warnings
 
-      - name: Check formatting (advisory only)
+      - name: Check formatting
         run: cargo fmt --check
-        continue-on-error: true
 
       - name: Test shell completions (all shells)
         shell: bash
@@ -214,6 +212,7 @@ jobs:
             fi
             cd ..
           done
+          sha256sum *.tar.gz *.zip > sha256sums.txt
 
       - name: Generate changelog
         id: changelog
@@ -285,6 +284,7 @@ jobs:
           files: |
             dist/*.tar.gz
             dist/*.zip
+            dist/sha256sums.txt
           body_path: CHANGELOG.md
           draft: false
           prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}

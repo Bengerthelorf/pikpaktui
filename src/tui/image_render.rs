@@ -17,7 +17,11 @@ pub(super) fn upscale_for_rect(
         return img.clone();
     }
     if img.width() < target_px_w || img.height() < target_px_h {
-        img.resize(target_px_w, target_px_h, image::imageops::FilterType::Lanczos3)
+        img.resize(
+            target_px_w,
+            target_px_h,
+            image::imageops::FilterType::Lanczos3,
+        )
     } else {
         img.clone()
     }
@@ -101,7 +105,11 @@ pub(super) fn render_image_to_colored_lines(
                 "▀",
                 Style::default()
                     .fg(Color::Rgb(top_pixel[0], top_pixel[1], top_pixel[2]))
-                    .bg(Color::Rgb(bottom_pixel[0], bottom_pixel[1], bottom_pixel[2])),
+                    .bg(Color::Rgb(
+                        bottom_pixel[0],
+                        bottom_pixel[1],
+                        bottom_pixel[2],
+                    )),
             );
             spans.push(span);
         }
@@ -152,7 +160,11 @@ pub(super) fn render_image_to_grayscale_lines(
     let mut lines = Vec::new();
 
     for y in 0..final_height_chars {
-        let mut line_str = if left_pad > 0 { " ".repeat(left_pad) } else { String::new() };
+        let mut line_str = if left_pad > 0 {
+            " ".repeat(left_pad)
+        } else {
+            String::new()
+        };
         for x in 0..w {
             let y1 = (y * 2).min(h - 1);
             let y2 = (y * 2 + 1).min(h - 1);

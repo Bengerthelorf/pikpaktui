@@ -4,12 +4,12 @@ use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use sha1::Sha1;
 use std::collections::HashMap;
-use std::sync::Mutex;
 use std::env;
 use std::fmt::Write as _;
 use std::fs;
 use std::io::{self, Read as _};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const DEFAULT_AUTH_BASE_URL: &str = "https://user.mypikpak.com";
@@ -268,7 +268,11 @@ impl PikPak {
         let status = response.status();
         if !status.is_success() {
             let body = response.text().unwrap_or_default();
-            return Err(anyhow!("token refresh failed ({}): {}", status, sanitize(&body)));
+            return Err(anyhow!(
+                "token refresh failed ({}): {}",
+                status,
+                sanitize(&body)
+            ));
         }
 
         let refreshed: SigninResponse = response.json().context("invalid token refresh json")?;
@@ -334,9 +338,7 @@ impl PikPak {
             }
 
             let payload: DriveListResponse = response.json().context("invalid ls json")?;
-            let next = payload
-                .next_page_token
-                .filter(|t| !t.is_empty());
+            let next = payload.next_page_token.filter(|t| !t.is_empty());
 
             all_entries.extend(payload.files.into_iter().map(|f| f.into_entry()));
 
@@ -354,12 +356,20 @@ impl PikPak {
     /// folder appearing in every argument of a batch command) only hit the API once.
     /// TUI code that needs a fresh listing should call `ls()` directly.
     pub fn ls_cached(&self, parent_id: &str) -> Result<Vec<Entry>> {
-        if let Some(cached) = self.ls_cache.lock().unwrap_or_else(|e| e.into_inner()).get(parent_id) {
+        if let Some(cached) = self
+            .ls_cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(parent_id)
+        {
             return Ok(cached.clone());
         }
         let entries = self.ls(parent_id)?;
         let result = entries.clone();
-        self.ls_cache.lock().unwrap_or_else(|e| e.into_inner()).insert(parent_id.to_string(), entries);
+        self.ls_cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(parent_id.to_string(), entries);
         Ok(result)
     }
 
@@ -408,11 +418,7 @@ impl PikPak {
         let status = response.status();
         if !status.is_success() {
             let body = response.text().unwrap_or_default();
-            return Err(anyhow!(
-                "ls_trash failed ({}): {}",
-                status,
-                sanitize(&body)
-            ));
+            return Err(anyhow!("ls_trash failed ({}): {}", status, sanitize(&body)));
         }
 
         let payload: DriveListResponse = response.json().context("invalid ls_trash json")?;
@@ -566,13 +572,10 @@ impl PikPak {
         Ok((url, info.file_size()))
     }
 
-    /// Get a reference to the HTTP client.
     pub fn http(&self) -> &reqwest::blocking::Client {
         &self.http
     }
 
-    /// Check if a streaming URL is available (not in cold/archive storage).
-    /// Sends a Range request and checks for a valid response.
     pub fn check_stream_available(url: &str) -> bool {
         let client = match reqwest::blocking::Client::builder()
             .timeout(std::time::Duration::from_secs(5))
@@ -582,7 +585,10 @@ impl PikPak {
             Err(_) => return false,
         };
         match client.get(url).header("Range", "bytes=0-0").send() {
-            Ok(resp) => resp.headers().contains_key("content-range") && resp.content_length().unwrap_or(0) > 0,
+            Ok(resp) => {
+                resp.headers().contains_key("content-range")
+                    && resp.content_length().unwrap_or(0) > 0
+            }
             Err(_) => false,
         }
     }
@@ -592,8 +598,12 @@ impl PikPak {
         let download_url = info
             .download_url()
             .ok_or_else(|| anyhow!("no download link for file {}", file_id))?;
+        let total_size = info.file_size();
 
         let existing_size = dest.metadata().map(|m| m.len()).unwrap_or(0);
+        if total_size > 0 && existing_size >= total_size {
+            return Ok(existing_size);
+        }
 
         let mut rb = self.http.get(download_url);
         if existing_size > 0 {
@@ -611,10 +621,15 @@ impl PikPak {
         } else {
             fs::File::create(dest)?
         };
+        let start_offset = if status == reqwest::StatusCode::PARTIAL_CONTENT {
+            existing_size
+        } else {
+            0
+        };
 
         let mut reader: Box<dyn io::Read> = Box::new(response);
         let bytes = io::copy(&mut reader, &mut file).context("download write failed")?;
-        Ok(existing_size + bytes)
+        Ok(start_offset + bytes)
     }
 
     pub fn quota(&self) -> Result<QuotaInfo> {
@@ -634,10 +649,6 @@ impl PikPak {
         response.json().context("invalid quota json")
     }
 
-    // --- Offline download (cloud download) ---
-
-    /// Submit a URL or magnet link for cloud/offline download.
-    /// Returns the task info including task id and file id.
     pub fn offline_download(
         &self,
         file_url: &str,
@@ -679,7 +690,6 @@ impl PikPak {
         response.json().context("invalid offline download json")
     }
 
-    /// List offline/cloud download tasks.
     pub fn offline_list(&self, limit: u32, phases: &[&str]) -> Result<OfflineListResponse> {
         let token = self.access_token()?;
         let url = self.drive_url("drive/v1/tasks");
@@ -711,7 +721,6 @@ impl PikPak {
         response.json().context("invalid offline list json")
     }
 
-    /// Retry a failed offline download task.
     pub fn offline_task_retry(&self, task_id: &str) -> Result<()> {
         let token = self.access_token()?;
         let url = self.drive_url("drive/v1/task");
@@ -729,7 +738,6 @@ impl PikPak {
         ensure_success(response, "offline task retry")
     }
 
-    /// Delete offline tasks by task IDs.
     pub fn delete_tasks(&self, task_ids: &[&str], delete_files: bool) -> Result<()> {
         let token = self.access_token()?;
         let url = self.drive_url("drive/v1/tasks");
@@ -750,7 +758,6 @@ impl PikPak {
         ensure_success(response, "delete tasks")
     }
 
-    /// Star files by IDs.
     pub fn star(&self, ids: &[&str]) -> Result<()> {
         let token = self.access_token()?;
         let url = self.drive_url("drive/v1/files:star");
@@ -763,7 +770,6 @@ impl PikPak {
         ensure_success(response, "star")
     }
 
-    /// Unstar files by IDs.
     pub fn unstar(&self, ids: &[&str]) -> Result<()> {
         let token = self.access_token()?;
         let url = self.drive_url("drive/v1/files:unstar");
@@ -776,7 +782,6 @@ impl PikPak {
         ensure_success(response, "unstar")
     }
 
-    /// List starred files.
     pub fn starred_list(&self, limit: u32) -> Result<Vec<Entry>> {
         let token = self.access_token()?;
         let url = self.drive_url("drive/v1/files");
@@ -805,12 +810,14 @@ impl PikPak {
         let entries = payload
             .files
             .into_iter()
-            .map(|f| Entry { starred: true, ..f.into_entry() })
+            .map(|f| Entry {
+                starred: true,
+                ..f.into_entry()
+            })
             .collect();
         Ok(entries)
     }
 
-    /// Get recent file events (recently added files).
     pub fn events(&self, limit: u32) -> Result<EventsResponse> {
         let token = self.access_token()?;
         let url = self.drive_url("drive/v1/events");
@@ -831,7 +838,6 @@ impl PikPak {
         response.json().context("invalid events json")
     }
 
-    /// Get VIP membership info.
     pub fn vip_info(&self) -> Result<VipInfoResponse> {
         let token = self.access_token()?;
         let url = self.drive_url("drive/v1/privilege/vip");
@@ -849,7 +855,6 @@ impl PikPak {
         response.json().context("invalid vip info json")
     }
 
-    /// Get invite code.
     pub fn invite_code(&self) -> Result<String> {
         let token = self.access_token()?;
         let url = self.drive_url("vip/v1/activity/inviteCode");
@@ -900,8 +905,6 @@ impl PikPak {
         response.json().context("invalid transfer quota json")
     }
 
-    /// Fetch first `max_bytes` of a text file for preview.
-    /// Returns (file_info, content_text, file_size, truncated).
     pub fn fetch_text_preview(
         &self,
         file_id: &str,
@@ -932,12 +935,10 @@ impl PikPak {
         Ok((info.name, content, file_size, truncated))
     }
 
-    /// Resolve a path like "/My Pack/docs" to the folder ID by walking each segment.
-    /// Root "/" returns "".
     pub fn resolve_path(&self, path: &str) -> Result<String> {
         let path = path.trim();
         if path.is_empty() || path == "/" {
-            return Ok(String::new()); // root
+            return Ok(String::new());
         }
 
         let segments: Vec<&str> = path
@@ -946,7 +947,7 @@ impl PikPak {
             .filter(|s| !s.is_empty())
             .collect();
 
-        let mut current_id = String::new(); // root
+        let mut current_id = String::new();
         for seg in &segments {
             let entries = self.ls_cached(&current_id)?;
             let found = entries
@@ -959,8 +960,6 @@ impl PikPak {
         Ok(current_id)
     }
 
-    /// Upload a local file to PikPak.
-    /// Returns the file name and whether it was a dedup (instant upload).
     pub fn upload_file(
         &self,
         parent_id: Option<&str>,
@@ -1009,14 +1008,14 @@ impl PikPak {
 
         if init.upload_type == "UPLOAD_TYPE_RESUMABLE"
             && let Some(resumable) = &init.resumable
-                && resumable.kind == "drive#uploadContext"
-                    && init.file.phase.as_deref() == Some("PHASE_TYPE_COMPLETE")
-                {
-                    return Ok((file_name, true)); // dedup
-                }
+            && resumable.kind == "drive#uploadContext"
+            && init.file.phase.as_deref() == Some("PHASE_TYPE_COMPLETE")
+        {
+            return Ok((file_name, true));
+        }
 
         if init.file.phase.as_deref() == Some("PHASE_TYPE_COMPLETE") {
-            return Ok((file_name, true)); // dedup
+            return Ok((file_name, true));
         }
 
         let resumable = init
@@ -1058,9 +1057,6 @@ impl PikPak {
         Ok((file_name, false))
     }
 
-    /// Upload a local directory recursively. Creates the folder on PikPak then
-    /// uploads all files, mirroring the subdirectory structure.
-    /// Returns `(files_ok, files_failed)`.
     pub fn upload_dir(&self, parent_id: &str, local_dir: &Path) -> Result<(usize, usize)> {
         let name = local_dir
             .file_name()
@@ -1110,8 +1106,16 @@ impl PikPak {
         self.download_dir_inner(folder_id, &dir, workers)
     }
 
-    fn download_dir_inner(&self, folder_id: &str, local_dir: &Path, workers: usize) -> Result<(usize, usize)> {
-        use std::sync::{Arc, Mutex, atomic::{AtomicUsize, Ordering}};
+    fn download_dir_inner(
+        &self,
+        folder_id: &str,
+        local_dir: &Path,
+        workers: usize,
+    ) -> Result<(usize, usize)> {
+        use std::sync::{
+            Arc, Mutex,
+            atomic::{AtomicUsize, Ordering},
+        };
 
         let workers = workers.max(1);
 
@@ -1134,7 +1138,8 @@ impl PikPak {
 
         let mut failed_count = 0usize;
         for folder in &folders {
-            if let Err(e) = std::fs::create_dir_all(local_dir.join(sanitize_filename(&folder.name))) {
+            if let Err(e) = std::fs::create_dir_all(local_dir.join(sanitize_filename(&folder.name)))
+            {
                 eprintln!("  [error] mkdir '{}': {}", folder.name, e);
                 failed_count += 1;
             }
@@ -1146,7 +1151,7 @@ impl PikPak {
         for entry in files {
             tx.send(entry).ok();
         }
-        drop(tx); // workers exit once channel is drained
+        drop(tx);
         let rx = Arc::new(Mutex::new(rx));
 
         std::thread::scope(|s| {
@@ -1165,7 +1170,9 @@ impl PikPak {
                         }
                         println!("  {}", dest.display());
                         match self.download_to(&entry.id, &dest) {
-                            Ok(_) => { ok.fetch_add(1, Ordering::Relaxed); }
+                            Ok(_) => {
+                                ok.fetch_add(1, Ordering::Relaxed);
+                            }
                             Err(e) => {
                                 eprintln!("  [error] '{}': {}", entry.name, e);
                                 failed.fetch_add(1, Ordering::Relaxed);
@@ -1200,27 +1207,30 @@ impl PikPak {
         let token = self.access_token()?;
         let url = self.drive_url("drive/v1/share");
 
-        let mut rb = self
-            .http
-            .get(&url)
-            .bearer_auth(&token)
-            .query(&[
-                ("share_id", share_id),
-                ("pass_code", pass_code),
-                ("thumbnail_size", "SIZE_MEDIUM"),
-            ]);
+        let mut rb = self.http.get(&url).bearer_auth(&token).query(&[
+            ("share_id", share_id),
+            ("pass_code", pass_code),
+            ("thumbnail_size", "SIZE_MEDIUM"),
+        ]);
         rb = self.authed_headers(rb);
 
         let response = rb.send().context("share info request failed")?;
         let status = response.status();
         if !status.is_success() {
             let body = response.text().unwrap_or_default();
-            return Err(anyhow!("share info failed ({}): {}", status, sanitize(&body)));
+            return Err(anyhow!(
+                "share info failed ({}): {}",
+                status,
+                sanitize(&body)
+            ));
         }
 
         let info: ShareInfoResponse = response.json().context("invalid share info json")?;
         if info.share_status != "OK" {
-            return Err(anyhow!("share is not available (status: {})", info.share_status));
+            return Err(anyhow!(
+                "share is not available (status: {})",
+                info.share_status
+            ));
         }
         Ok(info)
     }
@@ -1250,9 +1260,15 @@ impl PikPak {
         if !status.is_success() {
             let body = response.text().unwrap_or_default();
             if body.contains("file_restore_own") {
-                return Err(anyhow!("cannot save: these files already belong to your account"));
+                return Err(anyhow!(
+                    "cannot save: these files already belong to your account"
+                ));
             }
-            return Err(anyhow!("save share failed ({}): {}", status, sanitize(&body)));
+            return Err(anyhow!(
+                "save share failed ({}): {}",
+                status,
+                sanitize(&body)
+            ));
         }
         Ok(())
     }
@@ -1280,7 +1296,11 @@ impl PikPak {
         let status = response.status();
         if !status.is_success() {
             let body = response.text().unwrap_or_default();
-            return Err(anyhow!("create share failed ({}): {}", status, sanitize(&body)));
+            return Err(anyhow!(
+                "create share failed ({}): {}",
+                status,
+                sanitize(&body)
+            ));
         }
         response.json().context("invalid create share response")
     }
@@ -1300,7 +1320,11 @@ impl PikPak {
         let status = response.status();
         if !status.is_success() {
             let body = response.text().unwrap_or_default();
-            return Err(anyhow!("list shares failed ({}): {}", status, sanitize(&body)));
+            return Err(anyhow!(
+                "list shares failed ({}): {}",
+                status,
+                sanitize(&body)
+            ));
         }
         let resp: ShareListResponse = response.json().context("invalid share list json")?;
         Ok(resp.data)
@@ -1319,7 +1343,11 @@ impl PikPak {
         let status = response.status();
         if !status.is_success() {
             let body = response.text().unwrap_or_default();
-            return Err(anyhow!("delete shares failed ({}): {}", status, sanitize(&body)));
+            return Err(anyhow!(
+                "delete shares failed ({}): {}",
+                status,
+                sanitize(&body)
+            ));
         }
         Ok(())
     }
@@ -1373,7 +1401,7 @@ impl PikPak {
         local_path: &Path,
         file_size: u64,
     ) -> Result<Vec<String>> {
-        const CHUNK_SIZE: u64 = 10 * 1024 * 1024; // 10MB chunks
+        const CHUNK_SIZE: u64 = 10 * 1024 * 1024;
 
         let mut file = fs::File::open(local_path)
             .with_context(|| format!("cannot open '{}'", local_path.display()))?;
@@ -1675,6 +1703,7 @@ pub fn pikpak_hash(path: &Path) -> Result<String> {
     Ok(hex)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn oss_hmac_auth(
     method: &str,
     date: &str,
@@ -1715,10 +1744,9 @@ fn httpdate_now() -> String {
     let minutes = (time_of_day % 3600) / 60;
     let seconds = time_of_day % 60;
 
-    // Calculate year/month/day from days since epoch
     let (year, month, day) = days_to_ymd(days);
 
-    let wday = ((days + 4) % 7) as usize; // Jan 1 1970 was Thursday (4)
+    let wday = ((days + 4) % 7) as usize;
     let wday_names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     let month_names = [
         "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
@@ -1917,7 +1945,6 @@ pub struct FileInfoResponse {
 }
 
 impl FileInfoResponse {
-    /// Extract the best download URL from file info.
     pub fn download_url(&self) -> Option<&str> {
         self.web_content_link
             .as_deref()
@@ -2101,7 +2128,7 @@ fn sanitize(s: &str) -> String {
 }
 
 fn md5_hex(input: &str) -> String {
-    use md5::{Md5, Digest};
+    use md5::{Digest, Md5};
     let hash = Md5::digest(input.as_bytes());
     let mut hex = String::with_capacity(32);
     for b in hash.iter() {
@@ -2149,10 +2176,117 @@ where
     deserializer.deserialize_any(U64Visitor)
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+    use std::io::Write as _;
+    use std::net::TcpListener;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    struct MockDownloadServer {
+        base_url: String,
+        download_hits: Arc<AtomicUsize>,
+        handle: std::thread::JoinHandle<()>,
+    }
+
+    fn test_client(base_url: String, session_path: std::path::PathBuf) -> PikPak {
+        let client = PikPak {
+            http: reqwest::blocking::Client::builder().build().unwrap(),
+            drive_base_url: base_url,
+            auth_base_url: String::new(),
+            client_id: String::new(),
+            client_secret: String::new(),
+            session_path,
+            device_id: String::new(),
+            captcha_token: String::new(),
+            thumbnail_size: "SIZE_MEDIUM".to_string(),
+            ls_cache: Mutex::new(HashMap::new()),
+            refresh_lock: Mutex::new(()),
+        };
+        client
+            .save_session(&SessionToken {
+                access_token: "test-access".into(),
+                refresh_token: "test-refresh".into(),
+                expires_at_unix: now_unix() + 3600,
+            })
+            .unwrap();
+        client
+    }
+
+    fn temp_test_dir(name: &str) -> std::path::PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir =
+            std::env::temp_dir().join(format!("pikpaktui-{name}-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn start_mock_download_server(
+        content: &'static [u8],
+        ignore_range: bool,
+        max_requests: usize,
+    ) -> MockDownloadServer {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let download_hits = Arc::new(AtomicUsize::new(0));
+        let hits = Arc::clone(&download_hits);
+        let server_base_url = base_url.clone();
+
+        let handle = std::thread::spawn(move || {
+            for stream in listener.incoming().take(max_requests) {
+                let Ok(mut stream) = stream else { continue };
+                let mut request = [0u8; 4096];
+                let n = std::io::Read::read(&mut stream, &mut request).unwrap_or(0);
+                let request = String::from_utf8_lossy(&request[..n]);
+                let first_line = request.lines().next().unwrap_or_default();
+
+                if first_line.starts_with("GET /drive/v1/files/file") {
+                    let body = format!(
+                        r#"{{"name":"file.bin","size":"{}","web_content_link":"{}/download"}}"#,
+                        content.len(),
+                        server_base_url
+                    );
+                    write_response(&mut stream, 200, "OK", body.as_bytes());
+                } else if first_line.starts_with("GET /download") {
+                    hits.fetch_add(1, Ordering::SeqCst);
+                    let range_start = request.lines().find_map(|line| {
+                        line.to_ascii_lowercase()
+                            .strip_prefix("range: bytes=")
+                            .and_then(|range| range.strip_suffix('-'))
+                            .and_then(|start| start.parse::<usize>().ok())
+                    });
+
+                    if !ignore_range && let Some(start) = range_start {
+                        write_response(&mut stream, 206, "Partial Content", &content[start..]);
+                    } else {
+                        write_response(&mut stream, 200, "OK", content);
+                    }
+                } else {
+                    write_response(&mut stream, 404, "Not Found", b"not found");
+                }
+            }
+        });
+
+        MockDownloadServer {
+            base_url,
+            download_hits,
+            handle,
+        }
+    }
+
+    fn write_response(stream: &mut std::net::TcpStream, code: u16, reason: &str, body: &[u8]) {
+        let header = format!(
+            "HTTP/1.1 {code} {reason}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
+        stream.write_all(header.as_bytes()).unwrap();
+        stream.write_all(body).unwrap();
+    }
 
     #[test]
     fn token_expiry_check() {
@@ -2173,7 +2307,6 @@ mod tests {
 
     #[test]
     fn token_refresh_response_deserializes() {
-        // The refresh endpoint returns the same shape as signin.
         let json = r#"{
             "access_token": "new_access",
             "refresh_token": "new_refresh",
@@ -2187,7 +2320,6 @@ mod tests {
 
     #[test]
     fn access_token_triggers_refresh_when_expired() {
-        // Verify that is_expired returns true when expires_at_unix is in the past.
         let expired = SessionToken {
             access_token: "old".into(),
             refresh_token: "r".into(),
@@ -2195,7 +2327,6 @@ mod tests {
         };
         assert!(expired.is_expired(now_unix()));
 
-        // And false when still valid with the 5-min buffer.
         let valid = SessionToken {
             access_token: "good".into(),
             refresh_token: "r".into(),
@@ -2203,8 +2334,6 @@ mod tests {
         };
         assert!(!valid.is_expired(now_unix() + 300));
     }
-
-    // --- Pagination: confirm DriveListResponse captures next_page_token ---
 
     #[test]
     fn drive_list_response_captures_next_page_token() {
@@ -2221,7 +2350,6 @@ mod tests {
 
     #[test]
     fn drive_list_response_no_token_on_last_page() {
-        // When no next_page_token is present, field should be None
         let json = r#"{"files": []}"#;
         let resp: DriveListResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.next_page_token, None);
@@ -2229,10 +2357,42 @@ mod tests {
 
     #[test]
     fn drive_list_response_empty_token_treated_as_none() {
-        // PikPak sometimes returns "" instead of omitting the field
         let json = r#"{"files": [], "next_page_token": ""}"#;
         let resp: DriveListResponse = serde_json::from_str(json).unwrap();
-        // empty string → should normalise to None in pagination logic
         assert!(resp.next_page_token.as_deref().unwrap_or("").is_empty());
+    }
+
+    #[test]
+    fn download_to_skips_already_complete_file() {
+        let server = start_mock_download_server(b"hello", false, 1);
+        let dir = temp_test_dir("download-complete");
+        let dest = dir.join("file.bin");
+        std::fs::write(&dest, b"hello").unwrap();
+        let client = test_client(server.base_url, dir.join("session.json"));
+
+        let total = client.download_to("file", &dest).unwrap();
+
+        assert_eq!(total, 5);
+        assert_eq!(std::fs::read(&dest).unwrap(), b"hello");
+        assert_eq!(server.download_hits.load(Ordering::SeqCst), 0);
+        server.handle.join().unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn download_to_reports_size_when_server_ignores_range() {
+        let server = start_mock_download_server(b"hello", true, 2);
+        let dir = temp_test_dir("download-range-ignored");
+        let dest = dir.join("file.bin");
+        std::fs::write(&dest, b"he").unwrap();
+        let client = test_client(server.base_url, dir.join("session.json"));
+
+        let total = client.download_to("file", &dest).unwrap();
+
+        assert_eq!(total, 5);
+        assert_eq!(std::fs::read(&dest).unwrap(), b"hello");
+        assert_eq!(server.download_hits.load(Ordering::SeqCst), 1);
+        server.handle.join().unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

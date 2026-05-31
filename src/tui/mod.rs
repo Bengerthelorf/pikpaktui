@@ -76,6 +76,7 @@ enum LoginField {
     Password,
 }
 
+#[allow(clippy::large_enum_variant)]
 enum PreviewState {
     Empty,
     Loading,
@@ -118,7 +119,11 @@ enum OpResult {
     GotoPath(Result<(String, Vec<(String, String)>)>),
     Quota(Result<crate::pikpak::QuotaInfo>),
     Upload(Result<String>),
-    ShareCreated { title: String, url: String, pass_code: String },
+    ShareCreated {
+        title: String,
+        url: String,
+        pass_code: String,
+    },
     MyShares(Result<Vec<crate::pikpak::MyShare>>),
     UpdateAvailable(Option<String>),
 }
@@ -529,7 +534,11 @@ impl App {
             match result {
                 OpResult::Ls(Ok(mut entries)) => {
                     self.finish_loading();
-                    crate::config::sort_entries(&mut entries, self.config.sort_field, self.config.sort_reverse);
+                    crate::config::sort_entries(
+                        &mut entries,
+                        self.config.sort_field,
+                        self.config.sort_reverse,
+                    );
                     self.entries = entries;
                     if self.selected >= self.entries.len() {
                         self.selected = self.entries.len().saturating_sub(1);
@@ -552,11 +561,17 @@ impl App {
                 OpResult::Info(Ok(info), thumb_fallback) => {
                     self.finish_loading();
                     if matches!(self.input, InputMode::InfoLoading) {
-                        let thumb_url = info.thumbnail_link.clone()
+                        let thumb_url = info
+                            .thumbnail_link
+                            .clone()
                             .filter(|u| !u.is_empty())
                             .or_else(|| thumb_fallback.filter(|u| !u.is_empty()));
                         let has_thumbnail = thumb_url.is_some();
-                        self.input = InputMode::InfoView { info, image: None, has_thumbnail };
+                        self.input = InputMode::InfoView {
+                            info,
+                            image: None,
+                            has_thumbnail,
+                        };
                         if let Some(url) = thumb_url {
                             self.spawn_thumbnail_fetch(url, OpResult::InfoThumbnail);
                         }
@@ -572,7 +587,11 @@ impl App {
                 OpResult::ParentLs(pid, Ok(mut entries)) => {
                     let expected = self.breadcrumb.last().map(|(id, _)| id.as_str());
                     if expected == Some(&pid) {
-                        crate::config::sort_entries(&mut entries, self.config.sort_field, self.config.sort_reverse);
+                        crate::config::sort_entries(
+                            &mut entries,
+                            self.config.sort_field,
+                            self.config.sort_reverse,
+                        );
                         self.parent_entries = entries;
                         if let Some(pos) = self
                             .parent_entries
@@ -590,7 +609,11 @@ impl App {
                     }
                 }
                 OpResult::PreviewLs(id, Ok(mut children)) => {
-                    crate::config::sort_entries(&mut children, self.config.sort_field, self.config.sort_reverse);
+                    crate::config::sort_entries(
+                        &mut children,
+                        self.config.sort_field,
+                        self.config.sort_reverse,
+                    );
                     if matches!(self.input, InputMode::InfoLoading) {
                         self.finish_loading();
                         let name = self.preview_target_name.take().unwrap_or_default();
@@ -796,7 +819,11 @@ impl App {
                     self.finish_loading();
                     self.push_log(format!("Upload failed: {e:#}"));
                 }
-                OpResult::ShareCreated { title, url, pass_code } => {
+                OpResult::ShareCreated {
+                    title,
+                    url,
+                    pass_code,
+                } => {
                     self.push_log(format!("Share created: {url}"));
                     if let InputMode::ShareCreatedView { ref mut shares } = self.input {
                         shares.push((title, url, pass_code));
@@ -810,7 +837,8 @@ impl App {
                     self.finish_loading();
                     if self.shares_pending || matches!(self.input, InputMode::MySharesView { .. }) {
                         self.shares_pending = false;
-                        let selected = if let InputMode::MySharesView { selected, .. } = &self.input {
+                        let selected = if let InputMode::MySharesView { selected, .. } = &self.input
+                        {
                             (*selected).min(shares.len().saturating_sub(1))
                         } else {
                             0
@@ -1029,13 +1057,13 @@ impl App {
             }
             EntryKind::File => {
                 if let Some(ref thumb_url) = entry.thumbnail_link
-                    && !thumb_url.is_empty() {
-                        self.spawn_thumbnail_fetch(
-                            thumb_url.clone(),
-                            move |r| OpResult::PreviewThumbnail(eid.clone(), r),
-                        );
-                        return;
-                    }
+                    && !thumb_url.is_empty()
+                {
+                    self.spawn_thumbnail_fetch(thumb_url.clone(), move |r| {
+                        OpResult::PreviewThumbnail(eid.clone(), r)
+                    });
+                    return;
+                }
                 if theme::is_text_previewable(&entry) {
                     let max_bytes = self.config.preview_max_size;
                     std::thread::spawn(move || {
@@ -1080,14 +1108,25 @@ impl App {
     }
 
     fn resort_entries(&mut self) {
-        crate::config::sort_entries(&mut self.entries, self.config.sort_field, self.config.sort_reverse);
+        crate::config::sort_entries(
+            &mut self.entries,
+            self.config.sort_field,
+            self.config.sort_reverse,
+        );
         if self.selected >= self.entries.len() {
             self.selected = self.entries.len().saturating_sub(1);
         }
-        let arrow = if self.config.sort_reverse { "\u{2193}" } else { "\u{2191}" };
-        self.push_log(format!("Sort: {} {}", self.config.sort_field.as_str(), arrow));
+        let arrow = if self.config.sort_reverse {
+            "\u{2193}"
+        } else {
+            "\u{2191}"
+        };
+        self.push_log(format!(
+            "Sort: {} {}",
+            self.config.sort_field.as_str(),
+            arrow
+        ));
     }
-
 }
 
 static SYNTAX_SET: LazyLock<syntect::parsing::SyntaxSet> =
@@ -1229,7 +1268,10 @@ fn fetch_and_render_thumbnail(
         .context("failed to download thumbnail")?;
 
     if !response.status().is_success() {
-        return Err(anyhow::anyhow!("thumbnail download failed: {}", response.status()));
+        return Err(anyhow::anyhow!(
+            "thumbnail download failed: {}",
+            response.status()
+        ));
     }
 
     let bytes = response.bytes().context("failed to read thumbnail bytes")?;
@@ -1303,10 +1345,7 @@ mod wrap_tests {
 
     #[test]
     fn multiple_wraps() {
-        assert_eq!(
-            wrap_line("abcdefghijklm", 5),
-            vec!["abcde", "fghij", "klm"]
-        );
+        assert_eq!(wrap_line("abcdefghijklm", 5), vec!["abcde", "fghij", "klm"]);
     }
 
     #[test]
@@ -1349,32 +1388,33 @@ mod wrap_tests {
 
     #[test]
     fn wrap_logs_total_lines() {
-        let logs = vec![
+        let logs = [
             "short",
             "a]medium length line here",
             "abcdefghijklmnopqrstuvwxyz",
         ];
         let wrapped = wrap_logs(logs.iter().copied(), 10);
-        // "short" → 1 line
-        // "a]medium length line here" (24 chars) → 3 lines
-        // "abcdefghijklmnopqrstuvwxyz" (26 chars) → 3 lines
         assert_eq!(wrapped.len(), 7);
     }
 
     #[test]
     fn scroll_bottom_shows_last_lines() {
-        let logs = vec!["line1", "line2", "line3", "line4", "line5"];
+        let logs = ["line1", "line2", "line3", "line4", "line5"];
         let wrapped = wrap_logs(logs.iter().copied(), 50);
         let visible = 3;
-        let max_scroll = wrapped.len().saturating_sub(visible); // 5 - 3 = 2
-        // At bottom (scroll_y = max_scroll = 2), show lines 2..5
-        let bottom: Vec<&str> = wrapped.iter().skip(max_scroll).take(visible).map(|s| s.as_str()).collect();
+        let max_scroll = wrapped.len().saturating_sub(visible);
+        let bottom: Vec<&str> = wrapped
+            .iter()
+            .skip(max_scroll)
+            .take(visible)
+            .map(|s| s.as_str())
+            .collect();
         assert_eq!(bottom, vec!["line3", "line4", "line5"]);
     }
 
     #[test]
     fn scroll_with_wrapped_lines_reaches_bottom() {
-        let logs = vec![
+        let logs = [
             "short",
             "this is a very long line that will wrap multiple times in a narrow window!",
             "last line",
@@ -1384,9 +1424,12 @@ mod wrap_tests {
         let wrapped = wrap_logs(logs.iter().copied(), width);
         let total = wrapped.len();
         let max_scroll = total.saturating_sub(visible);
-        // At bottom, last visible line should be "last line"
-        let bottom: Vec<&str> = wrapped.iter().skip(max_scroll).take(visible).map(|s| s.as_str()).collect();
+        let bottom: Vec<&str> = wrapped
+            .iter()
+            .skip(max_scroll)
+            .take(visible)
+            .map(|s| s.as_str())
+            .collect();
         assert_eq!(bottom.last().unwrap(), &"last line");
     }
 }
-

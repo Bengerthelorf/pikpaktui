@@ -12,7 +12,9 @@ pub fn run(args: &[String]) -> Result<()> {
     }
 
     if rest.len() < 2 {
-        return Err(anyhow!("Usage: pikpaktui rename [-n] <file_path> <new_name>"));
+        return Err(anyhow!(
+            "Usage: pikpaktui rename [-n] <file_path> <new_name>"
+        ));
     }
 
     let client = super::cli_client()?;
@@ -21,7 +23,10 @@ pub fn run(args: &[String]) -> Result<()> {
     let entry = super::find_entry(&client, &parent_id, &name)?;
 
     if dry_run {
-        println!("[dry-run] Would rename '{}' -> '{}' (id: {})", name, rest[1], entry.id);
+        println!(
+            "[dry-run] Would rename '{}' -> '{}' (id: {})",
+            name, rest[1], entry.id
+        );
         return Ok(());
     }
 

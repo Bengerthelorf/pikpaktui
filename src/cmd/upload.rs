@@ -37,7 +37,10 @@ pub fn run(args: &[String]) -> Result<()> {
         for path in &paths {
             let local_path = std::path::PathBuf::from(path);
             if !local_path.exists() {
-                return Err(anyhow!("local file '{}' does not exist", local_path.display()));
+                return Err(anyhow!(
+                    "local file '{}' does not exist",
+                    local_path.display()
+                ));
             }
             if !local_path.is_file() {
                 return Err(anyhow!("'{}' is not a file", local_path.display()));
@@ -57,7 +60,11 @@ pub fn run(args: &[String]) -> Result<()> {
                 continue;
             }
 
-            eprintln!("{} ({}) uploading...", file_name, super::format_size(file_size));
+            eprintln!(
+                "{} ({}) uploading...",
+                file_name,
+                super::format_size(file_size)
+            );
             let (name, dedup) = client.upload_file(Some(&parent_id), &local_path)?;
             if dedup {
                 println!("{} - complete (dedup)", name);
@@ -68,7 +75,10 @@ pub fn run(args: &[String]) -> Result<()> {
     } else {
         let local_path = std::path::PathBuf::from(paths[0]);
         if !local_path.exists() {
-            return Err(anyhow!("local file '{}' does not exist", local_path.display()));
+            return Err(anyhow!(
+                "local file '{}' does not exist",
+                local_path.display()
+            ));
         }
         if !local_path.is_file() {
             return Err(anyhow!("'{}' is not a file", local_path.display()));
@@ -91,12 +101,19 @@ pub fn run(args: &[String]) -> Result<()> {
                 file_name,
                 super::format_size(file_size),
                 dest_display,
-                parent_id.as_deref().map(|id| format!(" (parent id: {id})")).unwrap_or_default()
+                parent_id
+                    .as_deref()
+                    .map(|id| format!(" (parent id: {id})"))
+                    .unwrap_or_default()
             );
             return Ok(());
         }
 
-        eprintln!("{} ({}) uploading...", file_name, super::format_size(file_size));
+        eprintln!(
+            "{} ({}) uploading...",
+            file_name,
+            super::format_size(file_size)
+        );
         let (name, dedup) = client.upload_file(parent_id.as_deref(), &local_path)?;
         if dedup {
             println!("{} - complete (dedup)", name);

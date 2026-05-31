@@ -14,6 +14,7 @@ const RESET: &str = "\x1b[0m";
 pub fn run() -> Result<()> {
     let version = env!("CARGO_PKG_VERSION");
 
+    #[rustfmt::skip]
     let art: &[(&str, &str)] = &[
         (LIGHT_CYAN,    r#"    dMMMMb  dMP dMP dMP dMMMMb  .aMMMb  dMP dMP dMMMMMMP dMP dMP dMP"#),
         (CYAN,          r#"   dMP.dMP amr dMP.dMP dMP.dMP dMP"dMP dMP.dMP    dMP   dMP dMP amr "#),

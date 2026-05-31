@@ -82,15 +82,38 @@ pub fn run(args: &[String]) -> Result<()> {
                     } else {
                         super::format_date(t.created_time.as_deref().unwrap_or(""))
                     };
-                    Row { icon, color, progress, name: t.name.clone(), size, id, last }
+                    Row {
+                        icon,
+                        color,
+                        progress,
+                        name: t.name.clone(),
+                        size,
+                        id,
+                        last,
+                    }
                 })
                 .collect();
 
-            let w_name = rows.iter().map(|r| UnicodeWidthStr::width(r.name.as_str())).max().unwrap_or(4).max(4);
-            let w_prog = rows.iter().map(|r| r.progress.len()).max().unwrap_or(0).max(4);
+            let w_name = rows
+                .iter()
+                .map(|r| UnicodeWidthStr::width(r.name.as_str()))
+                .max()
+                .unwrap_or(4)
+                .max(4);
+            let w_prog = rows
+                .iter()
+                .map(|r| r.progress.len())
+                .max()
+                .unwrap_or(0)
+                .max(4);
             let w_size = rows.iter().map(|r| r.size.len()).max().unwrap_or(4).max(4);
             let w_id = 8usize;
-            let w_last = rows.iter().map(|r| UnicodeWidthStr::width(r.last.as_str())).max().unwrap_or(7).max(7);
+            let w_last = rows
+                .iter()
+                .map(|r| UnicodeWidthStr::width(r.last.as_str()))
+                .max()
+                .unwrap_or(7)
+                .max(7);
 
             let term_width = crossterm::terminal::size()
                 .map(|(w, _)| w as usize)
@@ -170,4 +193,3 @@ pub fn run(args: &[String]) -> Result<()> {
         )),
     }
 }
-

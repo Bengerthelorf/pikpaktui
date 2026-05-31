@@ -6,13 +6,13 @@ use ratatui::widgets::{List, ListItem, ListState, Paragraph};
 use std::collections::VecDeque;
 
 use super::download::TaskStatus;
-use super::{App, format_size, truncate_name, centered_rect, SPINNER_FRAMES};
+use super::{App, SPINNER_FRAMES, centered_rect, format_size, truncate_name};
 
 /// Download view mode: collapsed (centered popup) or expanded (full screen)
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum DownloadViewMode {
-    Collapsed,  // Cart-like centered view with summary
-    Expanded,   // Full-screen detailed view
+    Collapsed, // Cart-like centered view with summary
+    Expanded,  // Full-screen detailed view
 }
 
 pub struct NetworkStats {
@@ -36,10 +36,7 @@ impl NetworkStats {
     }
 
     pub fn max_speed(&self) -> f64 {
-        self.speed_history
-            .iter()
-            .copied()
-            .fold(0.0, f64::max)
+        self.speed_history.iter().copied().fold(0.0, f64::max)
     }
 
     pub fn avg_speed(&self) -> f64 {
@@ -54,7 +51,6 @@ impl NetworkStats {
 impl App {
     /// Collapsed view: Cart-like centered popup with summary
     pub(super) fn draw_download_collapsed(&self, f: &mut Frame) {
-
         let ds = &self.download_state;
         let done = ds.done_count();
         let total = ds.tasks.len();
@@ -95,25 +91,30 @@ impl App {
         ];
 
         let bar_width: usize = 40;
-        let filled = if total_size > 0 {
-            (bar_width as u64 * total_downloaded / total_size) as usize
-        } else {
-            0
-        };
+        let filled = (bar_width as u64 * total_downloaded)
+            .checked_div(total_size)
+            .unwrap_or(0) as usize;
         let empty = bar_width.saturating_sub(filled);
         let bar = format!("{}{}", "█".repeat(filled), "░".repeat(empty));
 
         lines.push(Line::from(vec![
             Span::styled("  Progress: ", Style::default().fg(Color::Cyan)),
             Span::styled(bar, Style::default().fg(Color::Green)),
-            Span::styled(format!(" {}%", overall_pct), Style::default().fg(Color::Reset)),
+            Span::styled(
+                format!(" {}%", overall_pct),
+                Style::default().fg(Color::Reset),
+            ),
         ]));
         lines.push(Line::from(""));
 
         lines.push(Line::from(vec![
             Span::styled("  Downloaded: ", Style::default().fg(Color::Cyan)),
             Span::styled(
-                format!("{} / {}", format_size(total_downloaded), format_size(total_size)),
+                format!(
+                    "{} / {}",
+                    format_size(total_downloaded),
+                    format_size(total_size)
+                ),
                 Style::default().fg(Color::Reset),
             ),
         ]));
@@ -165,10 +166,7 @@ impl App {
                             truncate_name(&task.name, 35),
                             Style::default().fg(Color::Reset),
                         ),
-                        Span::styled(
-                            format!(" {}%", pct),
-                            Style::default().fg(Color::DarkGray),
-                        ),
+                        Span::styled(format!(" {}%", pct), Style::default().fg(Color::DarkGray)),
                     ]));
                 }
             }
@@ -258,9 +256,7 @@ impl App {
         let title = if self.loading {
             format!(
                 " {} Downloads ({}/{}) ",
-                SPINNER_FRAMES[self.spinner_idx],
-                done,
-                total
+                SPINNER_FRAMES[self.spinner_idx], done, total
             )
         } else {
             format!(" Downloads ({}/{}) ", done, total)
@@ -303,10 +299,7 @@ impl App {
                         Style::default().fg(status_color),
                     ),
                     Span::styled(truncate_name(&task.name, 40), name_style),
-                    Span::styled(
-                        format!(" {}%", pct),
-                        Style::default().fg(Color::DarkGray),
-                    ),
+                    Span::styled(format!(" {}%", pct), Style::default().fg(Color::DarkGray)),
                 ]))
             })
             .collect();
@@ -386,7 +379,10 @@ impl App {
             Line::from(""),
             Line::from(vec![
                 Span::styled("  Overall Progress: ", Style::default().fg(Color::Cyan)),
-                Span::styled(format!("{}%", overall_pct), Style::default().fg(Color::Reset)),
+                Span::styled(
+                    format!("{}%", overall_pct),
+                    Style::default().fg(Color::Reset),
+                ),
             ]),
             Line::from(""),
             Line::from(vec![
@@ -397,7 +393,11 @@ impl App {
             Line::from(vec![
                 Span::styled("  Downloaded: ", Style::default().fg(Color::Cyan)),
                 Span::styled(
-                    format!("{} / {}", format_size(total_downloaded), format_size(total_size)),
+                    format!(
+                        "{} / {}",
+                        format_size(total_downloaded),
+                        format_size(total_size)
+                    ),
                     Style::default().fg(Color::Reset),
                 ),
             ]),
@@ -455,7 +455,9 @@ impl App {
             Span::styled("  Current: ", Style::default().fg(Color::Cyan)),
             Span::styled(
                 format!("{:.2} MB/s", current_speed),
-                Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
             ),
         ]));
         lines.push(Line::from(vec![
@@ -551,10 +553,7 @@ impl App {
                     lines.push(Line::from(""));
                     lines.push(Line::from(vec![
                         Span::styled("  Error: ", Style::default().fg(Color::Red)),
-                        Span::styled(
-                            truncate_name(e, 40),
-                            Style::default().fg(Color::Red),
-                        ),
+                        Span::styled(truncate_name(e, 40), Style::default().fg(Color::Red)),
                     ]));
                     lines.push(Line::from(""));
                     ("Failed", Color::Red)

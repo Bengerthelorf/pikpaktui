@@ -13,19 +13,20 @@ fn build_play_options(client: &PikPak, file_id: &str) -> Result<Vec<PlayOption>>
     let mut options = Vec::new();
 
     if let Some(ref url) = info.web_content_link
-        && !url.is_empty() {
-            let size_str = info
-                .size
-                .as_deref()
-                .and_then(|s| s.parse::<u64>().ok())
-                .map(super::format_size)
-                .unwrap_or_default();
-            options.push(PlayOption {
-                label: format!("original ({})", size_str),
-                url: url.clone(),
-                available: true,
-            });
-        }
+        && !url.is_empty()
+    {
+        let size_str = info
+            .size
+            .as_deref()
+            .and_then(|s| s.parse::<u64>().ok())
+            .map(super::format_size)
+            .unwrap_or_default();
+        options.push(PlayOption {
+            label: format!("original ({})", size_str),
+            url: url.clone(),
+            available: true,
+        });
+    }
 
     if let Some(ref medias) = info.medias {
         for m in medias {
@@ -41,11 +42,7 @@ fn build_play_options(client: &PikPak, file_id: &str) -> Result<Vec<PlayOption>>
             if url.is_empty() {
                 continue;
             }
-            let label = m
-                .media_name
-                .as_deref()
-                .unwrap_or("unknown")
-                .to_string();
+            let label = m.media_name.as_deref().unwrap_or("unknown").to_string();
             let available = PikPak::check_stream_available(&url);
             options.push(PlayOption {
                 label,
@@ -106,7 +103,10 @@ pub fn run(args: &[String]) -> Result<()> {
                 if num >= 1 && num <= options.len() {
                     let opt = &options[num - 1];
                     if !opt.available {
-                        return Err(anyhow!("stream '{}' is not available (cold storage)", opt.label));
+                        return Err(anyhow!(
+                            "stream '{}' is not available (cold storage)",
+                            opt.label
+                        ));
                     }
                     return launch_player(&player, &opt.url, &opt.label);
                 }
@@ -135,7 +135,10 @@ pub fn run(args: &[String]) -> Result<()> {
                 1 => {
                     let opt = matched[0];
                     if !opt.available {
-                        return Err(anyhow!("stream '{}' is not available (cold storage)", opt.label));
+                        return Err(anyhow!(
+                            "stream '{}' is not available (cold storage)",
+                            opt.label
+                        ));
                     }
                     launch_player(&player, &opt.url, &opt.label)
                 }
