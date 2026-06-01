@@ -314,7 +314,7 @@ impl PikPak {
         let url = self.drive_url("drive/v1/events");
 
         let mut rb = self.http.get(&url).bearer_auth(&token).query(&[
-            ("thumbnail_size", "SIZE_MEDIUM"),
+            ("thumbnail_size", self.thumbnail_size.as_str()),
             ("limit", &limit.to_string()),
         ]);
         rb = self.authed_headers(rb);

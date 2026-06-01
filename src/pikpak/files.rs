@@ -97,7 +97,7 @@ impl PikPak {
             ("parent_id", "*"),
             ("limit", &limit.to_string()),
             ("filters", filters),
-            ("thumbnail_size", "SIZE_MEDIUM"),
+            ("thumbnail_size", self.thumbnail_size.as_str()),
         ]);
         rb = self.authed_headers(rb);
 
@@ -266,7 +266,7 @@ impl PikPak {
             ("parent_id", "*"),
             ("limit", &limit.to_string()),
             ("filters", filters),
-            ("thumbnail_size", "SIZE_MEDIUM"),
+            ("thumbnail_size", self.thumbnail_size.as_str()),
         ]);
         rb = self.authed_headers(rb);
 
