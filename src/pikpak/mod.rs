@@ -324,6 +324,18 @@ impl PikPak {
     }
 }
 
+// These two helpers cover the common drive/auth API error shape: a non-success
+// status carries a JSON/text body we surface (truncated by `sanitize`) in the
+// error. Pick by what the *success* body is:
+//   - `ensure_success`    — success body is ignored (batch mutations, retries)
+//   - `json_or_api_error` — success body is decoded into `T`
+// Endpoints that never read the error body (file downloads, text preview, range
+// probes) build their own errors and use neither. A few calls with bespoke
+// handling also stay hand-written on purpose — e.g. `save_share` maps a specific
+// body marker, and `share_info` adds a post-decode status check.
+
+/// Turn a non-success status into an error with the sanitized body, for
+/// endpoints whose success response we don't need to decode.
 fn ensure_success(response: reqwest::blocking::Response, op: &str) -> Result<()> {
     let status = response.status();
     if status.is_success() {
@@ -333,9 +345,10 @@ fn ensure_success(response: reqwest::blocking::Response, op: &str) -> Result<()>
     Err(anyhow!("{} failed ({}): {}", op, status, sanitize(&body)))
 }
 
-/// Decode a JSON response, or turn a non-success status into an error carrying
-/// the sanitized response body. `op` names the operation for both the failure
-/// message and the decode context (e.g. `"quota"` → `"invalid quota json"`).
+/// Decode a JSON success body into `T`, or turn a non-success status into an
+/// error carrying the sanitized response body. `op` names the operation for both
+/// the failure message and the decode context (e.g. `"quota"` → `"invalid quota
+/// json"`).
 fn json_or_api_error<T: serde::de::DeserializeOwned>(
     response: reqwest::blocking::Response,
     op: &str,
