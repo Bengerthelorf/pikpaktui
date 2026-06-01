@@ -34,6 +34,35 @@ impl PikPak {
         }
     }
 
+    /// Issue a ranged GET for a download URL, resuming from `existing_size`.
+    /// Returns the response and the byte offset its body starts at (0 for a
+    /// fresh 200, `existing_size` for a 206 — some CDNs ignore Range and reply
+    /// 200, in which case the caller must restart from 0). This is the single
+    /// place the CLI and TUI downloads agree on the range/resume contract.
+    pub fn download_stream(
+        &self,
+        url: &str,
+        existing_size: u64,
+    ) -> Result<(reqwest::blocking::Response, u64)> {
+        let mut rb = self.http.get(url);
+        if existing_size > 0 {
+            rb = rb.header("Range", format!("bytes={}-", existing_size));
+        }
+
+        let response = rb.send().context("download request failed")?;
+        let status = response.status();
+        if !status.is_success() && status != reqwest::StatusCode::PARTIAL_CONTENT {
+            return Err(anyhow!("download failed ({})", status));
+        }
+
+        let start_offset = if status == reqwest::StatusCode::PARTIAL_CONTENT {
+            existing_size
+        } else {
+            0
+        };
+        Ok((response, start_offset))
+    }
+
     pub fn download_to(&self, file_id: &str, dest: &std::path::Path) -> Result<u64> {
         let info = self.file_info(file_id)?;
         let download_url = info
@@ -46,26 +75,11 @@ impl PikPak {
             return Ok(existing_size);
         }
 
-        let mut rb = self.http.get(download_url);
-        if existing_size > 0 {
-            rb = rb.header("Range", format!("bytes={}-", existing_size));
-        }
-
-        let response = rb.send().context("download request failed")?;
-        let status = response.status();
-        if !status.is_success() && status != reqwest::StatusCode::PARTIAL_CONTENT {
-            return Err(anyhow!("download failed ({})", status));
-        }
-
-        let mut file = if existing_size > 0 && status == reqwest::StatusCode::PARTIAL_CONTENT {
+        let (response, start_offset) = self.download_stream(download_url, existing_size)?;
+        let mut file = if start_offset > 0 {
             fs::OpenOptions::new().append(true).open(dest)?
         } else {
             fs::File::create(dest)?
-        };
-        let start_offset = if status == reqwest::StatusCode::PARTIAL_CONTENT {
-            existing_size
-        } else {
-            0
         };
 
         let mut reader: Box<dyn io::Read> = Box::new(response);

@@ -238,33 +238,19 @@ fn download_worker(
         return Ok(());
     }
 
-    let mut rb = client.http().get(&url);
-    if existing_size > 0 {
-        rb = rb.header("Range", format!("bytes={}-", existing_size));
-    }
+    // Shared range/resume contract with the CLI download (see download_stream).
+    let (response, start_offset) = client.download_stream(&url, existing_size)?;
 
-    let response = rb.send()?;
-    let status = response.status();
-    if !status.is_success() && status != reqwest::StatusCode::PARTIAL_CONTENT {
-        anyhow::bail!("HTTP {}", status);
-    }
-
-    let mut file = if existing_size > 0 && status == reqwest::StatusCode::PARTIAL_CONTENT {
+    let mut file = if start_offset > 0 {
         let mut f = fs::OpenOptions::new()
             .write(true)
             .create(true)
             .truncate(false)
             .open(dest)?;
-        f.seek(SeekFrom::Start(existing_size))?;
+        f.seek(SeekFrom::Start(start_offset))?;
         f
     } else {
         fs::File::create(dest)?
-    };
-
-    let start_offset = if status == reqwest::StatusCode::PARTIAL_CONTENT {
-        existing_size
-    } else {
-        0
     };
 
     let mut reader = response;
