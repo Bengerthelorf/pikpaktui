@@ -105,7 +105,10 @@ where
         }
 
         fn visit_str<E: de::Error>(self, value: &str) -> std::result::Result<Self::Value, E> {
-            value.parse::<u64>().map(Some).map_err(E::custom)
+            // PikPak sometimes returns size as "" (and could send other
+            // non-numeric values). Treat anything unparseable as absent rather
+            // than failing — otherwise one bad entry aborts the whole listing.
+            Ok(value.parse::<u64>().ok())
         }
 
         fn visit_string<E: de::Error>(self, value: String) -> std::result::Result<Self::Value, E> {

@@ -647,6 +647,24 @@ mod tests {
     }
 
     #[test]
+    fn drive_list_response_tolerates_non_numeric_size() {
+        // A single entry with an empty/garbage size must not abort the whole
+        // listing — it should fall back to size 0.
+        let json = r#"{"files": [
+            {"id":"f1","name":"folder","kind":"drive#folder","size":""},
+            {"id":"f2","name":"a.bin","kind":"drive#file","size":"1234"},
+            {"id":"f3","name":"b.bin","kind":"drive#file","size":"garbage"}
+        ]}"#;
+        let resp: DriveListResponse = serde_json::from_str(json).unwrap();
+        let sizes: Vec<u64> = resp
+            .files
+            .into_iter()
+            .map(|f| f.into_entry().size)
+            .collect();
+        assert_eq!(sizes, vec![0, 1234, 0]);
+    }
+
+    #[test]
     fn download_to_skips_already_complete_file() {
         let server = start_mock_download_server(b"hello", false, 1);
         let dir = temp_test_dir("download-complete");
