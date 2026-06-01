@@ -70,6 +70,7 @@ impl PikPak {
                 sanitize(&body)
             ));
         }
+        self.clear_ls_cache();
         Ok(())
     }
 

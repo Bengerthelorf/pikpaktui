@@ -295,6 +295,16 @@ impl PikPak {
         format!("{}/{}", self.auth_base_url.trim_end_matches('/'), path)
     }
 
+    /// Drop the lifetime listing cache that backs `ls_cached` and path
+    /// resolution. Mutations call this on success so later path lookups see the
+    /// new tree instead of a stale snapshot.
+    fn clear_ls_cache(&self) {
+        self.ls_cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+    }
+
     pub fn http(&self) -> &reqwest::blocking::Client {
         &self.http
     }
@@ -518,6 +528,35 @@ mod tests {
             }
         });
         (base_url, handle)
+    }
+
+    /// Server that answers drive listings (counting how many it serves) and
+    /// accepts any other request as a successful mutation. Used to prove the
+    /// listing cache is dropped after a mutation.
+    fn start_listing_server(
+        max_requests: usize,
+    ) -> (String, Arc<AtomicUsize>, std::thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let list_hits = Arc::new(AtomicUsize::new(0));
+        let hits = Arc::clone(&list_hits);
+        let handle = std::thread::spawn(move || {
+            for stream in listener.incoming().take(max_requests) {
+                let Ok(mut stream) = stream else { continue };
+                let mut buf = [0u8; 4096];
+                let n = std::io::Read::read(&mut stream, &mut buf).unwrap_or(0);
+                let request = String::from_utf8_lossy(&buf[..n]);
+                let first_line = request.lines().next().unwrap_or_default();
+                if first_line.starts_with("GET /drive/v1/files") {
+                    hits.fetch_add(1, Ordering::SeqCst);
+                    let body = r#"{"files":[{"id":"id1","name":"A","kind":"drive#folder"}]}"#;
+                    write_response(&mut stream, 200, "OK", body.as_bytes());
+                } else {
+                    write_response(&mut stream, 200, "OK", b"{}");
+                }
+            }
+        });
+        (base_url, list_hits, handle)
     }
 
     #[test]
@@ -757,6 +796,32 @@ mod tests {
             "got: {msg}"
         );
         assert!(msg.contains("slow down"), "got: {msg}");
+
+        handle.join().unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn ls_cached_is_invalidated_after_mutation() {
+        // ls_cached #1 (GET), cached #2 (no request), rename (PATCH), ls_cached #3 (GET).
+        let (base_url, list_hits, handle) = start_listing_server(3);
+        let dir = temp_test_dir("ls-cache-invalidation");
+        let client = test_client(base_url, dir.join("session.json"));
+
+        let first = client.ls_cached("").unwrap();
+        assert_eq!(first.len(), 1);
+        assert_eq!(list_hits.load(Ordering::SeqCst), 1);
+
+        // A second read is served from cache, not the network.
+        let _ = client.ls_cached("").unwrap();
+        assert_eq!(list_hits.load(Ordering::SeqCst), 1);
+
+        // A successful mutation drops the cache...
+        client.rename("id1", "A2").unwrap();
+
+        // ...so the next read goes back to the server.
+        let _ = client.ls_cached("").unwrap();
+        assert_eq!(list_hits.load(Ordering::SeqCst), 2);
 
         handle.join().unwrap();
         std::fs::remove_dir_all(dir).unwrap();

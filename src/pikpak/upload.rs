@@ -63,10 +63,12 @@ impl PikPak {
             && resumable.kind == "drive#uploadContext"
             && init.file.phase.as_deref() == Some("PHASE_TYPE_COMPLETE")
         {
+            self.clear_ls_cache();
             return Ok((file_name, true));
         }
 
         if init.file.phase.as_deref() == Some("PHASE_TYPE_COMPLETE") {
+            self.clear_ls_cache();
             return Ok((file_name, true));
         }
 
@@ -106,6 +108,7 @@ impl PikPak {
         let etags = self.oss_upload_chunks(&oss_args, &upload_id, local_path, file_size)?;
         self.oss_complete_multipart(&oss_args, &upload_id, &etags)?;
 
+        self.clear_ls_cache();
         Ok((file_name, false))
     }
 

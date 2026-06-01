@@ -121,7 +121,9 @@ impl PikPak {
         rb = self.authed_headers(rb);
 
         let response = rb.send().context("move request failed")?;
-        ensure_success(response, "move")
+        ensure_success(response, "move")?;
+        self.clear_ls_cache();
+        Ok(())
     }
 
     pub fn cp(&self, ids: &[&str], to_parent_id: &str) -> Result<()> {
@@ -137,7 +139,9 @@ impl PikPak {
         rb = self.authed_headers(rb);
 
         let response = rb.send().context("copy request failed")?;
-        ensure_success(response, "copy")
+        ensure_success(response, "copy")?;
+        self.clear_ls_cache();
+        Ok(())
     }
 
     pub fn rename(&self, file_id: &str, new_name: &str) -> Result<()> {
@@ -149,7 +153,9 @@ impl PikPak {
         rb = self.authed_headers(rb);
 
         let response = rb.send().context("rename request failed")?;
-        ensure_success(response, "rename")
+        ensure_success(response, "rename")?;
+        self.clear_ls_cache();
+        Ok(())
     }
 
     pub fn remove(&self, ids: &[&str]) -> Result<()> {
@@ -161,7 +167,9 @@ impl PikPak {
         rb = self.authed_headers(rb);
 
         let response = rb.send().context("remove request failed")?;
-        ensure_success(response, "remove")
+        ensure_success(response, "remove")?;
+        self.clear_ls_cache();
+        Ok(())
     }
 
     pub fn delete_permanent(&self, ids: &[&str]) -> Result<()> {
@@ -173,7 +181,9 @@ impl PikPak {
         rb = self.authed_headers(rb);
 
         let response = rb.send().context("permanent delete request failed")?;
-        ensure_success(response, "permanent delete")
+        ensure_success(response, "permanent delete")?;
+        self.clear_ls_cache();
+        Ok(())
     }
 
     pub fn untrash(&self, ids: &[&str]) -> Result<()> {
@@ -185,7 +195,9 @@ impl PikPak {
         rb = self.authed_headers(rb);
 
         let response = rb.send().context("untrash request failed")?;
-        ensure_success(response, "untrash")
+        ensure_success(response, "untrash")?;
+        self.clear_ls_cache();
+        Ok(())
     }
 
     pub fn mkdir(&self, parent_id: &str, name: &str) -> Result<Entry> {
@@ -203,6 +215,7 @@ impl PikPak {
 
         let response = rb.send().context("mkdir request failed")?;
         let resp: DriveFileResponse = json_or_api_error(response, "mkdir")?;
+        self.clear_ls_cache();
         Ok(resp.file.into_folder_entry())
     }
 
@@ -226,7 +239,9 @@ impl PikPak {
         rb = self.authed_headers(rb);
 
         let response = rb.send().context("star request failed")?;
-        ensure_success(response, "star")
+        ensure_success(response, "star")?;
+        self.clear_ls_cache();
+        Ok(())
     }
 
     pub fn unstar(&self, ids: &[&str]) -> Result<()> {
@@ -238,7 +253,9 @@ impl PikPak {
         rb = self.authed_headers(rb);
 
         let response = rb.send().context("unstar request failed")?;
-        ensure_success(response, "unstar")
+        ensure_success(response, "unstar")?;
+        self.clear_ls_cache();
+        Ok(())
     }
 
     pub fn starred_list(&self, limit: u32) -> Result<Vec<Entry>> {
