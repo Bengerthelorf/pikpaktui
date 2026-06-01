@@ -533,6 +533,12 @@ impl App {
                                 Ok(()) => {
                                     self.config = draft;
                                     self.resort_entries();
+                                    // Apply the new concurrency immediately (it's
+                                    // otherwise only read at startup) and let a
+                                    // raised limit start more workers now.
+                                    self.download_state.max_concurrent =
+                                        self.config.download_jobs.max(1);
+                                    self.download_state.start_next(&self.client);
                                     self.push_log("Settings saved to config.toml".into());
                                     self.input = InputMode::Normal;
                                 }
@@ -1388,7 +1394,9 @@ impl App {
                 }
                 self.input = InputMode::CartView;
             }
-            KeyCode::Char('a') => {
+            // Clear-all is 'C', not 'a': 'a' is the global add-to-cart key, so
+            // binding clear here would wipe the cart on a stray keystroke.
+            KeyCode::Char('C') => {
                 let count = self.cart.len();
                 self.cart.clear();
                 self.cart_ids.clear();
@@ -2009,6 +2017,25 @@ impl App {
     fn handle_download_view_key(&mut self, code: KeyCode) {
         let task_count = self.download_state.tasks.len();
 
+        // Per-task keys (j/k/p/x/r) need the Expanded list's visible selection
+        // cursor. The collapsed view is a summary with no cursor, so there only
+        // Enter (expand) and Esc (close) act — otherwise p/x would hit a task
+        // the user can't see.
+        if matches!(
+            code,
+            KeyCode::Char('j')
+                | KeyCode::Char('k')
+                | KeyCode::Char('p')
+                | KeyCode::Char('x')
+                | KeyCode::Char('r')
+                | KeyCode::Down
+                | KeyCode::Up
+        ) && self.download_view_mode != crate::tui::DownloadViewMode::Expanded
+        {
+            self.input = InputMode::DownloadView;
+            return;
+        }
+
         match code {
             KeyCode::Esc => {}
             KeyCode::Enter => {
@@ -2211,7 +2238,7 @@ impl App {
         });
     }
 
-    fn open_offline_tasks_view(&mut self) {
+    pub(super) fn open_offline_tasks_view(&mut self) {
         self.input = InputMode::InfoLoading;
         self.loading = true;
         self.loading_label = Some("Loading offline tasks...".into());
@@ -2269,13 +2296,14 @@ impl App {
                     self.input = InputMode::InfoLoading;
                     self.loading = true;
                     self.loading_label = Some("Retrying task...".into());
-                    std::thread::spawn(move || match client.offline_task_retry(&task_id) {
-                        Ok(()) => {
-                            let _ = tx.send(OpResult::Ok(format!("Retrying task: {}", task_name)));
-                        }
-                        Err(e) => {
-                            let _ = tx.send(OpResult::Err(format!("Retry failed: {e:#}")));
-                        }
+                    std::thread::spawn(move || {
+                        let msg = match client.offline_task_retry(&task_id) {
+                            Ok(()) => format!("Retrying task: {}", task_name),
+                            Err(e) => format!("Retry failed: {e:#}"),
+                        };
+                        // OfflineOp reloads the task list, so the view returns
+                        // here instead of falling back to the file browser.
+                        let _ = tx.send(OpResult::OfflineOp(msg));
                     });
                     return;
                 }
@@ -2294,16 +2322,11 @@ impl App {
                     self.loading = true;
                     self.loading_label = Some("Deleting task...".into());
                     std::thread::spawn(move || {
-                        match client.delete_tasks(&[task_id.as_str()], false) {
-                            Ok(()) => {
-                                let _ =
-                                    tx.send(OpResult::Ok(format!("Deleted task: {}", task_name)));
-                            }
-                            Err(e) => {
-                                let _ =
-                                    tx.send(OpResult::Err(format!("Delete task failed: {e:#}")));
-                            }
-                        }
+                        let msg = match client.delete_tasks(&[task_id.as_str()], false) {
+                            Ok(()) => format!("Deleted task: {}", task_name),
+                            Err(e) => format!("Delete task failed: {e:#}"),
+                        };
+                        let _ = tx.send(OpResult::OfflineOp(msg));
                     });
                     return;
                 }

@@ -115,6 +115,7 @@ enum OpResult {
     PlayPickerInfo(Result<(FileInfoResponse, Vec<PlayOption>)>),
     TrashList(Result<Vec<Entry>>),
     TrashOp(String),
+    OfflineOp(String),
     InfoThumbnail(Result<image::DynamicImage>),
     GotoPath(Result<(String, Vec<(String, String)>)>),
     Quota(Result<crate::pikpak::QuotaInfo>),
@@ -783,6 +784,10 @@ impl App {
                     self.finish_loading();
                     self.push_log(msg);
                     self.open_trash_view_preserve();
+                }
+                OpResult::OfflineOp(msg) => {
+                    self.push_log(msg);
+                    self.open_offline_tasks_view();
                 }
                 OpResult::InfoThumbnail(Ok(img)) => {
                     if let InputMode::InfoView { ref mut image, .. } = self.input {

@@ -1437,7 +1437,7 @@ impl App {
             InputMode::CartView => vec![
                 ("j/k", "nav"),
                 ("x", "remove"),
-                ("a", "clear all"),
+                ("C", "clear all"),
                 ("Enter", "download"),
                 ("m", "move"),
                 ("c", "copy"),

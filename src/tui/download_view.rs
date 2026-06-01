@@ -176,12 +176,9 @@ impl App {
         lines.push(Line::from(""));
         lines.push(Line::from(""));
 
-        let hints = vec![
-            ("Enter", "expand"),
-            ("p", "pause/resume"),
-            ("x", "cancel"),
-            ("Esc", "close"),
-        ];
+        // Collapsed view has no selection cursor, so per-task keys are inactive
+        // here (expand to manage individual downloads).
+        let hints = vec![("Enter", "expand"), ("Esc", "close")];
         let mut hint_spans = vec![Span::raw("  ")];
         hint_spans.extend(Self::styled_help_spans(&hints));
         lines.push(Line::from(hint_spans));
