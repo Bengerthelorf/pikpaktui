@@ -173,7 +173,7 @@ pub fn command_help_text(cmd: &str) -> (&'static str, &'static str, String) {
             ),
         ),
         "download" => (
-            "download [options] <path>",
+            "download [options] <path> [output]",
             "Download files or folders",
             format!(
                 "{B}OPTIONS:{R}\n\
@@ -220,7 +220,7 @@ pub fn command_help_text(cmd: &str) -> (&'static str, &'static str, String) {
                  {opt}  -J, --json       {d}Output as JSON{R}\n\
                  \n{B}OPTIONS (save):{R}\n\
                  {opt}  -p <code>        {d}Pass code for protected shares{R}\n\
-                 {opt}  -t <path>        {d}Destination folder{R}\n\
+                 {opt}  -t, --to <path>  {d}Destination folder{R}\n\
                  {opt}  -n, --dry-run    {d}Preview without saving{R}\n\
                  \n{B}EXAMPLES:{R}\n\
                  {ex}  pikpaktui share /movie.mkv{R}\n\
@@ -238,7 +238,7 @@ pub fn command_help_text(cmd: &str) -> (&'static str, &'static str, String) {
             "Cloud download a URL or magnet link",
             format!(
                 "{B}OPTIONS:{R}\n\
-                 {opt}  --to <path>      {d}Destination folder in PikPak{R}\n\
+                 {opt}  -t, --to <path>  {d}Destination folder in PikPak{R}\n\
                  {opt}  --name <name>    {d}Custom name for the task{R}\n\
                  {opt}  -n, --dry-run    {d}Preview without creating task{R}\n\
                  \n{B}EXAMPLES:{R}\n\
@@ -499,7 +499,7 @@ pub fn run_star_toggle(
     past: &str,
     action: impl Fn(&PikPak, &[&str]) -> Result<()>,
 ) -> Result<()> {
-    let usage = || anyhow!("usage: pikpaktui {verb} [-n] <path...>");
+    let usage = || anyhow!("Usage: pikpaktui {verb} [-n] <path...>");
     if args.is_empty() {
         return Err(usage());
     }

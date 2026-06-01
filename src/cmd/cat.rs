@@ -2,7 +2,7 @@ use anyhow::{Result, anyhow};
 
 pub fn run(args: &[String]) -> Result<()> {
     if args.is_empty() {
-        return Err(anyhow!("usage: pikpaktui cat <path>"));
+        return Err(anyhow!("Usage: pikpaktui cat <path>"));
     }
 
     let path = &args[0];

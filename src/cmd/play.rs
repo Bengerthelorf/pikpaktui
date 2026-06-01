@@ -58,7 +58,7 @@ fn build_play_options(client: &PikPak, file_id: &str) -> Result<Vec<PlayOption>>
 pub fn run(args: &[String]) -> Result<()> {
     if args.is_empty() {
         return Err(anyhow!(
-            "usage: pikpaktui play <path> [quality]\n\n\
+            "Usage: pikpaktui play <path> [quality]\n\n\
              quality: \"original\", or a stream name like \"720p\", \"1080p\"\n\
              omit quality to list available streams"
         ));

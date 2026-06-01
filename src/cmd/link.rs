@@ -20,7 +20,7 @@ pub fn run(args: &[String]) -> Result<()> {
     }
 
     let path = path_arg
-        .ok_or_else(|| anyhow!("usage: pikpaktui link [-J] [-m|--media] [-c|--copy] <path>"))?;
+        .ok_or_else(|| anyhow!("Usage: pikpaktui link [-J] [-m|--media] [-c|--copy] <path>"))?;
 
     let client = super::cli_client()?;
     let (parent_path, name) = super::split_parent_name(path)?;

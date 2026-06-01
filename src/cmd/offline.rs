@@ -3,7 +3,7 @@ use anyhow::{Result, anyhow};
 pub fn run(args: &[String]) -> Result<()> {
     if args.is_empty() {
         return Err(anyhow!(
-            "usage: pikpaktui offline [--dry-run] <url> [--to <path>] [--name <name>]"
+            "Usage: pikpaktui offline [--dry-run] <url> [--to <path>] [--name <name>]"
         ));
     }
 

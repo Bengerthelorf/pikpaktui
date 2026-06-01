@@ -1,7 +1,7 @@
 use anyhow::{Result, anyhow};
 
 use crate::config::SortField;
-use crate::pikpak::{EntryKind, PikPak}; // EntryKind used in print_tree folder recursion
+use crate::pikpak::{EntryKind, PikPak};
 
 const USAGE: &str = "Usage: pikpaktui ls [-l|--long] [-J|--json] [-s|--sort=<field>] [-r|--reverse] [--tree] [--depth=N] [path]\n\nSort fields: name, size, created, type, extension, none";
 

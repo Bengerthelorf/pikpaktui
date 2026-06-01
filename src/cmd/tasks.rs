@@ -156,7 +156,7 @@ pub fn run(args: &[String]) -> Result<()> {
             let task_id = rest_args
                 .first()
                 .copied()
-                .ok_or_else(|| anyhow::anyhow!("usage: pikpaktui tasks retry [-n] <task_id>"))?;
+                .ok_or_else(|| anyhow::anyhow!("Usage: pikpaktui tasks retry [-n] <task_id>"))?;
             if dry_run {
                 println!("[dry-run] Would retry task '{}'", task_id);
                 return Ok(());
@@ -176,7 +176,7 @@ pub fn run(args: &[String]) -> Result<()> {
             }
             if ids.is_empty() {
                 return Err(anyhow::anyhow!(
-                    "usage: pikpaktui tasks delete [-n] <task_id...>"
+                    "Usage: pikpaktui tasks delete [-n] <task_id...>"
                 ));
             }
             if dry_run {

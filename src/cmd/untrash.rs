@@ -2,7 +2,7 @@ use anyhow::{Result, anyhow};
 
 pub fn run(args: &[String]) -> Result<()> {
     if args.is_empty() {
-        return Err(anyhow!("usage: pikpaktui untrash [-n] <name...>"));
+        return Err(anyhow!("Usage: pikpaktui untrash [-n] <name...>"));
     }
 
     let mut dry_run = false;
@@ -16,7 +16,7 @@ pub fn run(args: &[String]) -> Result<()> {
     }
 
     if names.is_empty() {
-        return Err(anyhow!("usage: pikpaktui untrash [-n] <name...>"));
+        return Err(anyhow!("Usage: pikpaktui untrash [-n] <name...>"));
     }
 
     let client = super::cli_client()?;
