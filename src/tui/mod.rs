@@ -322,6 +322,9 @@ struct App {
     quota_limit: Option<u64>,
     shares_pending: bool,
     update_available: Option<String>,
+    /// Terminal image-protocol picker, queried once at startup. Querying reads
+    /// stdin, so it must NOT happen during draw — that races with key input.
+    image_picker: Option<ratatui_image::picker::Picker>,
 }
 
 impl App {
@@ -381,6 +384,7 @@ impl App {
             quota_limit: None,
             shares_pending: false,
             update_available: None,
+            image_picker: None,
         };
         app.refresh();
         app.fetch_quota();
@@ -460,6 +464,7 @@ impl App {
             quota_limit: None,
             shares_pending: false,
             update_available: None,
+            image_picker: None,
         }
     }
 
@@ -475,6 +480,11 @@ impl App {
             let password = password.clone();
             self.attempt_login(&email, &password);
         }
+
+        // Query the terminal's image protocol and font size ONCE, before the
+        // input loop. Doing it during draw reads stdin every frame and steals
+        // keypresses — a race with event::read().
+        self.image_picker = ratatui_image::picker::Picker::from_query_stdio().ok();
 
         loop {
             if self.last_blink.elapsed() >= Duration::from_millis(500) {

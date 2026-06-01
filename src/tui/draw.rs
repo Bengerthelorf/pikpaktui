@@ -360,6 +360,30 @@ impl App {
         );
     }
 
+    /// The startup-cached image picker with the configured protocol override
+    /// applied. `None` when no terminal protocol is available (callers fall back
+    /// to half-block). Never reads stdin — that query happens once before the
+    /// input loop, so rendering can't steal keypresses.
+    fn configured_image_picker(&self) -> Option<ratatui_image::picker::Picker> {
+        use ratatui_image::picker::ProtocolType;
+        self.image_picker.clone().map(|mut p| {
+            match self.config.current_image_protocol() {
+                crate::config::ImageProtocol::Auto => {
+                    // iTerm2 is sometimes misdetected as Kitty.
+                    if p.protocol_type() == ProtocolType::Kitty
+                        && std::env::var("TERM_PROGRAM").is_ok_and(|t| t.contains("iTerm"))
+                    {
+                        p.set_protocol_type(ProtocolType::Iterm2);
+                    }
+                }
+                crate::config::ImageProtocol::Kitty => p.set_protocol_type(ProtocolType::Kitty),
+                crate::config::ImageProtocol::Iterm2 => p.set_protocol_type(ProtocolType::Iterm2),
+                crate::config::ImageProtocol::Sixel => p.set_protocol_type(ProtocolType::Sixel),
+            }
+            p
+        })
+    }
+
     pub(super) fn draw(&self, f: &mut Frame) {
         match &self.input {
             InputMode::Login { .. } => self.draw_login_screen(f),
@@ -1099,10 +1123,7 @@ impl App {
             }
             PreviewState::ThumbnailImage { image } if !self.has_overlay() => {
                 use crate::config::ThumbnailRenderMode;
-                use ratatui_image::{
-                    StatefulImage,
-                    picker::{Picker, ProtocolType},
-                };
+                use ratatui_image::StatefulImage;
 
                 let panel_width = area.width.saturating_sub(2);
                 let panel_height = area.height.saturating_sub(2);
@@ -1193,28 +1214,7 @@ impl App {
                 match render_mode {
                     ThumbnailRenderMode::Auto => {
                         let mut used_protocol = false;
-                        if let Ok(mut picker) = Picker::from_query_stdio() {
-                            match self.config.current_image_protocol() {
-                                crate::config::ImageProtocol::Auto => {
-                                    // Fix: iTerm2 incorrectly detected as Kitty
-                                    if picker.protocol_type() == ProtocolType::Kitty
-                                        && let Ok(term_program) = std::env::var("TERM_PROGRAM")
-                                        && term_program.contains("iTerm")
-                                    {
-                                        picker.set_protocol_type(ProtocolType::Iterm2);
-                                    }
-                                }
-                                crate::config::ImageProtocol::Kitty => {
-                                    picker.set_protocol_type(ProtocolType::Kitty);
-                                }
-                                crate::config::ImageProtocol::Iterm2 => {
-                                    picker.set_protocol_type(ProtocolType::Iterm2);
-                                }
-                                crate::config::ImageProtocol::Sixel => {
-                                    picker.set_protocol_type(ProtocolType::Sixel);
-                                }
-                            }
-
+                        if let Some(picker) = self.configured_image_picker() {
                             let render_rect = center_image_rect(image, image_area);
                             let img_display =
                                 upscale_for_rect(image, render_rect, picker.font_size());
@@ -3060,40 +3060,17 @@ impl App {
 
         if has_thumb {
             use crate::config::ThumbnailRenderMode;
-            use ratatui_image::{
-                StatefulImage,
-                picker::{Picker, ProtocolType},
-            };
+            use ratatui_image::{StatefulImage, picker::Picker};
 
             let inner_h = area.height.saturating_sub(2);
             let footer_h = footer_lines.len() as u16;
             let top_h = inner_h.saturating_sub(footer_h);
             let render_mode = self.config.thumbnail_mode.should_use_color();
 
-            // For Auto mode: call from_query_stdio() ONCE and reuse for both
-            // height calculation and rendering (calling twice consumes the terminal response)
+            // Picker is queried once at startup and cached; reuse it for both the
+            // height calculation and rendering (never re-query during draw).
             let auto_picker: Option<Picker> = if matches!(render_mode, ThumbnailRenderMode::Auto) {
-                Picker::from_query_stdio().ok().map(|mut p| {
-                    match self.config.current_image_protocol() {
-                        crate::config::ImageProtocol::Auto => {
-                            if p.protocol_type() == ProtocolType::Kitty
-                                && std::env::var("TERM_PROGRAM").is_ok_and(|t| t.contains("iTerm"))
-                            {
-                                p.set_protocol_type(ProtocolType::Iterm2);
-                            }
-                        }
-                        crate::config::ImageProtocol::Kitty => {
-                            p.set_protocol_type(ProtocolType::Kitty)
-                        }
-                        crate::config::ImageProtocol::Iterm2 => {
-                            p.set_protocol_type(ProtocolType::Iterm2)
-                        }
-                        crate::config::ImageProtocol::Sixel => {
-                            p.set_protocol_type(ProtocolType::Sixel)
-                        }
-                    }
-                    p
-                })
+                self.configured_image_picker()
             } else {
                 None
             };
