@@ -69,7 +69,7 @@ impl AppConfig {
 
         let raw = toml::to_string_pretty(&cfg).context("failed to serialize config")?;
         let tmp_path = path.with_extension("tmp");
-        fs::write(&tmp_path, &raw)
+        write_owner_only(&tmp_path, raw.as_bytes())
             .with_context(|| format!("failed to write config {}", tmp_path.display()))?;
         fs::rename(&tmp_path, &path)
             .with_context(|| format!("failed to rename config {}", path.display()))?;
@@ -91,6 +91,26 @@ fn set_file_owner_only(path: &PathBuf) {
 
 #[cfg(not(unix))]
 fn set_file_owner_only(_path: &PathBuf) {}
+
+/// Write `data` to `path`, creating the file 0600 on unix so the stored
+/// credentials are never world-readable, even before the post-rename chmod.
+#[cfg(unix)]
+fn write_owner_only(path: &PathBuf, data: &[u8]) -> std::io::Result<()> {
+    use std::io::Write as _;
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut f = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?;
+    f.write_all(data)
+}
+
+#[cfg(not(unix))]
+fn write_owner_only(path: &PathBuf, data: &[u8]) -> std::io::Result<()> {
+    fs::write(path, data)
+}
 
 fn home_config_dir() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".config"))

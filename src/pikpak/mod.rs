@@ -92,7 +92,7 @@ impl PikPak {
         }
         let raw = serde_json::to_string_pretty(token).context("failed to encode session")?;
         let tmp_path = self.session_path.with_extension("tmp");
-        fs::write(&tmp_path, &raw)
+        write_owner_only(&tmp_path, raw.as_bytes())
             .with_context(|| format!("failed to write temp session {}", tmp_path.display()))?;
         fs::rename(&tmp_path, &self.session_path)
             .with_context(|| format!("failed to rename session {}", self.session_path.display()))?;
@@ -378,6 +378,26 @@ fn set_file_owner_only(path: &Path) {
 
 #[cfg(not(unix))]
 fn set_file_owner_only(_path: &Path) {}
+
+/// Write `data` to `path`, creating the file 0600 on unix so the secret is
+/// never world-readable — not even in the window before the post-rename chmod.
+#[cfg(unix)]
+fn write_owner_only(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    use std::io::Write as _;
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut f = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?;
+    f.write_all(data)
+}
+
+#[cfg(not(unix))]
+fn write_owner_only(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    fs::write(path, data)
+}
 
 fn now_unix() -> i64 {
     SystemTime::now()
@@ -855,6 +875,19 @@ mod tests {
         assert_eq!(list_hits.load(Ordering::SeqCst), 2);
 
         handle.join().unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_session_writes_owner_only_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = temp_test_dir("session-perms");
+        let path = dir.join("session.json");
+        // test_client() calls save_session() during construction.
+        let _client = test_client("http://unused".to_string(), path.clone());
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "session file must be owner-only");
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
