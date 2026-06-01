@@ -79,9 +79,13 @@ pub fn run(args: &[String]) -> Result<()> {
                     println!("  \x1b[36mResolution:\x1b[0m {}x{}", w, h);
                 }
                 if let Some(dur) = video.duration {
-                    let mins = (dur / 60.0) as u64;
-                    let secs = (dur % 60.0) as u64;
-                    println!("  \x1b[36mDuration:\x1b[0m   {}:{:02}", mins, secs);
+                    let total = dur as u64;
+                    let (h, m, s) = (total / 3600, (total % 3600) / 60, total % 60);
+                    if h > 0 {
+                        println!("  \x1b[36mDuration:\x1b[0m   {}:{:02}:{:02}", h, m, s);
+                    } else {
+                        println!("  \x1b[36mDuration:\x1b[0m   {}:{:02}", m, s);
+                    }
                 }
                 if let Some(br) = video.bit_rate {
                     println!("  \x1b[36mBitrate:\x1b[0m    {} kbps", br / 1000);
