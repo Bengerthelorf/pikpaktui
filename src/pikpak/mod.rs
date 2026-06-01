@@ -500,6 +500,26 @@ mod tests {
         stream.write_all(body).unwrap();
     }
 
+    /// One-shot server that replies to a single request with a canned status and
+    /// body, regardless of path. Used to exercise the shared API error handling.
+    fn start_canned_server(
+        status: u16,
+        reason: &'static str,
+        body: Vec<u8>,
+    ) -> (String, std::thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let handle = std::thread::spawn(move || {
+            for stream in listener.incoming().take(1) {
+                let Ok(mut stream) = stream else { continue };
+                let mut buf = [0u8; 4096];
+                let _ = std::io::Read::read(&mut stream, &mut buf);
+                write_response(&mut stream, status, reason, &body);
+            }
+        });
+        (base_url, handle)
+    }
+
     #[test]
     fn token_expiry_check() {
         let token = SessionToken {
@@ -605,6 +625,140 @@ mod tests {
         assert_eq!(std::fs::read(&dest).unwrap(), b"hello");
         assert_eq!(server.download_hits.load(Ordering::SeqCst), 1);
         server.handle.join().unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn quota_propagates_api_error_status_and_body() {
+        let (base_url, handle) =
+            start_canned_server(500, "Internal Server Error", b"quota blew up".to_vec());
+        let dir = temp_test_dir("quota-api-error");
+        let client = test_client(base_url, dir.join("session.json"));
+
+        let err = client.quota().unwrap_err();
+        let msg = format!("{err:#}");
+
+        assert!(
+            msg.contains("quota failed (500 Internal Server Error)"),
+            "got: {msg}"
+        );
+        assert!(msg.contains("quota blew up"), "got: {msg}");
+
+        handle.join().unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn quota_reports_invalid_json() {
+        let (base_url, handle) = start_canned_server(200, "OK", b"this is not json".to_vec());
+        let dir = temp_test_dir("quota-bad-json");
+        let client = test_client(base_url, dir.join("session.json"));
+
+        let err = client.quota().unwrap_err();
+        let msg = format!("{err:#}");
+
+        assert!(msg.contains("invalid quota json"), "got: {msg}");
+
+        handle.join().unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn api_error_body_is_truncated_by_sanitize() {
+        let long_body = "Z".repeat(300);
+        let (base_url, handle) =
+            start_canned_server(503, "Service Unavailable", long_body.into_bytes());
+        let dir = temp_test_dir("quota-long-body");
+        let client = test_client(base_url, dir.join("session.json"));
+
+        let err = client.quota().unwrap_err();
+        let msg = format!("{err:#}");
+
+        // sanitize() keeps the first 240 chars and appends an ellipsis.
+        assert!(msg.contains(&"Z".repeat(240)), "got: {msg}");
+        assert!(msg.contains("..."), "got: {msg}");
+        assert!(
+            !msg.contains(&"Z".repeat(241)),
+            "body should be truncated to 240 chars"
+        );
+
+        handle.join().unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn file_info_propagates_api_error() {
+        let (base_url, handle) = start_canned_server(403, "Forbidden", b"no access".to_vec());
+        let dir = temp_test_dir("file-info-api-error");
+        let client = test_client(base_url, dir.join("session.json"));
+
+        let err = client.file_info("FID").unwrap_err();
+        let msg = format!("{err:#}");
+
+        assert!(
+            msg.contains("file_info failed (403 Forbidden)"),
+            "got: {msg}"
+        );
+        assert!(msg.contains("no access"), "got: {msg}");
+
+        handle.join().unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn offline_list_reports_invalid_json() {
+        let (base_url, handle) = start_canned_server(200, "OK", b"<html>nope</html>".to_vec());
+        let dir = temp_test_dir("offline-list-bad-json");
+        let client = test_client(base_url, dir.join("session.json"));
+
+        let err = client
+            .offline_list(50, &["PHASE_TYPE_RUNNING"])
+            .unwrap_err();
+        let msg = format!("{err:#}");
+
+        assert!(msg.contains("invalid offline list json"), "got: {msg}");
+
+        handle.join().unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn events_propagates_api_error() {
+        let (base_url, handle) =
+            start_canned_server(500, "Internal Server Error", b"events boom".to_vec());
+        let dir = temp_test_dir("events-api-error");
+        let client = test_client(base_url, dir.join("session.json"));
+
+        let err = client.events(20).unwrap_err();
+        let msg = format!("{err:#}");
+
+        assert!(
+            msg.contains("events failed (500 Internal Server Error)"),
+            "got: {msg}"
+        );
+        assert!(msg.contains("events boom"), "got: {msg}");
+
+        handle.join().unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn starred_list_propagates_api_error() {
+        let (base_url, handle) =
+            start_canned_server(429, "Too Many Requests", b"slow down".to_vec());
+        let dir = temp_test_dir("starred-api-error");
+        let client = test_client(base_url, dir.join("session.json"));
+
+        let err = client.starred_list(100).unwrap_err();
+        let msg = format!("{err:#}");
+
+        assert!(
+            msg.contains("starred list failed (429 Too Many Requests)"),
+            "got: {msg}"
+        );
+        assert!(msg.contains("slow down"), "got: {msg}");
+
+        handle.join().unwrap();
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
