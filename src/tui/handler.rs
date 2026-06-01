@@ -2679,23 +2679,27 @@ impl App {
                 return;
             }
             if self.is_in_rect(col, row, self.current_pane_area.get()) {
-                if up {
-                    if self.selected > 0 {
-                        self.selected -= 1;
-                        self.on_cursor_move();
-                    }
-                } else if !self.entries.is_empty() {
-                    self.selected = (self.selected + 1).min(self.entries.len() - 1);
+                // A few rows per wheel notch (like the logs pane) feels right in
+                // big folders; refresh the preview only once after the jump.
+                const WHEEL_STEP: usize = 3;
+                let new = if up {
+                    self.selected.saturating_sub(WHEEL_STEP)
+                } else if self.entries.is_empty() {
+                    0
+                } else {
+                    (self.selected + WHEEL_STEP).min(self.entries.len() - 1)
+                };
+                if new != self.selected {
+                    self.selected = new;
                     self.on_cursor_move();
                 }
             } else if self.is_in_rect(col, row, self.parent_pane_area.get()) {
+                const WHEEL_STEP: usize = 3;
                 if up {
-                    if self.parent_selected > 0 {
-                        self.parent_selected -= 1;
-                    }
+                    self.parent_selected = self.parent_selected.saturating_sub(WHEEL_STEP);
                 } else if !self.parent_entries.is_empty() {
                     self.parent_selected =
-                        (self.parent_selected + 1).min(self.parent_entries.len() - 1);
+                        (self.parent_selected + WHEEL_STEP).min(self.parent_entries.len() - 1);
                 }
             } else if self.is_in_rect(col, row, self.preview_pane_area.get()) {
                 let area = self.preview_pane_area.get();

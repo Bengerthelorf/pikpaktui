@@ -550,10 +550,14 @@ impl App {
                         self.config.sort_field,
                         self.config.sort_reverse,
                     );
+                    // Keep the cursor on the same entry across a refresh — a
+                    // re-sort or insert/delete shifts indices, so a fixed index
+                    // would jump to a different file. Fall back to a clamp.
+                    let prev_id = self.entries.get(self.selected).map(|e| e.id.clone());
                     self.entries = entries;
-                    if self.selected >= self.entries.len() {
-                        self.selected = self.entries.len().saturating_sub(1);
-                    }
+                    self.selected = prev_id
+                        .and_then(|id| self.entries.iter().position(|e| e.id == id))
+                        .unwrap_or_else(|| self.selected.min(self.entries.len().saturating_sub(1)));
                     self.push_log(format!("Refreshed {}", self.current_path_display()));
                     self.on_cursor_move();
                 }
@@ -804,6 +808,9 @@ impl App {
                     self.selected = 0;
                     self.parent_entries.clear();
                     self.parent_selected = 0;
+                    // Fill the parent pane like normal navigation does — goto
+                    // otherwise leaves it blank until the next move.
+                    self.refresh_parent();
                     self.clear_preview();
                     self.loading = true;
                     let client = Arc::clone(&self.client);
