@@ -310,13 +310,7 @@ impl PikPak {
         rb = self.authed_headers(rb);
 
         let response = rb.send().context("events request failed")?;
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().unwrap_or_default();
-            return Err(anyhow!("events failed ({}): {}", status, sanitize(&body)));
-        }
-
-        response.json().context("invalid events json")
+        json_or_api_error(response, "events")
     }
 }
 

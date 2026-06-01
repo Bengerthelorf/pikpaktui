@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, anyhow};
 
 use super::drive::{DriveFileResponse, DriveListResponse};
-use super::{Entry, FileInfoResponse, PikPak, ensure_success, sanitize};
+use super::{Entry, FileInfoResponse, PikPak, ensure_success, json_or_api_error};
 
 impl PikPak {
     pub fn ls(&self, parent_id: &str) -> Result<Vec<Entry>> {
@@ -25,13 +25,7 @@ impl PikPak {
             rb = self.authed_headers(rb);
 
             let response = rb.send().context("ls request failed")?;
-            let status = response.status();
-            if !status.is_success() {
-                let body = response.text().unwrap_or_default();
-                return Err(anyhow!("ls failed ({}): {}", status, sanitize(&body)));
-            }
-
-            let payload: DriveListResponse = response.json().context("invalid ls json")?;
+            let payload: DriveListResponse = json_or_api_error(response, "ls")?;
             let next = payload.next_page_token.filter(|t| !t.is_empty());
 
             all_entries.extend(payload.files.into_iter().map(|f| f.into_entry()));
@@ -109,13 +103,7 @@ impl PikPak {
         rb = self.authed_headers(rb);
 
         let response = rb.send().context("ls_trash request failed")?;
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().unwrap_or_default();
-            return Err(anyhow!("ls_trash failed ({}): {}", status, sanitize(&body)));
-        }
-
-        let payload: DriveListResponse = response.json().context("invalid ls_trash json")?;
+        let payload: DriveListResponse = json_or_api_error(response, "ls_trash")?;
         let entries = payload.files.into_iter().map(|f| f.into_entry()).collect();
         Ok(entries)
     }
@@ -214,13 +202,7 @@ impl PikPak {
         rb = self.authed_headers(rb);
 
         let response = rb.send().context("mkdir request failed")?;
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().unwrap_or_default();
-            return Err(anyhow!("mkdir failed ({}): {}", status, sanitize(&body)));
-        }
-
-        let resp: DriveFileResponse = response.json().context("invalid mkdir json")?;
+        let resp: DriveFileResponse = json_or_api_error(response, "mkdir")?;
         Ok(resp.file.into_folder_entry())
     }
 
@@ -232,17 +214,7 @@ impl PikPak {
         rb = self.authed_headers(rb);
 
         let response = rb.send().context("file_info request failed")?;
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().unwrap_or_default();
-            return Err(anyhow!(
-                "file_info failed ({}): {}",
-                status,
-                sanitize(&body)
-            ));
-        }
-
-        response.json().context("invalid file_info json")
+        json_or_api_error(response, "file_info")
     }
 
     pub fn star(&self, ids: &[&str]) -> Result<()> {
@@ -283,17 +255,7 @@ impl PikPak {
         rb = self.authed_headers(rb);
 
         let response = rb.send().context("starred list request failed")?;
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().unwrap_or_default();
-            return Err(anyhow!(
-                "starred list failed ({}): {}",
-                status,
-                sanitize(&body)
-            ));
-        }
-
-        let payload: DriveListResponse = response.json().context("invalid starred list json")?;
+        let payload: DriveListResponse = json_or_api_error(response, "starred list")?;
         let entries = payload
             .files
             .into_iter()

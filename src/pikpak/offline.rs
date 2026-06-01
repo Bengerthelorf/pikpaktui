@@ -1,6 +1,6 @@
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 
-use super::{OfflineListResponse, OfflineTaskResponse, PikPak, ensure_success, sanitize};
+use super::{OfflineListResponse, OfflineTaskResponse, PikPak, ensure_success, json_or_api_error};
 
 impl PikPak {
     pub fn offline_download(
@@ -31,17 +31,7 @@ impl PikPak {
         rb = self.authed_headers(rb);
 
         let response = rb.send().context("offline download request failed")?;
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().unwrap_or_default();
-            return Err(anyhow!(
-                "offline download failed ({}): {}",
-                status,
-                sanitize(&body)
-            ));
-        }
-
-        response.json().context("invalid offline download json")
+        json_or_api_error(response, "offline download")
     }
 
     pub fn offline_list(&self, limit: u32, phases: &[&str]) -> Result<OfflineListResponse> {
@@ -62,17 +52,7 @@ impl PikPak {
         rb = self.authed_headers(rb);
 
         let response = rb.send().context("offline list request failed")?;
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().unwrap_or_default();
-            return Err(anyhow!(
-                "offline list failed ({}): {}",
-                status,
-                sanitize(&body)
-            ));
-        }
-
-        response.json().context("invalid offline list json")
+        json_or_api_error(response, "offline list")
     }
 
     pub fn offline_task_retry(&self, task_id: &str) -> Result<()> {
