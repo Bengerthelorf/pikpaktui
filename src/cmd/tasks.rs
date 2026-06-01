@@ -76,7 +76,9 @@ pub fn run(args: &[String]) -> Result<()> {
                         .and_then(|s| s.parse::<u64>().ok())
                         .map(super::format_size)
                         .unwrap_or_default();
-                    let id = t.id[..8.min(t.id.len())].to_string();
+                    // Show the full id: `tasks retry`/`delete` take it verbatim,
+                    // so a truncated id wouldn't round-trip.
+                    let id = t.id.clone();
                     let last = if t.phase == "PHASE_TYPE_ERROR" {
                         t.message.as_deref().unwrap_or("").to_string()
                     } else {
@@ -107,7 +109,7 @@ pub fn run(args: &[String]) -> Result<()> {
                 .unwrap_or(0)
                 .max(4);
             let w_size = rows.iter().map(|r| r.size.len()).max().unwrap_or(4).max(4);
-            let w_id = 8usize;
+            let w_id = rows.iter().map(|r| r.id.len()).max().unwrap_or(2).max(2);
             let w_last = rows
                 .iter()
                 .map(|r| UnicodeWidthStr::width(r.last.as_str()))

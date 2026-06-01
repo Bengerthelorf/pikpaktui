@@ -11,7 +11,7 @@ pub fn run(args: &[String]) -> Result<()> {
         }
     }
 
-    if rest.len() < 2 {
+    if rest.len() != 2 {
         return Err(anyhow!(
             "Usage: pikpaktui rename [-n] <file_path> <new_name>"
         ));

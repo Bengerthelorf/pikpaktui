@@ -121,8 +121,11 @@ fn copy_to_clipboard(text: &str) -> Result<()> {
         if let Some(stdin) = child.stdin.as_mut() {
             let _ = stdin.write_all(text.as_bytes());
         }
-        child.wait()?;
-        return Ok(());
+        // A tool can exist but fail (e.g. xclip with no X display, wl-copy off
+        // Wayland); only treat a clean exit as success, else try the next one.
+        if child.wait()?.success() {
+            return Ok(());
+        }
     }
 
     Err(anyhow!(

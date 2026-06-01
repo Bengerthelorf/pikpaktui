@@ -187,7 +187,7 @@ fn command_help_text_inner(cmd: &str) -> (&'static str, &'static str, String) {
                  {opt}  -n, --dry-run       {d}Preview without downloading{R}\n\
                  \n{B}EXAMPLES:{R}\n\
                  {ex}  pikpaktui download /movie.mkv{R}\n\
-                 {ex}  pikpaktui download -j4 -t ./local /Movies{R}\n",
+                 {ex}  pikpaktui download -j 4 -t ./local /Movies{R}\n",
                 opt = G,
                 d = D,
                 ex = D,
@@ -298,7 +298,7 @@ fn command_help_text_inner(cmd: &str) -> (&'static str, &'static str, String) {
                  {opt}  -J, --json       {d}Output as JSON{R}\n\
                  \n{B}EXAMPLES:{R}\n\
                  {ex}  pikpaktui link /movie.mkv{R}\n\
-                 {ex}  pikpaktui link -mc /movie.mkv{R}\n",
+                 {ex}  pikpaktui link -m -c /movie.mkv{R}\n",
                 opt = G,
                 d = D,
                 ex = D,
