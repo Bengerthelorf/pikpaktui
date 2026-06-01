@@ -1986,7 +1986,9 @@ impl App {
         let count = cart_items.len();
         for item in cart_items {
             let file_dest = dest.join(&item.name);
+            let id = self.download_state.alloc_id();
             let task = DownloadTask {
+                id,
                 file_id: item.id,
                 name: item.name,
                 total_size: item.size,
@@ -2034,18 +2036,35 @@ impl App {
                 let sel = self.download_state.selected;
                 let mut log_msg = None;
                 let mut need_start = false;
-                if let Some(task) = self.download_state.tasks.get_mut(sel) {
-                    match task.status {
+                // Read fields up front so the task borrow isn't held across the
+                // active_ids check.
+                let info = self
+                    .download_state
+                    .tasks
+                    .get(sel)
+                    .map(|t| (t.status.clone(), t.id, t.name.clone()));
+                if let Some((status, id, name)) = info {
+                    match status {
                         TaskStatus::Downloading => {
+                            let task = &mut self.download_state.tasks[sel];
                             task.pause_flag.store(true, Ordering::Relaxed);
                             task.status = TaskStatus::Paused;
-                            log_msg = Some(format!("Paused '{}'", task.name));
+                            log_msg = Some(format!("Paused '{}'", name));
                         }
                         TaskStatus::Paused => {
+                            // A parked worker resumes itself; spawning another
+                            // would write the same file twice. Re-queue only when
+                            // no worker exists (e.g. task restored from disk).
+                            let worker_alive = self.download_state.active_ids.contains(&id);
+                            let task = &mut self.download_state.tasks[sel];
                             task.pause_flag.store(false, Ordering::Relaxed);
-                            task.status = TaskStatus::Pending;
-                            log_msg = Some(format!("Resumed '{}'", task.name));
-                            need_start = true;
+                            if worker_alive {
+                                task.status = TaskStatus::Downloading;
+                            } else {
+                                task.status = TaskStatus::Pending;
+                                need_start = true;
+                            }
+                            log_msg = Some(format!("Resumed '{}'", name));
                         }
                         _ => {}
                     }
@@ -2060,14 +2079,18 @@ impl App {
             }
             KeyCode::Char('x') => {
                 let sel = self.download_state.selected;
-                if let Some(task) = self.download_state.tasks.get_mut(sel)
-                    && matches!(
-                        task.status,
+                let cancel_info = self.download_state.tasks.get(sel).and_then(|t| {
+                    matches!(
+                        t.status,
                         TaskStatus::Downloading | TaskStatus::Paused | TaskStatus::Pending
                     )
-                {
-                    task.cancel_flag.store(true, Ordering::Relaxed);
-                    let name = task.name.clone();
+                    .then(|| (t.id, t.name.clone(), Arc::clone(&t.cancel_flag)))
+                });
+                if let Some((id, name, cancel_flag)) = cancel_info {
+                    // Worker stops on cancel_flag without a Done/Failed message,
+                    // so drop its active_ids entry here.
+                    cancel_flag.store(true, Ordering::Relaxed);
+                    self.download_state.active_ids.remove(&id);
                     self.download_state.tasks.remove(sel);
                     if self.download_state.selected >= self.download_state.tasks.len()
                         && self.download_state.selected > 0

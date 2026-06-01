@@ -22,6 +22,9 @@ pub enum TaskStatus {
 
 #[derive(Clone)]
 pub struct DownloadTask {
+    /// Stable routing id for worker messages; survives cancel/remove (a Vec
+    /// position would not).
+    pub id: u64,
     pub file_id: String,
     pub name: String,
     pub total_size: u64,
@@ -35,19 +38,19 @@ pub struct DownloadTask {
 
 pub enum DownloadMsg {
     Progress {
-        index: usize,
+        id: u64,
         downloaded: u64,
         speed: f64,
     },
     Done {
-        index: usize,
+        id: u64,
     },
     Failed {
-        index: usize,
+        id: u64,
         error: String,
     },
     Started {
-        index: usize,
+        id: u64,
         total_size: u64,
     },
 }
@@ -57,8 +60,10 @@ pub struct DownloadState {
     pub selected: usize,
     pub msg_tx: Sender<DownloadMsg>,
     pub msg_rx: Receiver<DownloadMsg>,
-    pub active_ids: HashSet<usize>,
+    /// Task ids that currently have a live (running or parked-paused) worker.
+    pub active_ids: HashSet<u64>,
     pub max_concurrent: usize,
+    next_id: u64,
 }
 
 impl DownloadState {
@@ -71,7 +76,23 @@ impl DownloadState {
             msg_rx: rx,
             active_ids: HashSet::new(),
             max_concurrent: max_concurrent.max(1),
+            next_id: 0,
         }
+    }
+
+    pub fn alloc_id(&mut self) -> u64 {
+        let id = self.next_id;
+        self.next_id = self.next_id.wrapping_add(1);
+        id
+    }
+
+    /// Replace the task list (e.g. from persisted state), assigning fresh ids.
+    pub fn load_tasks(&mut self, mut tasks: Vec<DownloadTask>) {
+        for (i, t) in tasks.iter_mut().enumerate() {
+            t.id = i as u64;
+        }
+        self.next_id = tasks.len() as u64;
+        self.tasks = tasks;
     }
 
     pub fn done_count(&self) -> usize {
@@ -98,17 +119,19 @@ impl DownloadState {
             if active >= self.max_concurrent {
                 break;
             }
+            let active_ids = &self.active_ids;
             let next = self
                 .tasks
                 .iter()
-                .position(|t| t.status == TaskStatus::Pending);
+                .position(|t| t.status == TaskStatus::Pending && !active_ids.contains(&t.id));
             match next {
                 Some(idx) => {
                     self.tasks[idx].status = TaskStatus::Downloading;
-                    self.active_ids.insert(idx);
+                    let id = self.tasks[idx].id;
+                    self.active_ids.insert(id);
                     spawn_download_worker(
                         Arc::clone(client),
-                        idx,
+                        id,
                         self.tasks[idx].file_id.clone(),
                         self.tasks[idx].dest_path.clone(),
                         self.msg_tx.clone(),
@@ -126,36 +149,36 @@ impl DownloadState {
         let mut logs = Vec::new();
         while let Ok(msg) = self.msg_rx.try_recv() {
             match msg {
-                DownloadMsg::Started { index, total_size } => {
-                    if let Some(task) = self.tasks.get_mut(index) {
+                DownloadMsg::Started { id, total_size } => {
+                    if let Some(task) = self.tasks.iter_mut().find(|t| t.id == id) {
                         task.total_size = total_size;
                     }
                 }
                 DownloadMsg::Progress {
-                    index,
+                    id,
                     downloaded,
                     speed,
                 } => {
-                    if let Some(task) = self.tasks.get_mut(index) {
+                    if let Some(task) = self.tasks.iter_mut().find(|t| t.id == id) {
                         task.downloaded = downloaded;
                         task.speed = speed;
                     }
                 }
-                DownloadMsg::Done { index } => {
-                    if let Some(task) = self.tasks.get_mut(index) {
+                DownloadMsg::Done { id } => {
+                    if let Some(task) = self.tasks.iter_mut().find(|t| t.id == id) {
                         task.status = TaskStatus::Done;
                         task.downloaded = task.total_size;
                         logs.push(format!("Downloaded '{}'", task.name));
                     }
-                    self.active_ids.remove(&index);
+                    self.active_ids.remove(&id);
                     self.start_next(client);
                 }
-                DownloadMsg::Failed { index, error } => {
-                    if let Some(task) = self.tasks.get_mut(index) {
+                DownloadMsg::Failed { id, error } => {
+                    if let Some(task) = self.tasks.iter_mut().find(|t| t.id == id) {
                         task.status = TaskStatus::Failed(error.clone());
                         logs.push(format!("Download failed '{}': {}", task.name, error));
                     }
-                    self.active_ids.remove(&index);
+                    self.active_ids.remove(&id);
                     self.start_next(client);
                 }
             }
@@ -166,7 +189,7 @@ impl DownloadState {
 
 fn spawn_download_worker(
     client: Arc<PikPak>,
-    index: usize,
+    id: u64,
     file_id: String,
     dest: PathBuf,
     msg_tx: Sender<DownloadMsg>,
@@ -176,7 +199,7 @@ fn spawn_download_worker(
     std::thread::spawn(move || {
         if let Err(e) = download_worker(
             &client,
-            index,
+            id,
             &file_id,
             &dest,
             &msg_tx,
@@ -184,7 +207,7 @@ fn spawn_download_worker(
             &cancel_flag,
         ) {
             let _ = msg_tx.send(DownloadMsg::Failed {
-                index,
+                id,
                 error: format!("{e:#}"),
             });
         }
@@ -193,7 +216,7 @@ fn spawn_download_worker(
 
 fn download_worker(
     client: &PikPak,
-    index: usize,
+    id: u64,
     file_id: &str,
     dest: &PathBuf,
     msg_tx: &Sender<DownloadMsg>,
@@ -202,7 +225,7 @@ fn download_worker(
 ) -> anyhow::Result<()> {
     let (url, total_size) = client.download_url(file_id)?;
 
-    let _ = msg_tx.send(DownloadMsg::Started { index, total_size });
+    let _ = msg_tx.send(DownloadMsg::Started { id, total_size });
 
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent)?;
@@ -211,7 +234,7 @@ fn download_worker(
     let existing_size = dest.metadata().map(|m| m.len()).unwrap_or(0);
 
     if existing_size >= total_size && total_size > 0 {
-        let _ = msg_tx.send(DownloadMsg::Done { index });
+        let _ = msg_tx.send(DownloadMsg::Done { id });
         return Ok(());
     }
 
@@ -275,7 +298,7 @@ fn download_worker(
         if elapsed >= speed_interval {
             let speed = (downloaded - last_report_bytes) as f64 / elapsed.as_secs_f64();
             let _ = msg_tx.send(DownloadMsg::Progress {
-                index,
+                id,
                 downloaded,
                 speed,
             });
@@ -284,7 +307,7 @@ fn download_worker(
         }
     }
 
-    let _ = msg_tx.send(DownloadMsg::Done { index });
+    let _ = msg_tx.send(DownloadMsg::Done { id });
     Ok(())
 }
 
@@ -362,6 +385,7 @@ pub fn load_download_state() -> Vec<DownloadTask> {
                 _ => TaskStatus::Paused,
             };
             DownloadTask {
+                id: 0, // reassigned by DownloadState::load_tasks
                 file_id: p.file_id,
                 name: p.name,
                 total_size: p.total_size,
@@ -374,4 +398,79 @@ pub fn load_download_state() -> Vec<DownloadTask> {
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn downloading_task(id: u64, name: &str) -> DownloadTask {
+        DownloadTask {
+            id,
+            file_id: name.into(),
+            name: name.into(),
+            total_size: 100,
+            downloaded: 0,
+            dest_path: PathBuf::from(name),
+            status: TaskStatus::Downloading,
+            pause_flag: Arc::new(AtomicBool::new(false)),
+            cancel_flag: Arc::new(AtomicBool::new(false)),
+            speed: 0.0,
+        }
+    }
+
+    // Cancelling a task removes it from the Vec, shifting later positions. A
+    // worker's message must still reach the right task by its stable id, not by
+    // the now-stale position.
+    #[test]
+    fn progress_routes_by_id_after_remove() {
+        let client = Arc::new(PikPak::new().unwrap());
+        let mut state = DownloadState::new(2);
+        for name in ["a", "b", "c"] {
+            let id = state.alloc_id();
+            state.tasks.push(downloading_task(id, name));
+        }
+
+        // Remove the middle task (id 1); "c" shifts from position 2 to 1.
+        state.tasks.remove(1);
+
+        // The worker for "c" reports progress under its stable id (2).
+        state
+            .msg_tx
+            .send(DownloadMsg::Progress {
+                id: 2,
+                downloaded: 42,
+                speed: 1.0,
+            })
+            .unwrap();
+        state.poll(&client);
+
+        assert_eq!(
+            state.tasks.iter().find(|t| t.id == 2).unwrap().downloaded,
+            42
+        );
+        assert_eq!(
+            state.tasks.iter().find(|t| t.id == 0).unwrap().downloaded,
+            0
+        );
+    }
+
+    // Resuming a still-parked worker must not spawn a second one. The backstop:
+    // start_next skips any Pending task whose id already has a live worker, so it
+    // never starts a duplicate (which would write the same file twice).
+    #[test]
+    fn start_next_skips_ids_with_a_live_worker() {
+        let client = Arc::new(PikPak::new().unwrap());
+        let mut state = DownloadState::new(1);
+        let id = state.alloc_id();
+        let mut task = downloading_task(id, "a");
+        task.status = TaskStatus::Pending;
+        state.tasks.push(task);
+        state.active_ids.insert(id); // a worker already exists for this id
+
+        state.start_next(&client);
+
+        // No second worker: the task is left Pending, unspawned.
+        assert_eq!(state.tasks[0].status, TaskStatus::Pending);
+    }
 }

@@ -328,7 +328,7 @@ impl App {
     fn new_authed(client: PikPak, config: TuiConfig) -> Self {
         let (tx, rx) = mpsc::channel();
         let mut dl_state = DownloadState::new(config.download_jobs);
-        dl_state.tasks = download::load_download_state();
+        dl_state.load_tasks(download::load_download_state());
         let mut app = Self {
             client: Arc::new(client),
             config,
