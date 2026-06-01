@@ -19,11 +19,19 @@ pub fn run(args: &[String]) -> Result<()> {
         match args[i].as_str() {
             "--to" | "-t" => {
                 i += 1;
-                parent_path = args.get(i).map(|s| s.as_str());
+                parent_path = Some(
+                    args.get(i)
+                        .ok_or_else(|| anyhow!("--to requires a path"))?
+                        .as_str(),
+                );
             }
             "--name" => {
                 i += 1;
-                name = args.get(i).map(|s| s.as_str());
+                name = Some(
+                    args.get(i)
+                        .ok_or_else(|| anyhow!("--name requires a value"))?
+                        .as_str(),
+                );
             }
             "--dry-run" | "-n" => dry_run = true,
             other => {
