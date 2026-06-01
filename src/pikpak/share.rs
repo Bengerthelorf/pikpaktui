@@ -1,6 +1,9 @@
 use anyhow::{Context, Result, anyhow};
 
-use super::{CreateShareResponse, MyShare, PikPak, ShareInfoResponse, ShareListResponse, sanitize};
+use super::{
+    CreateShareResponse, MyShare, PikPak, ShareInfoResponse, ShareListResponse, ensure_success,
+    sanitize,
+};
 
 impl PikPak {
     pub fn share_info(&self, share_id: &str, pass_code: &str) -> Result<ShareInfoResponse> {
@@ -141,15 +144,6 @@ impl PikPak {
         rb = self.authed_headers(rb);
 
         let response = rb.send().context("delete shares request failed")?;
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().unwrap_or_default();
-            return Err(anyhow!(
-                "delete shares failed ({}): {}",
-                status,
-                sanitize(&body)
-            ));
-        }
-        Ok(())
+        ensure_success(response, "delete shares")
     }
 }
