@@ -43,7 +43,7 @@ fn build_play_options(client: &PikPak, file_id: &str) -> Result<Vec<PlayOption>>
                 continue;
             }
             let label = m.media_name.as_deref().unwrap_or("unknown").to_string();
-            let available = PikPak::check_stream_available(&url);
+            let available = client.check_stream_available(&url);
             options.push(PlayOption {
                 label,
                 url,

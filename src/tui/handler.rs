@@ -907,8 +907,7 @@ impl App {
                                             .as_deref()
                                             .unwrap_or("Unknown")
                                             .to_string();
-                                        let available =
-                                            crate::pikpak::PikPak::check_stream_available(&url);
+                                        let available = client.check_stream_available(&url);
                                         options.push(PlayOption {
                                             label,
                                             url,
