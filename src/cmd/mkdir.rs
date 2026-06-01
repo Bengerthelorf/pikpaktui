@@ -22,10 +22,10 @@ pub fn run(args: &[String]) -> Result<()> {
     let client = super::cli_client()?;
 
     if recursive {
-        if rest.is_empty() {
+        if rest.len() != 1 {
             return Err(anyhow!("Usage: pikpaktui mkdir [-n] -p <full_path>"));
         }
-        let full_path = rest.join(" ");
+        let full_path = rest[0];
         let segments: Vec<&str> = full_path
             .trim_matches('/')
             .split('/')
@@ -82,7 +82,7 @@ pub fn run(args: &[String]) -> Result<()> {
             segments.join("/")
         );
     } else {
-        if rest.len() < 2 {
+        if rest.len() != 2 {
             return Err(anyhow!(
                 "Usage: pikpaktui mkdir [-n] <parent_path> <folder_name>"
             ));

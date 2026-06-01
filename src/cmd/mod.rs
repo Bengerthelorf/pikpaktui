@@ -170,7 +170,7 @@ fn command_help_text_inner(cmd: &str) -> (&'static str, &'static str, String) {
                  {opt}  -p               {d}Create intermediate directories{R}\n\
                  \n{B}EXAMPLES:{R}\n\
                  {ex}  pikpaktui mkdir / NewFolder{R}\n\
-                 {ex}  pikpaktui mkdir -p / path/to/deep/folder{R}\n",
+                 {ex}  pikpaktui mkdir -p /path/to/deep/folder{R}\n",
                 opt = G,
                 d = D,
                 ex = D,

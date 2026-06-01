@@ -13,8 +13,8 @@ pub fn run(args: &[String]) -> Result<()> {
 
     for arg in args {
         match arg.as_str() {
-            "-f" => force = true,
-            "-r" => recursive = true,
+            "-f" | "--force" => force = true,
+            "-r" | "--recursive" => recursive = true,
             "-rf" | "-fr" => {
                 recursive = true;
                 force = true;

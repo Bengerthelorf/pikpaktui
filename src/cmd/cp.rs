@@ -53,8 +53,10 @@ pub fn run(args: &[String]) -> Result<()> {
         client.cp(&id_refs, &dest_id)?;
         println!("Copied {} item(s) -> '{}'", paths.len(), dst);
     } else {
-        if paths.len() < 2 {
-            return Err(anyhow!("Usage: pikpaktui cp [-n] <src> <dst>"));
+        if paths.len() != 2 {
+            return Err(anyhow!(
+                "Usage: pikpaktui cp [-n] <src> <dst>  (use -t <dst> for multiple sources)"
+            ));
         }
         let (src_parent, src_name) = super::split_parent_name(paths[0])?;
         let src_parent_id = client.resolve_path(&src_parent)?;
