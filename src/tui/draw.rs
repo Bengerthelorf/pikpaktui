@@ -384,6 +384,60 @@ impl App {
         })
     }
 
+    /// The Name/Size/Created/Modified/markers block shown for the selected
+    /// entry, shared by the basic-info and thumbnail preview panes.
+    fn entry_info_lines<'a>(&self, entry: &'a Entry, wrap_w: usize) -> Vec<Line<'a>> {
+        let mut lines = wrap_labeled_field(
+            "  Name:  ",
+            &entry.name,
+            Style::default().fg(Color::Cyan),
+            Style::default().fg(Color::Reset),
+            wrap_w,
+        );
+        if entry.kind == EntryKind::File {
+            lines.push(Line::from(vec![
+                Span::styled("  Size:  ", Style::default().fg(Color::Cyan)),
+                Span::styled(format_size(entry.size), Style::default().fg(Color::Reset)),
+            ]));
+        }
+        if !entry.created_time.is_empty() {
+            lines.push(Line::from(vec![
+                Span::styled("  Created:", Style::default().fg(Color::Cyan)),
+                Span::styled(&entry.created_time, Style::default().fg(Color::DarkGray)),
+            ]));
+        }
+        if !entry.modified_time.is_empty() {
+            lines.push(Line::from(vec![
+                Span::styled("  Modified:", Style::default().fg(Color::Cyan)),
+                Span::styled(&entry.modified_time, Style::default().fg(Color::DarkGray)),
+            ]));
+        }
+        let mut markers = Vec::new();
+        if entry.starred {
+            markers.push(Span::styled(
+                "\u{2605} Starred",
+                Style::default().fg(Color::Yellow),
+            ));
+        }
+        if self.cart_ids.contains(&entry.id) {
+            if !markers.is_empty() {
+                markers.push(Span::raw("  "));
+            }
+            markers.push(Span::styled(
+                "\u{2606} In cart",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::DIM),
+            ));
+        }
+        if !markers.is_empty() {
+            let mut line = vec![Span::styled("  ", Style::default())];
+            line.extend(markers);
+            lines.push(Line::from(line));
+        }
+        lines
+    }
+
     pub(super) fn draw(&self, f: &mut Frame) {
         match &self.input {
             InputMode::Login { .. } => self.draw_login_screen(f),
@@ -1044,60 +1098,7 @@ impl App {
                 let wrap_w = area.width.saturating_sub(2) as usize;
                 let mut lines = vec![Line::from("")];
                 if let Some(entry) = self.entries.get(self.selected) {
-                    lines.extend(wrap_labeled_field(
-                        "  Name:  ",
-                        &entry.name,
-                        Style::default().fg(Color::Cyan),
-                        Style::default().fg(Color::Reset),
-                        wrap_w,
-                    ));
-                    if entry.kind == EntryKind::File {
-                        lines.push(Line::from(vec![
-                            Span::styled("  Size:  ", Style::default().fg(Color::Cyan)),
-                            Span::styled(
-                                format_size(entry.size),
-                                Style::default().fg(Color::Reset),
-                            ),
-                        ]));
-                    }
-                    if !entry.created_time.is_empty() {
-                        lines.push(Line::from(vec![
-                            Span::styled("  Created:", Style::default().fg(Color::Cyan)),
-                            Span::styled(&entry.created_time, Style::default().fg(Color::DarkGray)),
-                        ]));
-                    }
-                    if !entry.modified_time.is_empty() {
-                        lines.push(Line::from(vec![
-                            Span::styled("  Modified:", Style::default().fg(Color::Cyan)),
-                            Span::styled(
-                                &entry.modified_time,
-                                Style::default().fg(Color::DarkGray),
-                            ),
-                        ]));
-                    }
-                    let mut markers = Vec::new();
-                    if entry.starred {
-                        markers.push(Span::styled(
-                            "\u{2605} Starred",
-                            Style::default().fg(Color::Yellow),
-                        ));
-                    }
-                    if self.cart_ids.contains(&entry.id) {
-                        if !markers.is_empty() {
-                            markers.push(Span::raw("  "));
-                        }
-                        markers.push(Span::styled(
-                            "\u{2606} In cart",
-                            Style::default()
-                                .fg(Color::Yellow)
-                                .add_modifier(Modifier::DIM),
-                        ));
-                    }
-                    if !markers.is_empty() {
-                        let mut line = vec![Span::styled("  ", Style::default())];
-                        line.extend(markers);
-                        lines.push(Line::from(line));
-                    }
+                    lines.extend(self.entry_info_lines(entry, wrap_w));
                     lines.push(Line::from(""));
                     let hint = if entry.kind == EntryKind::File
                         && crate::theme::is_text_previewable(entry)
@@ -1130,60 +1131,7 @@ impl App {
                 let wrap_w = panel_width.max(1) as usize;
                 let mut info_lines: Vec<Line> = vec![];
                 if let Some(entry) = self.entries.get(self.selected) {
-                    info_lines.extend(wrap_labeled_field(
-                        "  Name:  ",
-                        &entry.name,
-                        Style::default().fg(Color::Cyan),
-                        Style::default().fg(Color::Reset),
-                        wrap_w,
-                    ));
-                    if entry.kind == EntryKind::File {
-                        info_lines.push(Line::from(vec![
-                            Span::styled("  Size:  ", Style::default().fg(Color::Cyan)),
-                            Span::styled(
-                                format_size(entry.size),
-                                Style::default().fg(Color::Reset),
-                            ),
-                        ]));
-                    }
-                    if !entry.created_time.is_empty() {
-                        info_lines.push(Line::from(vec![
-                            Span::styled("  Created:", Style::default().fg(Color::Cyan)),
-                            Span::styled(&entry.created_time, Style::default().fg(Color::DarkGray)),
-                        ]));
-                    }
-                    if !entry.modified_time.is_empty() {
-                        info_lines.push(Line::from(vec![
-                            Span::styled("  Modified:", Style::default().fg(Color::Cyan)),
-                            Span::styled(
-                                &entry.modified_time,
-                                Style::default().fg(Color::DarkGray),
-                            ),
-                        ]));
-                    }
-                    let mut markers = Vec::new();
-                    if entry.starred {
-                        markers.push(Span::styled(
-                            "\u{2605} Starred",
-                            Style::default().fg(Color::Yellow),
-                        ));
-                    }
-                    if self.cart_ids.contains(&entry.id) {
-                        if !markers.is_empty() {
-                            markers.push(Span::raw("  "));
-                        }
-                        markers.push(Span::styled(
-                            "\u{2606} In cart",
-                            Style::default()
-                                .fg(Color::Yellow)
-                                .add_modifier(Modifier::DIM),
-                        ));
-                    }
-                    if !markers.is_empty() {
-                        let mut line = vec![Span::styled("  ", Style::default())];
-                        line.extend(markers);
-                        info_lines.push(Line::from(line));
-                    }
+                    info_lines.extend(self.entry_info_lines(entry, wrap_w));
                 }
 
                 let info_visual_lines = info_lines.len() as u16;
