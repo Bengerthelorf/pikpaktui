@@ -70,7 +70,7 @@ impl App {
         }
 
         let overall_pct = if total_size > 0 {
-            (total_downloaded as f64 / total_size as f64 * 100.0) as u64
+            ((total_downloaded as f64 / total_size as f64 * 100.0) as u64).min(100)
         } else {
             0
         };
@@ -91,9 +91,10 @@ impl App {
         ];
 
         let bar_width: usize = 40;
-        let filled = (bar_width as u64 * total_downloaded)
+        let filled = ((bar_width as u64 * total_downloaded)
             .checked_div(total_size)
-            .unwrap_or(0) as usize;
+            .unwrap_or(0) as usize)
+            .min(bar_width);
         let empty = bar_width.saturating_sub(filled);
         let bar = format!("{}{}", "█".repeat(filled), "░".repeat(empty));
 
@@ -361,14 +362,14 @@ impl App {
         }
 
         let overall_pct = if total_size > 0 {
-            (total_downloaded as f64 / total_size as f64 * 100.0) as u64
+            ((total_downloaded as f64 / total_size as f64 * 100.0) as u64).min(100)
         } else {
             0
         };
 
         let bar_width = area.width.saturating_sub(6) as usize;
         let filled = if total_size > 0 {
-            (bar_width as u64 * total_downloaded / total_size.max(1)) as usize
+            ((bar_width as u64 * total_downloaded / total_size.max(1)) as usize).min(bar_width)
         } else {
             0
         };
