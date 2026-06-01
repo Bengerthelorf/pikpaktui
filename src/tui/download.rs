@@ -318,7 +318,7 @@ struct PersistedTask {
     total_size: u64,
     downloaded: u64,
     dest_path: String,
-    status: String, // "pending", "paused", "done", "failed"
+    status: String, // "pending", "paused", "failed" (Done tasks aren't persisted)
 }
 
 fn persist_path() -> Option<PathBuf> {
@@ -340,9 +340,13 @@ pub fn save_download_state(tasks: &[DownloadTask]) {
             dest_path: t.dest_path.to_string_lossy().to_string(),
             status: match &t.status {
                 TaskStatus::Pending => "pending".into(),
-                TaskStatus::Downloading => "paused".into(), // save as paused
+                // Exiting mid-download: persist as paused so it reloads parked,
+                // then resumes from the partial file via Range on next launch
+                // (no worker survives the restart).
+                TaskStatus::Downloading => "paused".into(),
                 TaskStatus::Paused => "paused".into(),
-                TaskStatus::Done => "done".into(),
+                // Done tasks are filtered out above, so this is never reached.
+                TaskStatus::Done => unreachable!("Done tasks are not persisted"),
                 TaskStatus::Failed(_) => "failed".into(),
             },
         })
@@ -378,12 +382,9 @@ pub fn load_download_state() -> Vec<DownloadTask> {
     persisted
         .into_iter()
         .map(|p| {
-            let status = match p.status.as_str() {
-                "pending" => TaskStatus::Paused, // load as paused, user can resume
-                "paused" => TaskStatus::Paused,
-                "done" => TaskStatus::Done,
-                _ => TaskStatus::Paused,
-            };
+            // Everything reloads as Paused (no live worker survives a restart);
+            // the user resumes from the partial file.
+            let status = TaskStatus::Paused;
             DownloadTask {
                 id: 0, // reassigned by DownloadState::load_tasks
                 file_id: p.file_id,

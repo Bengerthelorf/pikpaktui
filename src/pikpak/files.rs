@@ -66,7 +66,6 @@ impl PikPak {
     /// Returns `(final_folder_id, breadcrumb)` where breadcrumb is a vec of
     /// `(parent_id, folder_name)` pairs — the same format used by the TUI App.
     pub fn resolve_path_nav(&self, path: &str) -> Result<(String, Vec<(String, String)>)> {
-        use anyhow::anyhow;
         let components: Vec<&str> = path
             .trim_matches('/')
             .split('/')

@@ -3,10 +3,7 @@ use crate::pikpak::PikPak;
 use anyhow::{Result, anyhow};
 
 pub fn run(args: &[String]) -> Result<()> {
-    if super::wants_help(args) {
-        return super::print_command_help("login");
-    }
-
+    // Per-command --help is handled by the dispatcher in main.rs before run().
     let mut user: Option<String> = None;
     let mut password: Option<String> = None;
 

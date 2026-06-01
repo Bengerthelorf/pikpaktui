@@ -58,13 +58,6 @@ pub const COMMAND_GROUPS: &[(&str, &[&str])] = &[
     ("Utility", &["update", "completions"]),
 ];
 
-/// Returns (usage_line, short_description, detailed_body) for a command.
-/// This is the **single source of truth** — both `pikpaktui --help` and
-/// `pikpaktui <cmd> --help` read from here.
-pub fn command_help_text(cmd: &str) -> (&'static str, &'static str, String) {
-    command_help_text_inner(cmd)
-}
-
 /// Returns true if the arg slice contains `-h` or `--help`.
 pub fn wants_help(args: &[String]) -> bool {
     args.iter().any(|a| a == "-h" || a == "--help")
@@ -81,7 +74,10 @@ pub fn print_command_help(cmd: &str) -> Result<()> {
     Ok(())
 }
 
-fn command_help_text_inner(cmd: &str) -> (&'static str, &'static str, String) {
+/// Returns (usage_line, short_description, detailed_body) for a command.
+/// This is the **single source of truth** — both `pikpaktui --help` and
+/// `pikpaktui <cmd> --help` read from here.
+pub fn command_help_text(cmd: &str) -> (&'static str, &'static str, String) {
     match cmd {
         "ls" => (
             "ls [options] [path]",

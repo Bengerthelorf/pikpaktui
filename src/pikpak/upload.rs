@@ -58,15 +58,8 @@ impl PikPak {
 
         let init: UploadInitResponse = response.json().context("invalid upload init json")?;
 
-        if init.upload_type == "UPLOAD_TYPE_RESUMABLE"
-            && let Some(resumable) = &init.resumable
-            && resumable.kind == "drive#uploadContext"
-            && init.file.phase.as_deref() == Some("PHASE_TYPE_COMPLETE")
-        {
-            self.clear_ls_cache();
-            return Ok((file_name, true));
-        }
-
+        // Instant completion (hash dedup): the server already had this content,
+        // so there's nothing to upload.
         if init.file.phase.as_deref() == Some("PHASE_TYPE_COMPLETE") {
             self.clear_ls_cache();
             return Ok((file_name, true));
@@ -511,8 +504,6 @@ pub(super) struct OssArgs {
 
 #[derive(Debug, Deserialize)]
 pub(super) struct UploadInitResponse {
-    #[serde(default)]
-    pub(super) upload_type: String,
     pub(super) file: UploadFileInfo,
     #[serde(default)]
     pub(super) resumable: Option<ResumableContext>,
@@ -526,8 +517,6 @@ pub(super) struct UploadFileInfo {
 
 #[derive(Debug, Deserialize)]
 pub(super) struct ResumableContext {
-    #[serde(default)]
-    pub(super) kind: String,
     #[serde(default)]
     pub(super) params: ResumableParams,
 }
