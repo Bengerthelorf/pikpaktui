@@ -2714,7 +2714,7 @@ impl App {
                 if *selected > 0 {
                     *selected -= 1;
                 }
-            } else if *selected < 13 {
+            } else if *selected < 16 {
                 *selected += 1;
             }
             self.input = InputMode::Settings {
@@ -2747,6 +2747,7 @@ impl App {
                         ("Interface Settings", 2),
                         ("Playback Settings", 1),
                         ("Download Settings", 1),
+                        ("Update Settings", 1),
                     ];
 
                     let bool_items = [0, 3, 5, 6, 11, 13];
