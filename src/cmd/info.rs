@@ -7,6 +7,9 @@ pub fn run(args: &[String]) -> Result<()> {
     for arg in args {
         match arg.as_str() {
             "-J" | "--json" => json = true,
+            s if s.starts_with('-') && s != "-" => {
+                return Err(anyhow!("unknown option: {s}"));
+            }
             _ => {
                 if path_arg.is_none() {
                     path_arg = Some(arg);

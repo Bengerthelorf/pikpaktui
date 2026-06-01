@@ -11,6 +11,9 @@ pub fn run(args: &[String]) -> Result<()> {
             "-J" | "--json" => json = true,
             "--media" | "-m" => media = true,
             "--copy" | "-c" => copy = true,
+            s if s.starts_with('-') && s != "-" => {
+                return Err(anyhow!("unknown option: {s}"));
+            }
             _ => {
                 if path_arg.is_none() {
                     path_arg = Some(arg);

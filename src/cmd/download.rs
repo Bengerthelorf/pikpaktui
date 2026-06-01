@@ -41,6 +41,9 @@ pub fn run(args: &[String]) -> Result<()> {
                         .as_str(),
                 );
             }
+            s if s.starts_with('-') && s != "-" => {
+                return Err(anyhow!("unknown option: {s}"));
+            }
             _ => paths.push(arg),
         }
     }
@@ -99,6 +102,11 @@ pub fn run(args: &[String]) -> Result<()> {
                 {
                     std::fs::create_dir_all(parent)?;
                 }
+                eprintln!(
+                    "{} ({}) downloading...",
+                    name,
+                    super::format_size(entry.size)
+                );
                 let total = client.download_to(&entry.id, &dest)?;
                 println!(
                     "Downloaded '{}' -> '{}' ({})",
@@ -166,6 +174,11 @@ pub fn run(args: &[String]) -> Result<()> {
             {
                 std::fs::create_dir_all(parent)?;
             }
+            eprintln!(
+                "{} ({}) downloading...",
+                name,
+                super::format_size(entry.size)
+            );
             let total = client.download_to(&entry.id, &dest)?;
             println!(
                 "Downloaded '{}' -> '{}' ({})",

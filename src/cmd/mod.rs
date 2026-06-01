@@ -570,6 +570,9 @@ pub fn run_transfer(
                         .as_str(),
                 );
             }
+            s if s.starts_with('-') && s != "-" => {
+                return Err(anyhow!("unknown option: {s}"));
+            }
             _ => paths.push(arg),
         }
     }
