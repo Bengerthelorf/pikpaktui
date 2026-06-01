@@ -85,15 +85,18 @@ fn run_create(args: &[String]) -> Result<()> {
                 result.pass_code
             );
         }
-        if let Some(out_path) = output_file {
-            let mut f = std::fs::File::create(out_path)
-                .map_err(|e| anyhow!("cannot create '{}': {}", out_path, e))?;
-            writeln!(f, "{}", result.share_url)?;
-            if !result.pass_code.is_empty() {
-                writeln!(f, "Password: {}", result.pass_code)?;
-            }
-            eprintln!("Written to '{}'", out_path);
+    }
+
+    // Honor -o in both JSON and human-readable modes; the notice goes to stderr
+    // so JSON stdout stays clean for scripting.
+    if let Some(out_path) = output_file {
+        let mut f = std::fs::File::create(out_path)
+            .map_err(|e| anyhow!("cannot create '{}': {}", out_path, e))?;
+        writeln!(f, "{}", result.share_url)?;
+        if !result.pass_code.is_empty() {
+            writeln!(f, "Password: {}", result.pass_code)?;
         }
+        eprintln!("Written to '{}'", out_path);
     }
 
     Ok(())
