@@ -490,6 +490,146 @@ pub fn find_entry(client: &PikPak, parent_id: &str, name: &str) -> Result<pikpak
         .ok_or_else(|| anyhow!("'{}' not found", name))
 }
 
+/// Shared body for the star/unstar commands: parse `[-n] <path...>`, resolve
+/// each path to an id, then apply `action`. `verb` is the lowercase op word
+/// ("star"/"unstar"); `past` is the success-message verb ("Starred").
+pub fn run_star_toggle(
+    args: &[String],
+    verb: &str,
+    past: &str,
+    action: impl Fn(&PikPak, &[&str]) -> Result<()>,
+) -> Result<()> {
+    let usage = || anyhow!("usage: pikpaktui {verb} [-n] <path...>");
+    if args.is_empty() {
+        return Err(usage());
+    }
+
+    let mut dry_run = false;
+    let mut paths: Vec<&str> = Vec::new();
+    for arg in args {
+        match arg.as_str() {
+            "-n" | "--dry-run" => dry_run = true,
+            _ => paths.push(arg),
+        }
+    }
+    if paths.is_empty() {
+        return Err(usage());
+    }
+
+    let client = cli_client()?;
+    let mut resolved: Vec<(&str, String)> = Vec::new();
+    for path in &paths {
+        let (parent_path, name) = split_parent_name(path)?;
+        let parent_id = client.resolve_path(&parent_path)?;
+        let entry = find_entry(&client, &parent_id, &name)?;
+        resolved.push((path, entry.id));
+    }
+
+    if dry_run {
+        println!("[dry-run] Would {} {} item(s):", verb, resolved.len());
+        for (path, id) in &resolved {
+            println!("  {} (id: {})", path, id);
+        }
+        return Ok(());
+    }
+
+    let id_refs: Vec<&str> = resolved.iter().map(|(_, id)| id.as_str()).collect();
+    action(&client, &id_refs)?;
+    println!("{} {} item(s)", past, resolved.len());
+    Ok(())
+}
+
+/// Shared body for the mv/cp commands (single `<src> <dst>` and batch
+/// `-t <dst> <src...>` forms). `cmd` is the command name for usage text,
+/// `action`/`past` are the lowercase/past-tense verbs, and `apply` is the
+/// client method (mv or cp).
+pub fn run_transfer(
+    args: &[String],
+    cmd: &str,
+    action: &str,
+    past: &str,
+    apply: impl Fn(&PikPak, &[&str], &str) -> Result<()>,
+) -> Result<()> {
+    if args.len() < 2 {
+        return Err(anyhow!(
+            "Usage: pikpaktui {cmd} [-n] <src> <dst>\n       pikpaktui {cmd} [-n] -t <dst> <src...>"
+        ));
+    }
+
+    let mut target: Option<&str> = None;
+    let mut dry_run = false;
+    let mut paths: Vec<&str> = Vec::new();
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "-n" | "--dry-run" => dry_run = true,
+            "-t" => {
+                target = Some(
+                    iter.next()
+                        .ok_or_else(|| anyhow!("-t requires a destination path"))?
+                        .as_str(),
+                );
+            }
+            _ => paths.push(arg),
+        }
+    }
+
+    let client = cli_client()?;
+
+    if let Some(dst) = target {
+        if paths.is_empty() {
+            return Err(anyhow!("Usage: pikpaktui {cmd} [-n] -t <dst> <src...>"));
+        }
+        let dest_id = client.resolve_path(dst)?;
+        let mut ids: Vec<String> = Vec::new();
+        for path in &paths {
+            let (parent, name) = split_parent_name(path)?;
+            let parent_id = client.resolve_path(&parent)?;
+            let entry = find_entry(&client, &parent_id, &name)?;
+            ids.push(entry.id);
+        }
+
+        if dry_run {
+            println!(
+                "[dry-run] Would {} {} item(s) -> '{}':",
+                action,
+                paths.len(),
+                dst
+            );
+            for (path, id) in paths.iter().zip(ids.iter()) {
+                println!("  {} (id: {})", path, id);
+            }
+            return Ok(());
+        }
+
+        let id_refs: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
+        apply(&client, &id_refs, &dest_id)?;
+        println!("{} {} item(s) -> '{}'", past, paths.len(), dst);
+    } else {
+        if paths.len() != 2 {
+            return Err(anyhow!(
+                "Usage: pikpaktui {cmd} [-n] <src> <dst>  (use -t <dst> for multiple sources)"
+            ));
+        }
+        let (src_parent, src_name) = split_parent_name(paths[0])?;
+        let src_parent_id = client.resolve_path(&src_parent)?;
+        let entry = find_entry(&client, &src_parent_id, &src_name)?;
+        let dest_id = client.resolve_path(paths[1])?;
+
+        if dry_run {
+            println!(
+                "[dry-run] Would {} '{}' -> '{}' (id: {})",
+                action, paths[0], paths[1], entry.id
+            );
+            return Ok(());
+        }
+
+        apply(&client, &[entry.id.as_str()], &dest_id)?;
+        println!("{} '{}' -> '{}'", past, paths[0], paths[1]);
+    }
+    Ok(())
+}
+
 /// eza-style grid output (column-major) for a list of entries.
 pub fn print_entries_short(entries: &[pikpak::Entry], nerd_font: bool) {
     use crate::theme;
