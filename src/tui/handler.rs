@@ -15,6 +15,11 @@ use super::{
     App, InputMode, LoginField, OpResult, PickerState, PlayOption, PreviewState, handle_text_input,
 };
 
+/// Index of the last selectable Settings row. MUST match the item layout in
+/// `draw::draw_settings_overlay`, the index match in `handle_settings_key`, and
+/// the click map / `bool_items` in `handle_mouse_click` — keep all four in sync.
+const SETTINGS_LAST_INDEX: usize = 16;
+
 enum PickerKeyResult {
     Navigated,
     Confirmed(String), // dest_id
@@ -2748,26 +2753,16 @@ impl App {
                 *selected = (*selected + 1).min(entries.len() - 1);
             }
             self.trash_selected = *selected;
-        } else if let InputMode::Settings {
-            selected,
-            editing,
-            draft,
-            modified,
-        } = &mut self.input
-        {
+        } else if let InputMode::Settings { selected, .. } = &mut self.input {
+            // Mutate the selection in place — no need to clone the whole draft
+            // config just to bump a usize each wheel notch.
             if up {
                 if *selected > 0 {
                     *selected -= 1;
                 }
-            } else if *selected < 16 {
+            } else if *selected < SETTINGS_LAST_INDEX {
                 *selected += 1;
             }
-            self.input = InputMode::Settings {
-                selected: *selected,
-                editing: *editing,
-                draft: draft.clone(),
-                modified: *modified,
-            };
         }
     }
 
@@ -2785,6 +2780,9 @@ impl App {
                     let content_y = row.saturating_sub(area.y + 1) as usize;
                     let content_x = col.saturating_sub(area.x + 1) as usize;
 
+                    // Mirror of the layout in draw::draw_settings_overlay (and
+                    // the index match in handle_settings_key). The item counts
+                    // must sum to SETTINGS_LAST_INDEX + 1; keep all in sync.
                     let categories = vec![
                         ("UI Settings", 5),
                         ("Preview Settings", 5),
@@ -3502,7 +3500,7 @@ impl App {
         } else {
             match code {
                 KeyCode::Down | KeyCode::Char('j') => {
-                    *selected = (*selected + 1).min(16);
+                    *selected = (*selected + 1).min(SETTINGS_LAST_INDEX);
                     None
                 }
                 KeyCode::Up | KeyCode::Char('k') => {
