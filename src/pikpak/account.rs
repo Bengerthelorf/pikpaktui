@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, anyhow};
 
-use super::{PikPak, QuotaInfo, TransferQuotaResponse, VipInfoResponse, sanitize};
+use super::{PikPak, QuotaInfo, TransferQuotaResponse, VipInfoResponse, json_or_api_error};
 
 impl PikPak {
     pub fn quota(&self) -> Result<QuotaInfo> {
@@ -11,13 +11,7 @@ impl PikPak {
         rb = self.authed_headers(rb);
 
         let response = rb.send().context("quota request failed")?;
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().unwrap_or_default();
-            return Err(anyhow!("quota failed ({}): {}", status, sanitize(&body)));
-        }
-
-        response.json().context("invalid quota json")
+        json_or_api_error(response, "quota")
     }
 
     pub fn vip_info(&self) -> Result<VipInfoResponse> {
@@ -28,13 +22,7 @@ impl PikPak {
         rb = self.authed_headers(rb);
 
         let response = rb.send().context("vip info request failed")?;
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().unwrap_or_default();
-            return Err(anyhow!("vip info failed ({}): {}", status, sanitize(&body)));
-        }
-
-        response.json().context("invalid vip info json")
+        json_or_api_error(response, "vip info")
     }
 
     pub fn invite_code(&self) -> Result<String> {
@@ -45,17 +33,7 @@ impl PikPak {
         rb = self.authed_headers(rb);
 
         let response = rb.send().context("invite code request failed")?;
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().unwrap_or_default();
-            return Err(anyhow!(
-                "invite code failed ({}): {}",
-                status,
-                sanitize(&body)
-            ));
-        }
-
-        let data: serde_json::Value = response.json().context("invalid invite code json")?;
+        let data: serde_json::Value = json_or_api_error(response, "invite code")?;
         data["code"]
             .as_str()
             .map(|s| s.to_string())
@@ -74,16 +52,6 @@ impl PikPak {
         rb = self.authed_headers(rb);
 
         let response = rb.send().context("transfer quota request failed")?;
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().unwrap_or_default();
-            return Err(anyhow!(
-                "transfer quota failed ({}): {}",
-                status,
-                sanitize(&body)
-            ));
-        }
-
-        response.json().context("invalid transfer quota json")
+        json_or_api_error(response, "transfer quota")
     }
 }

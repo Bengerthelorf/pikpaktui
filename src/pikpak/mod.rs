@@ -329,6 +329,23 @@ fn ensure_success(response: reqwest::blocking::Response, op: &str) -> Result<()>
     Err(anyhow!("{} failed ({}): {}", op, status, sanitize(&body)))
 }
 
+/// Decode a JSON response, or turn a non-success status into an error carrying
+/// the sanitized response body. `op` names the operation for both the failure
+/// message and the decode context (e.g. `"quota"` → `"invalid quota json"`).
+fn json_or_api_error<T: serde::de::DeserializeOwned>(
+    response: reqwest::blocking::Response,
+    op: &str,
+) -> Result<T> {
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().unwrap_or_default();
+        return Err(anyhow!("{} failed ({}): {}", op, status, sanitize(&body)));
+    }
+    response
+        .json()
+        .with_context(|| format!("invalid {op} json"))
+}
+
 fn default_session_path() -> Result<PathBuf> {
     let base = dirs::home_dir()
         .map(|h| h.join(".config"))
