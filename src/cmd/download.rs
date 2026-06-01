@@ -94,6 +94,11 @@ pub fn run(args: &[String]) -> Result<()> {
                 }
             } else {
                 let dest = dir.join(&name);
+                if let Some(parent) = dest.parent()
+                    && !parent.as_os_str().is_empty()
+                {
+                    std::fs::create_dir_all(parent)?;
+                }
                 let total = client.download_to(&entry.id, &dest)?;
                 println!(
                     "Downloaded '{}' -> '{}' ({})",
@@ -156,6 +161,11 @@ pub fn run(args: &[String]) -> Result<()> {
                 return Err(anyhow!("{} file(s) failed in '{}'", failed, name));
             }
         } else {
+            if let Some(parent) = dest.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                std::fs::create_dir_all(parent)?;
+            }
             let total = client.download_to(&entry.id, &dest)?;
             println!(
                 "Downloaded '{}' -> '{}' ({})",
