@@ -3,6 +3,7 @@ pub mod complete_path;
 pub mod completions;
 pub mod cp;
 pub mod download;
+pub mod empty;
 pub mod events;
 pub mod help;
 pub mod info;
@@ -48,7 +49,7 @@ pub const COMMAND_GROUPS: &[(&str, &[&str])] = &[
     ("Playback", &["play"]),
     ("Transfer", &["download", "upload", "share"]),
     ("Cloud Download", &["offline", "tasks"]),
-    ("Trash", &["trash", "untrash"]),
+    ("Trash", &["trash", "untrash", "empty"]),
     (
         "Starred & Activity",
         &["star", "unstar", "starred", "events"],
@@ -367,6 +368,23 @@ pub fn command_help_text(cmd: &str) -> (&'static str, &'static str, String) {
             format!(
                 "{B}EXAMPLES:{R}\n\
                  {ex}  pikpaktui untrash file.txt{R}\n",
+                ex = D,
+            ),
+        ),
+        "empty" => (
+            "empty [-n] [-f] <name...> | --all",
+            "Permanently delete items from trash",
+            format!(
+                "{B}OPTIONS:{R}\n\
+                 {opt}  --all, -r /     {d}Empty the entire trash{R}\n\
+                 {opt}  -f, --force     {d}Skip the confirmation prompt (with --all){R}\n\
+                 {opt}  -n, --dry-run   {d}Preview without deleting{R}\n\
+                 \n{B}EXAMPLES:{R}\n\
+                 {ex}  pikpaktui empty \"old movie.mkv\" report.pdf{R}\n\
+                 {ex}  pikpaktui empty --all{R}\n\
+                 {ex}  pikpaktui empty -n --all{R}\n",
+                opt = G,
+                d = D,
                 ex = D,
             ),
         ),

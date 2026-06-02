@@ -61,6 +61,7 @@ fn entry() -> Result<()> {
         "events" => cmd::events::run(&args[1..]),
         "trash" => cmd::trash::run(&args[1..]),
         "untrash" => cmd::untrash::run(&args[1..]),
+        "empty" => cmd::empty::run(&args[1..]),
         "info" => cmd::info::run(&args[1..]),
         "link" => cmd::link::run(&args[1..]),
         "cat" => cmd::cat::run(&args[1..]),
