@@ -66,16 +66,10 @@ impl PikPak {
     /// Returns `(final_folder_id, breadcrumb)` where breadcrumb is a vec of
     /// `(parent_id, folder_name)` pairs — the same format used by the TUI App.
     pub fn resolve_path_nav(&self, path: &str) -> Result<(String, Vec<(String, String)>)> {
-        let components: Vec<&str> = path
-            .trim_matches('/')
-            .split('/')
-            .filter(|s| !s.is_empty())
-            .collect();
-
         let mut current_id = String::new(); // root
         let mut breadcrumb: Vec<(String, String)> = Vec::new();
 
-        for name in components {
+        for name in path_components(path) {
             let entries = self.ls_cached(&current_id)?;
             let child = entries
                 .into_iter()
@@ -289,14 +283,8 @@ impl PikPak {
             return Ok(String::new());
         }
 
-        let segments: Vec<&str> = path
-            .trim_matches('/')
-            .split('/')
-            .filter(|s| !s.is_empty())
-            .collect();
-
         let mut current_id = String::new();
-        for seg in &segments {
+        for seg in path_components(path) {
             let entries = self.ls_cached(&current_id)?;
             let found = entries
                 .into_iter()
@@ -307,4 +295,12 @@ impl PikPak {
 
         Ok(current_id)
     }
+}
+
+/// Split a cloud path into its non-empty `/`-separated components.
+fn path_components(path: &str) -> Vec<&str> {
+    path.trim_matches('/')
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .collect()
 }
