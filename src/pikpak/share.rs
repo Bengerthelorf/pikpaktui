@@ -2,7 +2,7 @@ use anyhow::{Context, Result, anyhow};
 
 use super::{
     CreateShareResponse, MyShare, PikPak, ShareInfoResponse, ShareListResponse, ensure_success,
-    sanitize,
+    json_or_api_error, sanitize,
 };
 
 impl PikPak {
@@ -97,16 +97,7 @@ impl PikPak {
         rb = self.authed_headers(rb);
 
         let response = rb.send().context("create share request failed")?;
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().unwrap_or_default();
-            return Err(anyhow!(
-                "create share failed ({}): {}",
-                status,
-                sanitize(&body)
-            ));
-        }
-        response.json().context("invalid create share response")
+        json_or_api_error(response, "create share")
     }
 
     pub fn list_shares(&self) -> Result<Vec<MyShare>> {
@@ -121,16 +112,7 @@ impl PikPak {
         rb = self.authed_headers(rb);
 
         let response = rb.send().context("list shares request failed")?;
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().unwrap_or_default();
-            return Err(anyhow!(
-                "list shares failed ({}): {}",
-                status,
-                sanitize(&body)
-            ));
-        }
-        let resp: ShareListResponse = response.json().context("invalid share list json")?;
+        let resp: ShareListResponse = json_or_api_error(response, "list shares")?;
         Ok(resp.data)
     }
 
