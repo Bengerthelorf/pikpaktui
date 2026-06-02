@@ -65,12 +65,16 @@ impl PikPak {
     ///
     /// Returns `(final_folder_id, breadcrumb)` where breadcrumb is a vec of
     /// `(parent_id, folder_name)` pairs — the same format used by the TUI App.
+    ///
+    /// Lists fresh (uncached): this backs the interactive `:goto` jump, where
+    /// the long-lived TUI client must reflect the current tree even after an
+    /// external change on another device.
     pub fn resolve_path_nav(&self, path: &str) -> Result<(String, Vec<(String, String)>)> {
         let mut current_id = String::new(); // root
         let mut breadcrumb: Vec<(String, String)> = Vec::new();
 
         for name in path_components(path) {
-            let entries = self.ls_cached(&current_id)?;
+            let entries = self.ls(&current_id)?;
             let child = entries
                 .into_iter()
                 .find(|e| e.name == name && e.kind == crate::pikpak::EntryKind::Folder)
@@ -277,6 +281,14 @@ impl PikPak {
         Ok(entries)
     }
 
+    /// Resolve a cloud path to its file/folder ID.
+    ///
+    /// Uses the lifetime cache (`ls_cached`) so a batch command resolving many
+    /// paths under a shared parent only lists that parent once. Any staleness is
+    /// bounded: local mutations clear the cache, and a stale hit resolves to a
+    /// PikPak ID, which is stable across renames — so it targets the same
+    /// object or fails cleanly, never silently the wrong one. `:goto` uses the
+    /// uncached `resolve_path_nav` when fresh navigation is what matters.
     pub fn resolve_path(&self, path: &str) -> Result<String> {
         let path = path.trim();
         if path.is_empty() || path == "/" {
