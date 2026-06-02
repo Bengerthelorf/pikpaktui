@@ -2784,20 +2784,24 @@ impl App {
                     let content_y = row.saturating_sub(area.y + 1) as usize;
                     let content_x = col.saturating_sub(area.x + 1) as usize;
 
-                    // Mirror of the layout in draw::draw_settings_overlay (and
-                    // the index match in handle_settings_key). The item counts
-                    // must sum to SETTINGS_LAST_INDEX + 1; keep all in sync.
-                    let categories = vec![
-                        ("UI Settings", 5),
-                        ("Preview Settings", 5),
-                        ("Sort Settings", 2),
-                        ("Interface Settings", 2),
-                        ("Playback Settings", 1),
-                        ("Download Settings", 1),
-                        ("Update Settings", 1),
-                    ];
-
-                    let bool_items = [0, 3, 5, 6, 11, 13];
+                    // Derive the hit-test layout from the single settings source
+                    // (settings_items), so it can't drift from what
+                    // draw_settings_overlay renders. Bool toggles are exactly the
+                    // checkbox-valued items.
+                    let layout = Self::settings_items(&draft);
+                    let categories: Vec<(&str, usize)> = layout
+                        .iter()
+                        .map(|(name, items)| (*name, items.len()))
+                        .collect();
+                    let bool_items: Vec<usize> = layout
+                        .iter()
+                        .flat_map(|(_, items)| items.iter())
+                        .enumerate()
+                        .filter_map(|(idx, item)| {
+                            let value = item.2.as_str();
+                            (value == "[\u{2713}]" || value == "[ ]").then_some(idx)
+                        })
+                        .collect();
                     let mut current_line = 0;
                     let mut item_idx = 0;
                     let terminal_width = (area.width.saturating_sub(4)) as usize;

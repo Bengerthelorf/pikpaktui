@@ -22,6 +22,11 @@ use super::{
     format_size, truncate_name,
 };
 
+/// One Settings row: (label, description, current-value string).
+type SettingItem = (String, String, String);
+/// One Settings category: (name, rows).
+type SettingsCategory = (&'static str, Vec<SettingItem>);
+
 impl App {
     /// Returns `true` when a popup overlay is active that may cover the preview pane.
     /// Used to suppress terminal-image-protocol rendering so that iTerm2 / Kitty
@@ -3255,20 +3260,15 @@ impl App {
         f.render_widget(p, area);
     }
 
-    fn draw_settings_overlay(
-        &self,
-        f: &mut Frame,
-        selected: usize,
-        editing: bool,
-        draft: &crate::config::TuiConfig,
-        modified: bool,
-    ) {
-        let area = centered_rect(70, 65, f.area());
-        self.settings_area.set(area);
-        clear_overlay_area(f, area);
-
-        type SettingItem = (String, String, String);
-        let categories: Vec<(&str, Vec<SettingItem>)> = vec![
+    /// The Settings layout — the single source of truth for category names,
+    /// the items in each (label, description, current-value string), and their
+    /// global order. `draw_settings_overlay` renders it and `handle_mouse_click`
+    /// derives its hit-test layout from it, so adding/reordering a setting only
+    /// happens here (the per-index edit logic in `handle_settings_key` and the
+    /// click toggle still mirror this order — see SETTINGS_LAST_INDEX).
+    /// A value of `[✓]`/`[ ]` marks a boolean toggle.
+    pub(super) fn settings_items(draft: &crate::config::TuiConfig) -> Vec<SettingsCategory> {
+        vec![
             (
                 "UI Settings",
                 vec![
@@ -3393,7 +3393,22 @@ impl App {
                     draft.update_check.as_str().to_string(),
                 )],
             ),
-        ];
+        ]
+    }
+
+    fn draw_settings_overlay(
+        &self,
+        f: &mut Frame,
+        selected: usize,
+        editing: bool,
+        draft: &crate::config::TuiConfig,
+        modified: bool,
+    ) {
+        let area = centered_rect(70, 65, f.area());
+        self.settings_area.set(area);
+        clear_overlay_area(f, area);
+
+        let categories = Self::settings_items(draft);
 
         let mut item_line_map: Vec<usize> = Vec::new();
         let mut line_idx = 0;
