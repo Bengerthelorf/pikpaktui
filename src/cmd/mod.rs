@@ -243,7 +243,7 @@ pub fn command_help_text(cmd: &str) -> (&'static str, &'static str, String) {
                  {opt}  -n, --dry-run    {d}Preview without creating task{R}\n\
                  \n{B}EXAMPLES:{R}\n\
                  {ex}  pikpaktui offline https://example.com/file.zip{R}\n\
-                 {ex}  pikpaktui offline --to /Downloads magnet:?xt=...{R}\n",
+                 {ex}  pikpaktui offline magnet:?xt=... --to /Downloads{R}\n",
                 opt = G,
                 d = D,
                 ex = D,
