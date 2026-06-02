@@ -80,6 +80,9 @@ pub struct TransferQuotaBase {
     pub offline: Option<TransferBand>,
     pub download: Option<TransferBand>,
     pub upload: Option<TransferBand>,
+    /// `total_assets == 0` here means no daily cap (premium), not a zero allowance.
+    #[serde(default)]
+    pub download_daily: Option<TransferBand>,
     #[serde(default)]
     pub expire_time: Option<String>,
 }

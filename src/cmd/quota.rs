@@ -48,10 +48,12 @@ pub fn run(args: &[String]) -> Result<()> {
                 })
             };
             serde_json::json!({
-                "download":    band(b.download.as_ref()),
-                "upload":      band(b.upload.as_ref()),
-                "offline":     band(b.offline.as_ref()),
-                "expire_time": b.expire_time,
+                "download":         band(b.download.as_ref()),
+                "download_daily":   band(b.download_daily.as_ref()),
+                "daily_resets_in_seconds": secs_to_daily_reset(),
+                "upload":           band(b.upload.as_ref()),
+                "offline":          band(b.offline.as_ref()),
+                "expire_time":      b.expire_time,
             })
         });
 
@@ -124,6 +126,20 @@ pub fn run(args: &[String]) -> Result<()> {
                 );
             }
         }
+        if let Some(daily) = base.download_daily {
+            let total = daily.total_assets.unwrap_or(0);
+            let used = daily.assets.unwrap_or(0);
+            if total > 0 {
+                println!(
+                    "  \x1b[36mDaily:\x1b[0m     {} / {} used  \x1b[2m(resets in {})\x1b[0m",
+                    super::format_size(used),
+                    super::format_size(total),
+                    fmt_hm(secs_to_daily_reset())
+                );
+            } else {
+                println!("  \x1b[36mDaily:\x1b[0m     \x1b[2mno daily limit\x1b[0m");
+            }
+        }
         if let Some(ul) = base.upload {
             let total = ul.total_assets.unwrap_or(0);
             let used = ul.assets.unwrap_or(0);
@@ -163,4 +179,20 @@ fn usage_bar(pct: u64, width: usize) -> String {
         "32" // green
     };
     format!("\x1b[{}m{}\x1b[0m", color, bar)
+}
+
+/// Seconds until the next daily reset, which PikPak does at midnight UTC+8 (its
+/// server zone, per the +08:00 expire_time) — a single global instant, not the
+/// machine's local midnight. now() is absolute UTC, so this holds in any timezone.
+fn secs_to_daily_reset() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    86_400 - ((now + 8 * 3600) % 86_400)
+}
+
+fn fmt_hm(secs: u64) -> String {
+    format!("{}h {}m", secs / 3600, (secs % 3600) / 60)
 }
