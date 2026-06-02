@@ -13,6 +13,7 @@ use super::download::{DownloadTask, TaskStatus};
 use super::local_completion::LocalPathInput;
 use super::{
     App, InputMode, LoginField, OpResult, PickerState, PlayOption, PreviewState, handle_text_input,
+    widgets,
 };
 
 /// Index of the last selectable Settings row. MUST match the item layout in
@@ -2789,10 +2790,6 @@ impl App {
                     // draw_settings_overlay renders. Bool toggles are exactly the
                     // checkbox-valued items.
                     let layout = Self::settings_items(&draft);
-                    let categories: Vec<(&str, usize)> = layout
-                        .iter()
-                        .map(|(name, items)| (*name, items.len()))
-                        .collect();
                     let bool_items: Vec<usize> = layout
                         .iter()
                         .flat_map(|(_, items)| items.iter())
@@ -2802,36 +2799,39 @@ impl App {
                             (value == "[\u{2713}]" || value == "[ ]").then_some(idx)
                         })
                         .collect();
-                    let mut current_line = 0;
-                    let mut item_idx = 0;
+
+                    // Reverse-map the click through the same layout draw uses,
+                    // compensating for the leading blank line and the active
+                    // scroll offset so the hit lands on the drawn item.
+                    let item_counts: Vec<usize> =
+                        layout.iter().map(|(_, items)| items.len()).collect();
+                    let item_line_map = widgets::settings_item_line_map(&item_counts);
+                    let inner_height = area.height.saturating_sub(4) as usize;
+                    let scroll_offset =
+                        widgets::settings_scroll_offset(&item_line_map, selected, inner_height);
                     let terminal_width = (area.width.saturating_sub(4)) as usize;
 
-                    for (_cat_name, item_count) in categories {
-                        current_line += 1;
-                        for _ in 0..item_count {
-                            if content_y >= current_line && content_y < current_line + 2 {
-                                selected = item_idx;
+                    if let Some((item_idx, on_name_row)) =
+                        widgets::settings_item_at_row(&item_line_map, scroll_offset, content_y)
+                    {
+                        selected = item_idx;
 
-                                if content_y == current_line && bool_items.contains(&item_idx) {
-                                    if content_x + 10 >= terminal_width {
-                                        match item_idx {
-                                            0 => draft.nerd_font = !draft.nerd_font,
-                                            3 => draft.show_help_bar = !draft.show_help_bar,
-                                            5 => draft.show_preview = !draft.show_preview,
-                                            6 => draft.lazy_preview = !draft.lazy_preview,
-                                            11 => draft.sort_reverse = !draft.sort_reverse,
-                                            13 => draft.cli_nerd_font = !draft.cli_nerd_font,
-                                            _ => {}
-                                        }
-                                        modified = true;
-                                    }
-                                } else if double {
-                                    editing = true;
-                                }
-                                break;
+                        if on_name_row
+                            && bool_items.contains(&item_idx)
+                            && content_x + 10 >= terminal_width
+                        {
+                            match item_idx {
+                                0 => draft.nerd_font = !draft.nerd_font,
+                                3 => draft.show_help_bar = !draft.show_help_bar,
+                                5 => draft.show_preview = !draft.show_preview,
+                                6 => draft.lazy_preview = !draft.lazy_preview,
+                                11 => draft.sort_reverse = !draft.sort_reverse,
+                                13 => draft.cli_nerd_font = !draft.cli_nerd_font,
+                                _ => {}
                             }
-                            current_line += 2;
-                            item_idx += 1;
+                            modified = true;
+                        } else if double {
+                            editing = true;
                         }
                     }
                 }

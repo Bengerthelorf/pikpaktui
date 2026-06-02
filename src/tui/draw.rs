@@ -3410,23 +3410,11 @@ impl App {
 
         let categories = Self::settings_items(draft);
 
-        let mut item_line_map: Vec<usize> = Vec::new();
-        let mut line_idx = 0;
-        for (_cat_name, items) in &categories {
-            line_idx += 1; // Category header
-            for _ in items {
-                item_line_map.push(line_idx);
-                line_idx += 2; // Name line + description line
-            }
-        }
+        let item_counts: Vec<usize> = categories.iter().map(|(_, items)| items.len()).collect();
+        let item_line_map = widgets::settings_item_line_map(&item_counts);
 
         let inner_height = area.height.saturating_sub(4) as usize; // -2 borders, -2 for blank+help
-        let selected_line = item_line_map.get(selected).copied().unwrap_or(0);
-        let scroll_offset = if selected_line >= inner_height {
-            (selected_line + 2).saturating_sub(inner_height)
-        } else {
-            0
-        };
+        let scroll_offset = widgets::settings_scroll_offset(&item_line_map, selected, inner_height);
 
         let mut lines = vec![Line::from("")];
         let mut global_idx = 0;
