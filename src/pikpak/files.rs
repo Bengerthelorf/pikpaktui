@@ -31,6 +31,11 @@ impl PikPak {
             all_entries.extend(payload.files.into_iter().map(|f| f.into_entry()));
 
             match next {
+                // A server echoing the same token forever would hang the
+                // client and grow the list without bound.
+                Some(t) if page_token.as_deref() == Some(t.as_str()) => {
+                    return Err(anyhow!("ls pagination stuck: server repeated page token"));
+                }
                 Some(t) => page_token = Some(t),
                 None => break,
             }

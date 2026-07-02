@@ -1,6 +1,7 @@
 use anyhow::{Context, Result, anyhow};
 use std::fs;
 use std::io;
+use std::io::Read as _;
 use std::path::Path;
 
 use super::{Entry, EntryKind, PikPak, sanitize_filename};
@@ -126,7 +127,13 @@ impl PikPak {
             return Err(anyhow!("text preview failed ({})", status));
         }
 
-        let bytes = response.bytes().context("text preview read failed")?;
+        // Cap the read ourselves: a CDN may ignore Range and answer 200 with
+        // the full body, which for a "preview" could buffer gigabytes.
+        let mut limited = response.take(max_bytes);
+        let mut bytes = Vec::new();
+        limited
+            .read_to_end(&mut bytes)
+            .context("text preview read failed")?;
         let truncated = file_size > bytes.len() as u64;
         let content = String::from_utf8_lossy(&bytes).into_owned();
 

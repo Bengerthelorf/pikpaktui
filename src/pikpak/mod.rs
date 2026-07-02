@@ -120,7 +120,10 @@ impl PikPak {
         let captcha = self.init_captcha(email)?;
         self.captcha_token = captcha
             .captcha_token
-            .or_else(|| env::var("PIKPAK_CAPTCHA_TOKEN").ok())
+            // An empty token would sail through and fail signin with an opaque
+            // 4xx, and it would shadow the documented env escape hatch.
+            .filter(|t| !t.is_empty())
+            .or_else(|| env::var("PIKPAK_CAPTCHA_TOKEN").ok().filter(|t| !t.is_empty()))
             .ok_or_else(|| {
                 let hint = captcha.url.as_deref().unwrap_or("<no challenge url>");
                 anyhow!(
@@ -408,7 +411,12 @@ fn now_unix() -> i64 {
 
 /// Sanitize a filename from an API response to prevent path traversal.
 pub(crate) fn sanitize_filename(name: &str) -> String {
-    name.replace(['/', '\\'], "_").replace("..", "_")
+    let cleaned = name.replace(['/', '\\'], "_").replace("..", "_");
+    // On Windows "C:evil" is drive-relative: Path::join replaces the base
+    // path entirely, so the file lands outside the download directory.
+    #[cfg(windows)]
+    let cleaned = cleaned.replace(':', "_");
+    cleaned
 }
 
 /// Reserve a name that is unique within `taken`, appending " (n)" before the
