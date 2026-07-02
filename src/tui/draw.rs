@@ -126,7 +126,10 @@ impl App {
             if let Some(bar_area) = help_bar_area {
                 let pairs = self.help_pairs();
                 let mut spans = vec![Span::raw(" ")];
-                spans.extend(Self::styled_help_spans(&pairs));
+                spans.extend(Self::styled_help_spans_fit(
+                    &pairs,
+                    (bar_area.width as usize).saturating_sub(1),
+                ));
                 let bar = Paragraph::new(Line::from(spans));
                 f.render_widget(bar, bar_area);
             }
@@ -706,8 +709,6 @@ impl App {
 
         if let Some(bar_area) = help_bar_area {
             let pairs = self.help_pairs();
-            let mut help_spans = vec![Span::raw(" ")];
-            help_spans.extend(Self::styled_help_spans(&pairs));
             let quota_info = match (self.quota_used, self.quota_limit) {
                 (Some(used), Some(limit)) if limit > 0 => {
                     let pct = (used as f64 / limit as f64).clamp(0.0, 1.0);
@@ -829,6 +830,11 @@ impl App {
             if right_w > 0 {
                 let right_w = right_w.min(bar_area.width.saturating_sub(4));
                 let help_w = bar_area.width.saturating_sub(right_w);
+                let mut help_spans = vec![Span::raw(" ")];
+                help_spans.extend(Self::styled_help_spans_fit(
+                    &pairs,
+                    (help_w as usize).saturating_sub(1),
+                ));
                 let chunks = Layout::default()
                     .direction(Direction::Horizontal)
                     .constraints([Constraint::Length(help_w), Constraint::Length(right_w)])
@@ -836,6 +842,11 @@ impl App {
                 f.render_widget(Paragraph::new(Line::from(help_spans)), chunks[0]);
                 f.render_widget(Paragraph::new(Line::from(right_spans)), chunks[1]);
             } else {
+                let mut help_spans = vec![Span::raw(" ")];
+                help_spans.extend(Self::styled_help_spans_fit(
+                    &pairs,
+                    (bar_area.width as usize).saturating_sub(1),
+                ));
                 f.render_widget(Paragraph::new(Line::from(help_spans)), bar_area);
             }
         }
@@ -1521,6 +1532,27 @@ impl App {
             }
             _ => vec![],
         }
+    }
+
+    /// Like `styled_help_spans`, but only whole "key desc" units that fit in
+    /// `max_width` cells — the bar otherwise clips mid-word ("r refr│").
+    pub(super) fn styled_help_spans_fit(
+        pairs: &[(&str, &str)],
+        max_width: usize,
+    ) -> Vec<Span<'static>> {
+        use unicode_width::UnicodeWidthStr;
+        let mut used = 0;
+        let mut fitting = 0;
+        for (i, (key, desc)) in pairs.iter().enumerate() {
+            let sep = if i > 0 { 3 } else { 0 }; // " • "
+            let unit = sep + UnicodeWidthStr::width(*key) + 1 + UnicodeWidthStr::width(*desc);
+            if used + unit > max_width {
+                break;
+            }
+            used += unit;
+            fitting = i + 1;
+        }
+        Self::styled_help_spans(&pairs[..fitting])
     }
 
     pub(super) fn styled_help_spans(pairs: &[(&str, &str)]) -> Vec<Span<'static>> {
