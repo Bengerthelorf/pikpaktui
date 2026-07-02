@@ -2785,6 +2785,17 @@ impl App {
     }
 
     fn handle_mouse_click(&mut self, col: u16, row: u16, double: bool) {
+        // Same guard the keyboard path has: with the help sheet open, a click
+        // must close it — not land on whatever pane sits underneath.
+        if self.show_help_sheet {
+            self.show_help_sheet = false;
+            return;
+        }
+        // The logs overlay floats above a pane; don't click through it.
+        if self.show_logs_overlay && self.is_in_rect(col, row, self.logs_overlay_area.get()) {
+            return;
+        }
+
         if matches!(self.input, InputMode::Settings { .. }) {
             let area = self.settings_area.get();
             if let InputMode::Settings {
@@ -2866,8 +2877,8 @@ impl App {
         let parent_area = self.parent_pane_area.get();
         let preview_area = self.preview_pane_area.get();
 
-        if self.is_in_rect(col, row, current_area) {
-            let content_y = row.saturating_sub(current_area.y + 1) as usize;
+        if self.is_in_content(col, row, current_area) {
+            let content_y = (row - (current_area.y + 1)) as usize;
             let offset = self.scroll_offset.get();
             let clicked_idx = offset + content_y;
             if clicked_idx < self.entries.len() {
@@ -2877,8 +2888,8 @@ impl App {
                     let _ = self.handle_normal_key(KeyCode::Enter, KeyModifiers::NONE);
                 }
             }
-        } else if self.is_in_rect(col, row, parent_area) {
-            let content_y = row.saturating_sub(parent_area.y + 1) as usize;
+        } else if self.is_in_content(col, row, parent_area) {
+            let content_y = (row - (parent_area.y + 1)) as usize;
             let offset = self.parent_scroll_offset.get();
             let clicked_idx = offset + content_y;
             if clicked_idx < self.parent_entries.len() {
@@ -2912,6 +2923,18 @@ impl App {
 
     fn is_in_rect(&self, col: u16, row: u16, rect: ratatui::layout::Rect) -> bool {
         col >= rect.x && col < rect.x + rect.width && row >= rect.y && row < rect.y + rect.height
+    }
+
+    /// Like `is_in_rect` but excluding the 1-cell border: a click on the top
+    /// border must not select the first row, nor the bottom border a row past
+    /// the visible window.
+    fn is_in_content(&self, col: u16, row: u16, rect: ratatui::layout::Rect) -> bool {
+        rect.width > 2
+            && rect.height > 2
+            && col > rect.x
+            && col < rect.x + rect.width - 1
+            && row > rect.y
+            && row < rect.y + rect.height - 1
     }
 
     pub(super) fn spawn_permanent_delete(&mut self, entry: Entry) {

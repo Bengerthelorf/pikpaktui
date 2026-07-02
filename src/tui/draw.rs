@@ -2964,7 +2964,13 @@ impl App {
             ));
         }
 
-        if let Some(entry) = self.entries.get(self.selected) {
+        // The info popup can be opened from other views (e.g. trash); only
+        // show the browser's star/cart markers when they describe this file.
+        if let Some(entry) = self
+            .entries
+            .get(self.selected)
+            .filter(|e| info.id.as_deref() == Some(e.id.as_str()))
+        {
             let mut markers = Vec::new();
             if entry.starred {
                 markers.push(Span::styled(

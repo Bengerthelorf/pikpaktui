@@ -768,12 +768,18 @@ impl App {
                     } else {
                         self.trash_expanded
                     };
+                    // Keep the cursor near where it was: after restoring or
+                    // deleting item #12, jumping back to the top loses the
+                    // user's place. Clamp because the list just shrank.
+                    let selected = self
+                        .trash_selected
+                        .min(entries.len().saturating_sub(1));
                     self.trash_entries = entries.clone();
-                    self.trash_selected = 0;
+                    self.trash_selected = selected;
                     self.trash_expanded = expanded;
                     self.input = InputMode::TrashView {
                         entries,
-                        selected: 0,
+                        selected,
                         expanded,
                     };
                 }
