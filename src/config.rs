@@ -749,7 +749,14 @@ pub fn sort_entries(entries: &mut [crate::pikpak::Entry], field: SortField, reve
     use crate::pikpak::EntryKind;
 
     match field {
-        SortField::None => return,
+        // No re-sort, but don't skip the reverse below: flipping the server
+        // order is the only thing `reverse` can mean in this mode.
+        SortField::None => {
+            if reverse {
+                entries.reverse();
+            }
+            return;
+        }
         SortField::Name => {
             entries.sort_by(|a, b| {
                 let kind_ord = kind_order(&a.kind).cmp(&kind_order(&b.kind));
