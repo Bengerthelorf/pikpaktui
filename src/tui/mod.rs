@@ -1236,6 +1236,77 @@ fn truncate_name(name: &str, max_width: usize) -> String {
     }
 }
 
+/// Truncate and pad to an exact number of display columns. `format!("{:<w$}")`
+/// pads by char count and never truncates, so it misaligns columns whenever
+/// content is wide (CJK) or longer than the column — this is the safe
+/// replacement for hand-rolled column padding.
+pub(crate) fn pad_to_width(s: &str, width: usize) -> String {
+    use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+    let w = UnicodeWidthStr::width(s);
+    if w <= width {
+        return format!("{}{}", s, " ".repeat(width - w));
+    }
+    if width < 4 {
+        // No room for an ellipsis; hard-cut by display width.
+        let mut out = String::new();
+        let mut used = 0;
+        for ch in s.chars() {
+            let cw = UnicodeWidthChar::width(ch).unwrap_or(0);
+            if used + cw > width {
+                break;
+            }
+            out.push(ch);
+            used += cw;
+        }
+        return format!("{}{}", out, " ".repeat(width - used));
+    }
+    let t = truncate_name(s, width);
+    let tw = UnicodeWidthStr::width(t.as_str());
+    format!("{}{}", t, " ".repeat(width.saturating_sub(tw)))
+}
+
+#[cfg(test)]
+mod pad_tests {
+    use super::pad_to_width;
+    use unicode_width::UnicodeWidthStr;
+
+    #[test]
+    fn pads_short_ascii() {
+        assert_eq!(pad_to_width("abc", 5), "abc  ");
+    }
+
+    #[test]
+    fn exact_width_untouched() {
+        assert_eq!(pad_to_width("abcde", 5), "abcde");
+    }
+
+    #[test]
+    fn truncates_overflow_with_ellipsis() {
+        let out = pad_to_width("abcdefghij", 7);
+        assert_eq!(UnicodeWidthStr::width(out.as_str()), 7);
+        assert!(out.ends_with("..."));
+    }
+
+    #[test]
+    fn cjk_pads_by_display_width() {
+        // 3 CJK chars = 6 columns; pad to 8 needs 2 spaces
+        assert_eq!(pad_to_width("三上悠", 8), "三上悠  ");
+    }
+
+    #[test]
+    fn cjk_truncates_by_display_width() {
+        let out = pad_to_width("三上悠亚三上悠亚", 9);
+        assert_eq!(UnicodeWidthStr::width(out.as_str()), 9);
+    }
+
+    #[test]
+    fn tiny_width_hard_cuts() {
+        assert_eq!(pad_to_width("abcdef", 2), "ab");
+        // A double-width char that doesn't fit in 1 column becomes padding
+        assert_eq!(pad_to_width("三", 1), " ");
+    }
+}
+
 fn centered_rect(
     percent_x: u16,
     percent_y: u16,

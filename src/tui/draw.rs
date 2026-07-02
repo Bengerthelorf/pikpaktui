@@ -19,7 +19,7 @@ use super::local_completion::LocalPathInput;
 use super::widgets;
 use super::{
     App, InputMode, LoginField, PickerState, PreviewState, SPINNER_FRAMES, centered_rect,
-    format_size, truncate_name,
+    format_size, pad_to_width, truncate_name,
 };
 
 /// One Settings row: (label, description, current-value string).
@@ -229,12 +229,7 @@ impl App {
         } else {
             (Color::Cyan, Color::Yellow)
         };
-        let truncated_name = if name.chars().count() > 40 {
-            let s: String = name.chars().take(37).collect();
-            format!("{}...", s)
-        } else {
-            name.to_string()
-        };
+        let truncated_name = truncate_name(name, 40);
         f.render_widget(
             Paragraph::new(vec![
                 Line::from(""),
@@ -279,12 +274,7 @@ impl App {
         let area = centered_rect(60, height, f.area());
         clear_overlay_area(f, area);
 
-        let truncated_name = if name.chars().count() > 40 {
-            let s: String = name.chars().take(37).collect();
-            format!("{}...", s)
-        } else {
-            name.to_string()
-        };
+        let truncated_name = truncate_name(name, 40);
 
         let mut lines = vec![
             Line::from(""),
@@ -611,7 +601,7 @@ impl App {
                 LoginField::Password => Style::default().fg(Color::Yellow),
                 LoginField::Email => Style::default().fg(Color::Reset),
             };
-            let masked: String = "*".repeat(password.len());
+            let masked: String = "*".repeat(password.chars().count());
             let cur = if self.cursor_visible { "\u{2588}" } else { " " };
             let ec = if matches!(field, LoginField::Email) {
                 cur
@@ -808,7 +798,7 @@ impl App {
                 if self.config.update_check == crate::config::UpdateCheck::Notify {
                     self.update_available.as_ref().map(|v| {
                         let text = format!(" ↑ v{} ", v);
-                        let w = text.len() as u16 + 3;
+                        let w = unicode_width::UnicodeWidthStr::width(text.as_str()) as u16 + 3;
                         let spans = vec![
                             Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
                             Span::styled(
@@ -2311,7 +2301,15 @@ impl App {
             }
         };
 
-        let key_w: usize = 7;
+        // Measure the widest key so no key overflows its column: `{:<w$}`
+        // pads but never truncates, so one long key ("g / Home") would shift
+        // the whole row and break vertical alignment.
+        let key_w: usize = sections
+            .iter()
+            .flat_map(|(_, items)| items.iter())
+            .map(|(key, _)| unicode_width::UnicodeWidthStr::width(*key))
+            .max()
+            .unwrap_or(8);
 
         type HelpGroupRef<'a> = (&'a str, &'a Vec<(&'a str, &'a str)>);
 
@@ -2434,17 +2432,22 @@ impl App {
                         RowKind::Title(name) => {
                             let w = col_w.saturating_sub(prefix.len());
                             spans.push(Span::styled(
-                                format!("{}{:<width$}", prefix, name, width = w),
+                                format!("{}{}", prefix, pad_to_width(name, w)),
                                 title_style,
                             ));
                         }
                         RowKind::Item(key, desc) => {
                             let dw = col_w.saturating_sub(key_w + 1 + prefix.len());
                             spans.push(Span::styled(
-                                format!("{}{:<kw$} ", prefix, key, kw = key_w),
+                                format!("{}{} ", prefix, pad_to_width(key, key_w)),
                                 key_style,
                             ));
-                            spans.push(Span::styled(format!("{:<dw$}", desc, dw = dw), desc_style));
+                            // Keep one gutter column so a truncated description
+                            // never touches the next column's key.
+                            spans.push(Span::styled(
+                                format!("{} ", pad_to_width(desc, dw.saturating_sub(1))),
+                                desc_style,
+                            ));
                         }
                         RowKind::Blank => {
                             spans.push(Span::raw(format!("{:<width$}", "", width = col_w)));
@@ -2800,12 +2803,15 @@ impl App {
                 let mut spans = vec![
                     Span::styled(prefix, name_style),
                     Span::styled(format!("{} ", icon), Style::default().fg(color)),
-                    Span::styled(truncate_name(&task.name, 35), name_style),
+                    Span::styled(pad_to_width(&task.name, 35), name_style),
                     Span::styled(
                         format!("  {:>3}%", task.progress),
                         Style::default().fg(Color::Reset),
                     ),
-                    Span::styled(format!("  {}", size), Style::default().fg(Color::DarkGray)),
+                    Span::styled(
+                        format!("  {:>9}", size),
+                        Style::default().fg(Color::DarkGray),
+                    ),
                 ];
                 if task.phase == "PHASE_TYPE_ERROR"
                     && let Some(msg) = &task.message
@@ -3467,9 +3473,12 @@ impl App {
                         Style::default().fg(Color::Yellow),
                     ));
                 } else {
+                    use unicode_width::UnicodeWidthStr;
                     let terminal_width = area.width.saturating_sub(4) as usize;
-                    let name_len = prefix.len() + name.len();
-                    let value_len = value.len();
+                    // Display width, not bytes: "[✓]" is 5 bytes but 3 cells,
+                    // so byte-based padding shifts checked rows out of column.
+                    let name_len = UnicodeWidthStr::width(prefix) + UnicodeWidthStr::width(name.as_str());
+                    let value_len = UnicodeWidthStr::width(value.as_str());
                     let padding = terminal_width.saturating_sub(name_len + value_len + 1);
 
                     name_value_spans.push(Span::raw(" ".repeat(padding)));
@@ -3892,7 +3901,11 @@ impl App {
                 let expiry_color = share_expiry_color(&share.expiration_days);
 
                 let title = truncate_name(&share.title, name_col);
-                let pad = " ".repeat(name_col.saturating_sub(title.chars().count()) + 2);
+                let pad = " ".repeat(
+                    name_col
+                        .saturating_sub(unicode_width::UnicodeWidthStr::width(title.as_str()))
+                        + 2,
+                );
 
                 list_lines.push(Line::from(vec![
                     Span::styled(prefix, name_style),
