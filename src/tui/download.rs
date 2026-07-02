@@ -31,7 +31,9 @@ pub struct DownloadTask {
     pub downloaded: u64,
     pub dest_path: PathBuf,
     pub status: TaskStatus,
-    pub pause_flag: Arc<AtomicBool>,
+    /// Tells the worker to stop. Pausing also sets this (the worker exits and
+    /// frees its slot); resume swaps in a fresh flag and re-queues the task,
+    /// which restarts from the partial file via Range.
     pub cancel_flag: Arc<AtomicBool>,
     pub speed: f64, // bytes per second
 }
@@ -53,6 +55,10 @@ pub enum DownloadMsg {
         id: u64,
         total_size: u64,
     },
+    /// Worker exited on cancel/pause without finishing; frees its slot.
+    Stopped {
+        id: u64,
+    },
 }
 
 pub struct DownloadState {
@@ -60,7 +66,9 @@ pub struct DownloadState {
     pub selected: usize,
     pub msg_tx: Sender<DownloadMsg>,
     pub msg_rx: Receiver<DownloadMsg>,
-    /// Task ids that currently have a live (running or parked-paused) worker.
+    /// Task ids that currently have a live worker thread. A paused task keeps
+    /// its entry until the worker acknowledges with Stopped, so a quick
+    /// pause/resume can't spawn a second worker on the same file.
     pub active_ids: HashSet<u64>,
     pub max_concurrent: usize,
     next_id: u64,
@@ -135,7 +143,6 @@ impl DownloadState {
                         self.tasks[idx].file_id.clone(),
                         self.tasks[idx].dest_path.clone(),
                         self.msg_tx.clone(),
-                        Arc::clone(&self.tasks[idx].pause_flag),
                         Arc::clone(&self.tasks[idx].cancel_flag),
                     );
                 }
@@ -167,7 +174,13 @@ impl DownloadState {
                 DownloadMsg::Done { id } => {
                     if let Some(task) = self.tasks.iter_mut().find(|t| t.id == id) {
                         task.status = TaskStatus::Done;
-                        task.downloaded = task.total_size;
+                        if task.total_size > 0 {
+                            task.downloaded = task.total_size;
+                        } else {
+                            // Size was unknown; trust the bytes the worker reported
+                            // so the summary doesn't show "0 B (0%)".
+                            task.total_size = task.downloaded;
+                        }
                         logs.push(format!("Downloaded '{}'", task.name));
                     }
                     self.active_ids.remove(&id);
@@ -178,6 +191,10 @@ impl DownloadState {
                         task.status = TaskStatus::Failed(error.clone());
                         logs.push(format!("Download failed '{}': {}", task.name, error));
                     }
+                    self.active_ids.remove(&id);
+                    self.start_next(client);
+                }
+                DownloadMsg::Stopped { id } => {
                     self.active_ids.remove(&id);
                     self.start_next(client);
                 }
@@ -193,19 +210,10 @@ fn spawn_download_worker(
     file_id: String,
     dest: PathBuf,
     msg_tx: Sender<DownloadMsg>,
-    pause_flag: Arc<AtomicBool>,
     cancel_flag: Arc<AtomicBool>,
 ) {
     std::thread::spawn(move || {
-        if let Err(e) = download_worker(
-            &client,
-            id,
-            &file_id,
-            &dest,
-            &msg_tx,
-            &pause_flag,
-            &cancel_flag,
-        ) {
+        if let Err(e) = download_worker(&client, id, &file_id, &dest, &msg_tx, &cancel_flag) {
             let _ = msg_tx.send(DownloadMsg::Failed {
                 id,
                 error: format!("{e:#}"),
@@ -220,7 +228,6 @@ fn download_worker(
     file_id: &str,
     dest: &PathBuf,
     msg_tx: &Sender<DownloadMsg>,
-    pause_flag: &Arc<AtomicBool>,
     cancel_flag: &Arc<AtomicBool>,
 ) -> anyhow::Result<()> {
     let (url, total_size) = client.download_url(file_id)?;
@@ -231,11 +238,18 @@ fn download_worker(
         fs::create_dir_all(parent)?;
     }
 
-    let existing_size = dest.metadata().map(|m| m.len()).unwrap_or(0);
+    let mut existing_size = dest.metadata().map(|m| m.len()).unwrap_or(0);
 
-    if existing_size >= total_size && total_size > 0 {
-        let _ = msg_tx.send(DownloadMsg::Done { id });
-        return Ok(());
+    if total_size > 0 {
+        if existing_size == total_size {
+            let _ = msg_tx.send(DownloadMsg::Done { id });
+            return Ok(());
+        }
+        if existing_size > total_size {
+            // Whatever is on disk is not a partial of this file (stale or
+            // foreign content); appending to it would corrupt silently.
+            existing_size = 0;
+        }
     }
 
     // Shared range/resume contract with the CLI download (see download_stream).
@@ -262,14 +276,8 @@ fn download_worker(
 
     loop {
         if cancel_flag.load(Ordering::Relaxed) {
+            let _ = msg_tx.send(DownloadMsg::Stopped { id });
             return Ok(());
-        }
-
-        while pause_flag.load(Ordering::Relaxed) {
-            if cancel_flag.load(Ordering::Relaxed) {
-                return Ok(());
-            }
-            std::thread::sleep(std::time::Duration::from_millis(200));
         }
 
         let n = reader.read(&mut buf)?;
@@ -293,6 +301,16 @@ fn download_worker(
         }
     }
 
+    // A well-formed but short body would otherwise count as success.
+    if total_size > 0 && downloaded != total_size {
+        anyhow::bail!("incomplete download: got {downloaded} of {total_size} bytes");
+    }
+
+    let _ = msg_tx.send(DownloadMsg::Progress {
+        id,
+        downloaded,
+        speed: 0.0,
+    });
     let _ = msg_tx.send(DownloadMsg::Done { id });
     Ok(())
 }
@@ -378,7 +396,6 @@ pub fn load_download_state() -> Vec<DownloadTask> {
                 total_size: p.total_size,
                 downloaded: p.downloaded,
                 dest_path: PathBuf::from(p.dest_path),
-                pause_flag: Arc::new(AtomicBool::new(status == TaskStatus::Paused)),
                 status,
                 cancel_flag: Arc::new(AtomicBool::new(false)),
                 speed: 0.0,
@@ -400,7 +417,6 @@ mod tests {
             downloaded: 0,
             dest_path: PathBuf::from(name),
             status: TaskStatus::Downloading,
-            pause_flag: Arc::new(AtomicBool::new(false)),
             cancel_flag: Arc::new(AtomicBool::new(false)),
             speed: 0.0,
         }

@@ -70,9 +70,16 @@ impl PikPak {
             .ok_or_else(|| anyhow!("no download link for file {}", file_id))?;
         let total_size = info.file_size();
 
-        let existing_size = dest.metadata().map(|m| m.len()).unwrap_or(0);
-        if total_size > 0 && existing_size >= total_size {
-            return Ok(existing_size);
+        let mut existing_size = dest.metadata().map(|m| m.len()).unwrap_or(0);
+        if total_size > 0 {
+            if existing_size == total_size {
+                return Ok(existing_size);
+            }
+            if existing_size > total_size {
+                // Not a partial of this file (stale or foreign content);
+                // appending to it would corrupt silently. Start over.
+                existing_size = 0;
+            }
         }
 
         let (response, start_offset) = self.download_stream(download_url, existing_size)?;
@@ -84,7 +91,16 @@ impl PikPak {
 
         let mut reader: Box<dyn io::Read> = Box::new(response);
         let bytes = io::copy(&mut reader, &mut file).context("download write failed")?;
-        Ok(start_offset + bytes)
+        let written = start_offset + bytes;
+        // A well-formed but short body would otherwise count as success.
+        if total_size > 0 && written != total_size {
+            return Err(anyhow!(
+                "incomplete download: got {} of {} bytes",
+                written,
+                total_size
+            ));
+        }
+        Ok(written)
     }
 
     pub fn fetch_text_preview(
@@ -160,20 +176,35 @@ impl PikPak {
             }
         }
 
+        // One namespace per directory level: PikPak allows duplicate names in
+        // a folder (and sanitization can collapse distinct names), so every
+        // entry reserves a unique local name up front — otherwise two workers
+        // interleave writes into the same file.
+        let mut taken = std::collections::HashSet::new();
+
         let mut failed_count = 0usize;
-        for folder in &folders {
-            if let Err(e) = std::fs::create_dir_all(local_dir.join(sanitize_filename(&folder.name)))
-            {
+        let mut folder_dests = Vec::with_capacity(folders.len());
+        for folder in folders {
+            let dest = local_dir.join(super::unique_local_name(
+                &mut taken,
+                &sanitize_filename(&folder.name),
+            ));
+            if let Err(e) = std::fs::create_dir_all(&dest) {
                 eprintln!("  [error] mkdir '{}': {}", folder.name, e);
                 failed_count += 1;
             }
+            folder_dests.push((folder, dest));
         }
 
         let ok = Arc::new(AtomicUsize::new(0));
         let failed = Arc::new(AtomicUsize::new(0));
-        let (tx, rx) = std::sync::mpsc::channel::<Entry>();
+        let (tx, rx) = std::sync::mpsc::channel::<(Entry, std::path::PathBuf)>();
         for entry in files {
-            tx.send(entry).ok();
+            let dest = local_dir.join(super::unique_local_name(
+                &mut taken,
+                &sanitize_filename(&entry.name),
+            ));
+            tx.send((entry, dest)).ok();
         }
         drop(tx);
         let rx = Arc::new(Mutex::new(rx));
@@ -184,8 +215,12 @@ impl PikPak {
                 let ok = Arc::clone(&ok);
                 let failed = Arc::clone(&failed);
                 s.spawn(move || {
-                    while let Ok(entry) = rx.lock().unwrap_or_else(|e| e.into_inner()).recv() {
-                        let dest = local_dir.join(sanitize_filename(&entry.name));
+                    loop {
+                        // Take one item and release the lock before downloading;
+                        // a `while let` scrutinee would hold the guard through
+                        // the whole body and serialize every worker.
+                        let msg = rx.lock().unwrap_or_else(|e| e.into_inner()).recv();
+                        let Ok((entry, dest)) = msg else { break };
                         let local_size = dest.metadata().map(|m| m.len()).unwrap_or(0);
                         if local_size > 0 && local_size == entry.size {
                             println!("  skipping '{}' (already complete)", dest.display());
@@ -210,8 +245,7 @@ impl PikPak {
         let mut total_ok = ok.load(Ordering::Relaxed);
         let mut total_failed = failed.load(Ordering::Relaxed) + failed_count;
 
-        for folder in folders {
-            let sub_dir = local_dir.join(sanitize_filename(&folder.name));
+        for (folder, sub_dir) in folder_dests {
             match self.download_dir_inner(&folder.id, &sub_dir, workers) {
                 Ok((sub_ok, sub_fail)) => {
                     total_ok += sub_ok;

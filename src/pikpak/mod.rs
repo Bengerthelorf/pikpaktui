@@ -407,8 +407,35 @@ fn now_unix() -> i64 {
 }
 
 /// Sanitize a filename from an API response to prevent path traversal.
-fn sanitize_filename(name: &str) -> String {
+pub(crate) fn sanitize_filename(name: &str) -> String {
     name.replace(['/', '\\'], "_").replace("..", "_")
+}
+
+/// Reserve a name that is unique within `taken`, appending " (n)" before the
+/// extension when needed. PikPak folders may hold duplicate names (and
+/// sanitization can collapse distinct ones), but a local directory cannot —
+/// without this, two same-named entries download into one interleaved file.
+pub(crate) fn unique_local_name(
+    taken: &mut std::collections::HashSet<String>,
+    name: &str,
+) -> String {
+    if taken.insert(name.to_string()) {
+        return name.to_string();
+    }
+    let (stem, ext) = match name.rsplit_once('.') {
+        Some((s, e)) if !s.is_empty() => (s, Some(e)),
+        _ => (name, None),
+    };
+    for n in 1u64.. {
+        let candidate = match ext {
+            Some(e) => format!("{stem} ({n}).{e}"),
+            None => format!("{stem} ({n})"),
+        };
+        if taken.insert(candidate.clone()) {
+            return candidate;
+        }
+    }
+    unreachable!("u64 counter exhausted");
 }
 
 fn sanitize(s: &str) -> String {
@@ -428,6 +455,50 @@ fn md5_hex(input: &str) -> String {
         write!(hex, "{:02x}", b).unwrap();
     }
     hex
+}
+
+#[cfg(test)]
+mod unique_name_tests {
+    use super::unique_local_name;
+    use std::collections::HashSet;
+
+    #[test]
+    fn first_use_keeps_name() {
+        let mut taken = HashSet::new();
+        assert_eq!(unique_local_name(&mut taken, "a.txt"), "a.txt");
+    }
+
+    #[test]
+    fn duplicates_get_numbered_before_extension() {
+        let mut taken = HashSet::new();
+        assert_eq!(unique_local_name(&mut taken, "a.txt"), "a.txt");
+        assert_eq!(unique_local_name(&mut taken, "a.txt"), "a (1).txt");
+        assert_eq!(unique_local_name(&mut taken, "a.txt"), "a (2).txt");
+    }
+
+    #[test]
+    fn no_extension_appends_suffix() {
+        let mut taken = HashSet::new();
+        assert_eq!(unique_local_name(&mut taken, "folder"), "folder");
+        assert_eq!(unique_local_name(&mut taken, "folder"), "folder (1)");
+    }
+
+    #[test]
+    fn dotfile_is_not_split() {
+        let mut taken = HashSet::new();
+        assert_eq!(unique_local_name(&mut taken, ".gitignore"), ".gitignore");
+        assert_eq!(
+            unique_local_name(&mut taken, ".gitignore"),
+            ".gitignore (1)"
+        );
+    }
+
+    #[test]
+    fn skips_names_already_reserved() {
+        let mut taken: HashSet<String> = ["a (1).txt".to_string()].into();
+        assert_eq!(unique_local_name(&mut taken, "a.txt"), "a.txt");
+        assert_eq!(unique_local_name(&mut taken, "a.txt"), "a (2).txt");
+    }
 }
 
 #[cfg(test)]

@@ -1997,8 +1997,24 @@ impl App {
         self.cart_selected = 0;
 
         let count = cart_items.len();
+        // Reserve unique local names: two cart entries may share a name
+        // (different folders, or duplicates within one), and concurrent
+        // workers writing one path interleave chunks into a corrupt file.
+        // Names already queued for this directory count as taken too.
+        let mut taken: std::collections::HashSet<String> = self
+            .download_state
+            .tasks
+            .iter()
+            .filter(|t| t.dest_path.parent() == Some(dest.as_path()))
+            .filter_map(|t| t.dest_path.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .collect();
         for item in cart_items {
-            let file_dest = dest.join(&item.name);
+            // Sanitized: the name is server data and must not escape dest.
+            let local_name = crate::pikpak::unique_local_name(
+                &mut taken,
+                &crate::pikpak::sanitize_filename(&item.name),
+            );
+            let file_dest = dest.join(&local_name);
             let id = self.download_state.alloc_id();
             let task = DownloadTask {
                 id,
@@ -2008,7 +2024,6 @@ impl App {
                 downloaded: 0,
                 dest_path: file_dest,
                 status: TaskStatus::Pending,
-                pause_flag: Arc::new(AtomicBool::new(false)),
                 cancel_flag: Arc::new(AtomicBool::new(false)),
                 speed: 0.0,
             };
@@ -2068,34 +2083,33 @@ impl App {
                 let sel = self.download_state.selected;
                 let mut log_msg = None;
                 let mut need_start = false;
-                // Read fields up front so the task borrow isn't held across the
-                // active_ids check.
                 let info = self
                     .download_state
                     .tasks
                     .get(sel)
-                    .map(|t| (t.status.clone(), t.id, t.name.clone()));
-                if let Some((status, id, name)) = info {
+                    .map(|t| (t.status.clone(), t.name.clone()));
+                if let Some((status, name)) = info {
                     match status {
                         TaskStatus::Downloading => {
+                            // Stop the worker instead of parking it: a parked
+                            // thread pins an HTTP connection and, once other
+                            // tasks filled its slot, resuming it would exceed
+                            // max_concurrent. The slot frees when the worker
+                            // acknowledges with Stopped.
                             let task = &mut self.download_state.tasks[sel];
-                            task.pause_flag.store(true, Ordering::Relaxed);
+                            task.cancel_flag.store(true, Ordering::Relaxed);
                             task.status = TaskStatus::Paused;
                             log_msg = Some(format!("Paused '{}'", name));
                         }
                         TaskStatus::Paused => {
-                            // A parked worker resumes itself; spawning another
-                            // would write the same file twice. Re-queue only when
-                            // no worker exists (e.g. task restored from disk).
-                            let worker_alive = self.download_state.active_ids.contains(&id);
+                            // Fresh flag: the old worker may still be draining
+                            // and must keep seeing its stop signal. start_next
+                            // skips this id until Stopped frees it, so no
+                            // second worker can write the same file.
                             let task = &mut self.download_state.tasks[sel];
-                            task.pause_flag.store(false, Ordering::Relaxed);
-                            if worker_alive {
-                                task.status = TaskStatus::Downloading;
-                            } else {
-                                task.status = TaskStatus::Pending;
-                                need_start = true;
-                            }
+                            task.cancel_flag = Arc::new(AtomicBool::new(false));
+                            task.status = TaskStatus::Pending;
+                            need_start = true;
                             log_msg = Some(format!("Resumed '{}'", name));
                         }
                         _ => {}
@@ -2142,8 +2156,7 @@ impl App {
                     && matches!(task.status, TaskStatus::Failed(_))
                 {
                     task.status = TaskStatus::Pending;
-                    task.cancel_flag.store(false, Ordering::Relaxed);
-                    task.pause_flag.store(false, Ordering::Relaxed);
+                    task.cancel_flag = Arc::new(AtomicBool::new(false));
                     log_msg = Some(format!("Retrying '{}'", task.name));
                     need_start = true;
                 }
