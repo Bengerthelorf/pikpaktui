@@ -33,7 +33,24 @@ const DEFAULT_AUTH_BASE_URL: &str = "https://user.mypikpak.com";
 const DEFAULT_DRIVE_BASE_URL: &str = "https://api-drive.mypikpak.com";
 const DEFAULT_CLIENT_ID: &str = "YNxT9w7GMdWvEOKa";
 const DEFAULT_CLIENT_SECRET: &str = "dbw2OtmVEeuUvIptb1Coyg";
-const USER_AGENT: &str = "ANDROID-com.pikcloud.pikpak/1.21.0";
+// The version/package pair must match CLIENT_ID and CAPTCHA_SALTS: the
+// captcha_sign seed concatenates all of them, and mixing sets breaks the sign.
+const CLIENT_VERSION: &str = "1.53.2";
+const PACKAGE_NAME: &str = "com.pikcloud.pikpak";
+const USER_AGENT: &str = "ANDROID-com.pikcloud.pikpak/1.53.2";
+
+/// Salt chain for captcha_sign, paired with the Android client 1.53.2
+/// constants above (OpenList drivers/pikpak/util.go AndroidAlgorithms).
+const CAPTCHA_SALTS: &[&str] = &[
+    "SOP04dGzk0TNO7t7t9ekDbAmx+eq0OI1ovEx",
+    "nVBjhYiND4hZ2NCGyV5beamIr7k6ifAsAbl",
+    "Ddjpt5B/Cit6EDq2a6cXgxY9lkEIOw4yC1GDF28KrA",
+    "VVCogcmSNIVvgV6U+AochorydiSymi68YVNGiz",
+    "u5ujk5sM62gpJOsB/1Gu/zsfgfZO",
+    "dXYIiBOAHZgzSruaQ2Nhrqc2im",
+    "z5jUTBSIpBN9g4qSJGlidNAutX6",
+    "KJE2oveZ34du/g1tiimm",
+];
 
 pub struct PikPak {
     pub(crate) http: reqwest::blocking::Client,
@@ -43,7 +60,9 @@ pub struct PikPak {
     client_secret: String,
     session_path: PathBuf,
     device_id: String,
-    captcha_token: String,
+    /// Refreshed lazily during `&self` drive calls, hence the Mutex.
+    captcha_token: Mutex<String>,
+    user_id: String,
     pub thumbnail_size: String,
     ls_cache: Mutex<HashMap<String, Vec<Entry>>>,
     refresh_lock: Mutex<()>,
@@ -68,7 +87,8 @@ impl PikPak {
                 .unwrap_or_else(|_| DEFAULT_CLIENT_SECRET.to_string()),
             session_path: default_session_path()?,
             device_id: String::new(),
-            captcha_token: String::new(),
+            captcha_token: Mutex::new(String::new()),
+            user_id: String::new(),
             thumbnail_size: "SIZE_MEDIUM".to_string(),
             ls_cache: Mutex::new(HashMap::new()),
             refresh_lock: Mutex::new(()),
@@ -78,7 +98,8 @@ impl PikPak {
         // a known cause of intermittent 403/riskLimited responses.
         if let Ok(Some(session)) = client.load_session() {
             client.device_id = session.device_id;
-            client.captcha_token = session.captcha_token;
+            client.captcha_token = Mutex::new(session.captcha_token);
+            client.user_id = session.user_id;
         }
         Ok(client)
     }
@@ -127,7 +148,7 @@ impl PikPak {
         self.device_id = md5_hex(email);
 
         let captcha = self.init_captcha(email)?;
-        self.captcha_token = captcha
+        let login_captcha = captcha
             .captcha_token
             // An empty token would sail through and fail signin with an opaque
             // 4xx, and it would shadow the documented env escape hatch.
@@ -144,6 +165,7 @@ impl PikPak {
                     sanitize(hint)
                 )
             })?;
+        *self.captcha_token.lock().unwrap_or_else(|e| e.into_inner()) = login_captcha.clone();
 
         let url = self.auth_url("v1/auth/signin");
         let payload = serde_json::json!({
@@ -151,7 +173,7 @@ impl PikPak {
             "password": password,
             "client_id": self.client_id,
             "client_secret": self.client_secret,
-            "captcha_token": self.captcha_token,
+            "captcha_token": login_captcha,
             "grant_type": "password",
         });
 
@@ -172,13 +194,19 @@ impl PikPak {
         let signin: SigninResponse = response.json().context("invalid signin json")?;
         let expires_in = i64::try_from(signin.expires_in).context("expires_in overflow")?;
         let now = now_unix();
+        self.user_id = signin.sub.clone();
 
         let token = SessionToken {
             access_token: signin.access_token,
             refresh_token: signin.refresh_token,
             expires_at_unix: now.saturating_add(expires_in),
             device_id: self.device_id.clone(),
-            captcha_token: self.captcha_token.clone(),
+            captcha_token: self
+                .captcha_token
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone(),
+            user_id: signin.sub,
         };
 
         self.save_session(&token)?;
@@ -285,7 +313,16 @@ impl PikPak {
             refresh_token: refreshed.refresh_token,
             expires_at_unix: now_unix().saturating_add(expires_in),
             device_id: self.device_id.clone(),
-            captcha_token: self.captcha_token.clone(),
+            captcha_token: self
+                .captcha_token
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone(),
+            user_id: if refreshed.sub.is_empty() {
+                self.user_id.clone()
+            } else {
+                refreshed.sub
+            },
         };
         self.save_session(&token)?;
 
@@ -300,10 +337,101 @@ impl PikPak {
         if !self.device_id.is_empty() {
             rb = rb.header("x-device-id", &self.device_id);
         }
-        if !self.captcha_token.is_empty() {
-            rb = rb.header("x-captcha-token", &self.captcha_token);
+        let captcha = self
+            .captcha_token
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        if !captcha.is_empty() {
+            rb = rb.header("x-captcha-token", captcha);
         }
         rb
+    }
+
+    /// The salted MD5 chain reference clients compute for captcha refresh:
+    /// seed = client_id + client_version + package_name + device_id + timestamp,
+    /// then re-hash appending each salt in order; the sign is "1." + digest.
+    fn captcha_sign(&self, timestamp: &str) -> String {
+        let mut s = format!(
+            "{}{}{}{}{}",
+            self.client_id, CLIENT_VERSION, PACKAGE_NAME, self.device_id, timestamp
+        );
+        for salt in CAPTCHA_SALTS {
+            s = md5_hex(&format!("{s}{salt}"));
+        }
+        format!("1.{s}")
+    }
+
+    /// Refresh the captcha token for one drive action ("METHOD:/path").
+    /// Reference clients do this reactively when the API answers error_code 9
+    /// (riskLimited); the new token is kept for subsequent calls.
+    fn refresh_captcha_for_action(&self, action: &str) -> Result<()> {
+        let token = self.access_token()?;
+        let url = self.auth_url("v1/shield/captcha/init");
+        let timestamp = (now_unix_millis()).to_string();
+        let sign = self.captcha_sign(&timestamp);
+        let previous = self
+            .captcha_token
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+
+        let mut meta = serde_json::json!({
+            "client_version": CLIENT_VERSION,
+            "package_name": PACKAGE_NAME,
+            "timestamp": timestamp,
+            "captcha_sign": sign,
+        });
+        if !self.user_id.is_empty() {
+            meta["user_id"] = serde_json::json!(self.user_id);
+        }
+        let payload = serde_json::json!({
+            "action": action,
+            "captcha_token": previous,
+            "client_id": self.client_id,
+            "device_id": self.device_id,
+            "meta": meta,
+            "redirect_uri": "xlaccsdk01://xbase.cloud/callback?state=harbor",
+        });
+
+        let mut rb = self
+            .http
+            .post(&url)
+            .query(&[("client_id", self.client_id.as_str())])
+            .bearer_auth(&token)
+            .json(&payload);
+        if !self.device_id.is_empty() {
+            rb = rb.header("x-device-id", &self.device_id);
+        }
+        let response = rb.send().context("captcha refresh failed")?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().unwrap_or_default();
+            return Err(anyhow!(
+                "captcha refresh failed ({}): {}",
+                status,
+                sanitize(&body)
+            ));
+        }
+        let captcha: CaptchaInitResponse = response.json().context("invalid captcha json")?;
+        let new_token = captcha
+            .captcha_token
+            .filter(|t| !t.is_empty())
+            .ok_or_else(|| {
+                let hint = captcha.url.as_deref().unwrap_or("<no challenge url>");
+                anyhow!(
+                    "captcha refresh needs human verification: {}",
+                    sanitize(hint)
+                )
+            })?;
+
+        *self.captcha_token.lock().unwrap_or_else(|e| e.into_inner()) = new_token.clone();
+        // Persist so the next process starts with a live token.
+        if let Ok(Some(mut session)) = self.load_session() {
+            session.captcha_token = new_token;
+            let _ = self.save_session(&session);
+        }
+        Ok(())
     }
 
     fn drive_url(&self, path: &str) -> String {
@@ -423,6 +551,21 @@ fn now_unix() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
+}
+
+fn now_unix_millis() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// Pull PikPak's `error_code` out of an error body, if it is one.
+pub(super) fn api_error_code(body: &str) -> Option<i64> {
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()?
+        .get("error_code")?
+        .as_i64()
 }
 
 /// Sanitize a filename from an API response to prevent path traversal.
@@ -562,7 +705,8 @@ mod tests {
             client_secret: String::new(),
             session_path,
             device_id: String::new(),
-            captcha_token: String::new(),
+            captcha_token: Mutex::new(String::new()),
+            user_id: String::new(),
             thumbnail_size: "SIZE_MEDIUM".to_string(),
             ls_cache: Mutex::new(HashMap::new()),
             refresh_lock: Mutex::new(()),

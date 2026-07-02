@@ -31,6 +31,8 @@ pub struct SessionToken {
     pub device_id: String,
     #[serde(default)]
     pub captcha_token: String,
+    #[serde(default)]
+    pub user_id: String,
 }
 
 impl SessionToken {

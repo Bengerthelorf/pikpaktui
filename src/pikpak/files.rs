@@ -268,11 +268,35 @@ impl PikPak {
         let token = self.access_token()?;
         let url = format!("{}/{}", self.drive_url("drive/v1/files"), file_id);
 
-        let mut rb = self.http.get(&url).bearer_auth(&token);
-        rb = self.authed_headers(rb);
+        // Download-link fetches are the endpoint PikPak rate-guards with
+        // error_code 9 (riskLimited / captcha token expired). Reference
+        // clients refresh the captcha token for this exact action and retry
+        // once; do the same instead of surfacing an opaque 403.
+        for attempt in 0..2 {
+            let mut rb = self.http.get(&url).bearer_auth(&token);
+            rb = self.authed_headers(rb);
 
-        let response = rb.send().context("file_info request failed")?;
-        json_or_api_error(response, "file_info")
+            let response = rb.send().context("file_info request failed")?;
+            let status = response.status();
+            if status.is_success() {
+                return response.json().context("invalid file_info json");
+            }
+            let body = response.text().unwrap_or_default();
+            if attempt == 0
+                && super::api_error_code(&body) == Some(9)
+                && self
+                    .refresh_captcha_for_action(&format!("GET:/drive/v1/files/{file_id}"))
+                    .is_ok()
+            {
+                continue;
+            }
+            return Err(anyhow!(
+                "file_info failed ({}): {}",
+                status,
+                super::sanitize(&body)
+            ));
+        }
+        unreachable!("both file_info attempts returned early");
     }
 
     pub fn star(&self, ids: &[&str]) -> Result<()> {
