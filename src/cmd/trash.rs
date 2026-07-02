@@ -15,7 +15,9 @@ pub fn run(args: &[String]) -> Result<()> {
             "-J" | "--json" => json = true,
             other => {
                 limit = other.parse::<u32>().map_err(|_| {
-                    anyhow::anyhow!("unknown trash argument: {other}\nUsage: pikpaktui trash [-l] [-J] [limit]")
+                    anyhow::anyhow!(
+                        "unknown trash argument: {other}\nUsage: pikpaktui trash [-l] [-J] [limit]"
+                    )
                 })?;
             }
         }

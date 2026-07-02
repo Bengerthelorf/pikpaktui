@@ -3483,7 +3483,8 @@ impl App {
                     let terminal_width = area.width.saturating_sub(4) as usize;
                     // Display width, not bytes: "[✓]" is 5 bytes but 3 cells,
                     // so byte-based padding shifts checked rows out of column.
-                    let name_len = UnicodeWidthStr::width(prefix) + UnicodeWidthStr::width(name.as_str());
+                    let name_len =
+                        UnicodeWidthStr::width(prefix) + UnicodeWidthStr::width(name.as_str());
                     let value_len = UnicodeWidthStr::width(value.as_str());
                     let padding = terminal_width.saturating_sub(name_len + value_len + 1);
 
@@ -3908,8 +3909,7 @@ impl App {
 
                 let title = truncate_name(&share.title, name_col);
                 let pad = " ".repeat(
-                    name_col
-                        .saturating_sub(unicode_width::UnicodeWidthStr::width(title.as_str()))
+                    name_col.saturating_sub(unicode_width::UnicodeWidthStr::width(title.as_str()))
                         + 2,
                 );
 

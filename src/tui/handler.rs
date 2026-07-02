@@ -2006,7 +2006,11 @@ impl App {
             .tasks
             .iter()
             .filter(|t| t.dest_path.parent() == Some(dest.as_path()))
-            .filter_map(|t| t.dest_path.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .filter_map(|t| {
+                t.dest_path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+            })
             .collect();
         for item in cart_items {
             // Sanitized: the name is server data and must not escape dest.

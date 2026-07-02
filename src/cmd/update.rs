@@ -44,7 +44,10 @@ fn version_newer(latest: &str, current: &str) -> bool {
             Some((c, p)) => (c, Some(p)),
             None => (v, None),
         };
-        (core.split('.').filter_map(|s| s.parse().ok()).collect(), pre)
+        (
+            core.split('.').filter_map(|s| s.parse().ok()).collect(),
+            pre,
+        )
     }
     let (latest_core, latest_pre) = parse(latest);
     let (current_core, current_pre) = parse(current);
@@ -57,30 +60,6 @@ fn version_newer(latest: &str, current: &str) -> bool {
         (None, Some(_)) => true,
         (Some(l), Some(c)) => l > c,
         _ => false,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::version_newer;
-
-    #[test]
-    fn plain_numeric_comparison() {
-        assert!(version_newer("v0.0.57", "0.0.56"));
-        assert!(!version_newer("0.0.56", "0.0.56"));
-        assert!(!version_newer("v0.0.55", "0.0.56"));
-    }
-
-    #[test]
-    fn prerelease_is_older_than_release() {
-        assert!(!version_newer("v0.6.0-rc1", "0.6.0"));
-        assert!(version_newer("v0.6.0", "0.6.0-rc1"));
-    }
-
-    #[test]
-    fn prereleases_compare_between_themselves() {
-        assert!(version_newer("0.6.0-rc2", "0.6.0-rc1"));
-        assert!(!version_newer("0.6.0-rc1", "0.6.0-rc2"));
     }
 }
 
@@ -106,4 +85,28 @@ pub fn run() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::version_newer;
+
+    #[test]
+    fn plain_numeric_comparison() {
+        assert!(version_newer("v0.0.57", "0.0.56"));
+        assert!(!version_newer("0.0.56", "0.0.56"));
+        assert!(!version_newer("v0.0.55", "0.0.56"));
+    }
+
+    #[test]
+    fn prerelease_is_older_than_release() {
+        assert!(!version_newer("v0.6.0-rc1", "0.6.0"));
+        assert!(version_newer("v0.6.0", "0.6.0-rc1"));
+    }
+
+    #[test]
+    fn prereleases_compare_between_themselves() {
+        assert!(version_newer("0.6.0-rc2", "0.6.0-rc1"));
+        assert!(!version_newer("0.6.0-rc1", "0.6.0-rc2"));
+    }
 }

@@ -131,7 +131,11 @@ impl PikPak {
             // An empty token would sail through and fail signin with an opaque
             // 4xx, and it would shadow the documented env escape hatch.
             .filter(|t| !t.is_empty())
-            .or_else(|| env::var("PIKPAK_CAPTCHA_TOKEN").ok().filter(|t| !t.is_empty()))
+            .or_else(|| {
+                env::var("PIKPAK_CAPTCHA_TOKEN")
+                    .ok()
+                    .filter(|t| !t.is_empty())
+            })
             .ok_or_else(|| {
                 let hint = captcha.url.as_deref().unwrap_or("<no challenge url>");
                 anyhow!(

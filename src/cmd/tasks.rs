@@ -8,7 +8,7 @@ pub fn run(args: &[String]) -> Result<()> {
     // sub-command word consumes the first argument.
     let (sub, rest) = match args.first().map(|s| s.as_str()) {
         Some(s @ ("list" | "ls" | "retry" | "delete" | "rm")) => (s, &args[1..]),
-        Some(_) => ("list", &args[..]),
+        Some(_) => ("list", args),
         None => ("list", &[][..]),
     };
 

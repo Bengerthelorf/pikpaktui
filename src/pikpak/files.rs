@@ -100,7 +100,9 @@ impl PikPak {
         let mut page_token: Option<String> = None;
 
         loop {
-            let page_size = (limit as u64 - all_entries.len() as u64).min(500).to_string();
+            let page_size = (limit as u64 - all_entries.len() as u64)
+                .min(500)
+                .to_string();
             let mut rb = self.http.get(&url).bearer_auth(&token).query(&[
                 ("parent_id", "*"),
                 ("limit", page_size.as_str()),
@@ -385,9 +387,7 @@ fn pick_unique(
 ) -> Result<Entry> {
     let mut matches: Vec<Entry> = entries
         .into_iter()
-        .filter(|e| {
-            e.name == name && (!folders_only || e.kind == crate::pikpak::EntryKind::Folder)
-        })
+        .filter(|e| e.name == name && (!folders_only || e.kind == crate::pikpak::EntryKind::Folder))
         .collect();
     match matches.len() {
         0 => Err(anyhow!(
