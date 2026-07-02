@@ -1,6 +1,9 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 
-use super::{OfflineListResponse, OfflineTaskResponse, PikPak, ensure_success, json_or_api_error};
+use super::{
+    OfflineListResponse, OfflineTask, OfflineTaskResponse, PikPak, ensure_success,
+    json_or_api_error,
+};
 
 impl PikPak {
     pub fn offline_download(
@@ -53,6 +56,48 @@ impl PikPak {
 
         let response = rb.send().context("offline list request failed")?;
         json_or_api_error(response, "offline list")
+    }
+
+    /// Ask the server what a magnet/URL contains without adding a task
+    /// (the web client's landing preview).
+    pub fn parse_resource(&self, resource_url: &str) -> Result<serde_json::Value> {
+        let token = self.access_token()?;
+        let url = self.drive_url("drive/v1/resource/list");
+
+        let payload = serde_json::json!({
+            "urls": resource_url,
+            "page_size": 500,
+            "thumbnail_type": "FROM_HASH",
+        });
+
+        let mut rb = self.http.post(&url).bearer_auth(&token).json(&payload);
+        rb = self.authed_headers(rb);
+
+        let response = rb.send().context("resource parse request failed")?;
+        json_or_api_error(response, "resource parse")
+    }
+
+    /// Fetch one task's fresh state (rclone's getTask poll endpoint).
+    pub fn offline_task(&self, task_id: &str) -> Result<OfflineTask> {
+        let token = self.access_token()?;
+        let url = format!("{}/{}", self.drive_url("drive/v1/tasks"), task_id);
+
+        let mut rb = self
+            .http
+            .get(&url)
+            .bearer_auth(&token)
+            .query(&[("type", "offline"), ("checkPhase", "true")]);
+        rb = self.authed_headers(rb);
+
+        let response = rb.send().context("task poll request failed")?;
+        let value: serde_json::Value = json_or_api_error(response, "task poll")?;
+        // Some deployments wrap the task, some return it bare.
+        let task = if value.get("task").is_some() {
+            value["task"].clone()
+        } else {
+            value
+        };
+        serde_json::from_value(task).map_err(|e| anyhow!("invalid task json: {e}"))
     }
 
     pub fn offline_task_retry(&self, task_id: &str) -> Result<()> {

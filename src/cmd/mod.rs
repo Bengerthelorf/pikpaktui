@@ -242,10 +242,12 @@ pub fn command_help_text(cmd: &str) -> (&'static str, &'static str, String) {
                 "{B}OPTIONS:{R}\n\
                  {opt}  -t, --to <path>  {d}Destination folder in PikPak{R}\n\
                  {opt}  --name <name>    {d}Custom name for the task{R}\n\
+                 {opt}  -p, --preview    {d}Show what the URL/magnet contains, without adding{R}\n\
                  {opt}  -n, --dry-run    {d}Preview without creating task{R}\n\
                  \n{B}EXAMPLES:{R}\n\
                  {ex}  pikpaktui offline https://example.com/file.zip{R}\n\
-                 {ex}  pikpaktui offline magnet:?xt=... --to /Downloads{R}\n",
+                 {ex}  pikpaktui offline magnet:?xt=... --to /Downloads{R}\n\
+                 {ex}  pikpaktui offline -p magnet:?xt=...{R}\n",
                 opt = G,
                 d = D,
                 ex = D,
@@ -257,6 +259,7 @@ pub fn command_help_text(cmd: &str) -> (&'static str, &'static str, String) {
             format!(
                 "{B}SUBCOMMANDS:{R}\n\
                  {opt}  list, ls         {d}List tasks (default){R}\n\
+                 {opt}  show <id>        {d}Poll one task's fresh state{R}\n\
                  {opt}  retry <id>       {d}Retry a failed task{R}\n\
                  {opt}  delete, rm <id...> {d}Delete task(s){R}\n\
                  \n{B}OPTIONS:{R}\n\

@@ -7,7 +7,7 @@ pub fn run(args: &[String]) -> Result<()> {
     // `tasks -J` / `tasks 20` are documented list invocations: only a known
     // sub-command word consumes the first argument.
     let (sub, rest) = match args.first().map(|s| s.as_str()) {
-        Some(s @ ("list" | "ls" | "retry" | "delete" | "rm")) => (s, &args[1..]),
+        Some(s @ ("list" | "ls" | "retry" | "delete" | "rm" | "show")) => (s, &args[1..]),
         Some(_) => ("list", args),
         None => ("list", &[][..]),
     };
@@ -172,6 +172,48 @@ pub fn run(args: &[String]) -> Result<()> {
             println!("Task {} retried", task_id);
             Ok(())
         }
+        "show" => {
+            let json = rest.iter().any(|a| a == "-J" || a == "--json");
+            let task_id = rest
+                .iter()
+                .find(|a| !a.starts_with('-'))
+                .ok_or_else(|| anyhow::anyhow!("Usage: pikpaktui tasks show [-J] <task_id>"))?;
+
+            let spinner = super::Spinner::new("Polling task...");
+            let task = client.offline_task(task_id)?;
+            drop(spinner);
+
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&task).unwrap_or_else(|_| "{}".into())
+                );
+                return Ok(());
+            }
+
+            println!("Name:     {}", task.name);
+            println!("ID:       {}", task.id);
+            println!("Phase:    {}", task.phase);
+            println!("Progress: {}%", task.progress);
+            if let Some(size) = task
+                .file_size
+                .as_deref()
+                .and_then(|s| s.parse::<u64>().ok())
+            {
+                println!("Size:     {}", super::format_size(size));
+            }
+            if let Some(fid) = &task.file_id
+                && !fid.is_empty()
+            {
+                println!("File:     {}", fid);
+            }
+            if let Some(msg) = &task.message
+                && !msg.is_empty()
+            {
+                println!("Message:  {}", msg);
+            }
+            Ok(())
+        }
         "delete" | "rm" => {
             let mut dry_run = false;
             let mut ids: Vec<&str> = Vec::new();
@@ -198,7 +240,7 @@ pub fn run(args: &[String]) -> Result<()> {
             Ok(())
         }
         _ => Err(anyhow::anyhow!(
-            "unknown tasks sub-command: {sub}\nUsage: pikpaktui tasks [list|retry|delete]"
+            "unknown tasks sub-command: {sub}\nUsage: pikpaktui tasks [list|show|retry|delete]"
         )),
     }
 }
