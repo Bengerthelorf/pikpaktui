@@ -27,6 +27,7 @@ pub mod untrash;
 pub mod update;
 pub mod upload;
 pub mod vip;
+pub mod whoami;
 
 use crate::config::AppConfig;
 use crate::pikpak::{self, PikPak};
@@ -55,7 +56,7 @@ pub const COMMAND_GROUPS: &[(&str, &[&str])] = &[
         &["star", "unstar", "starred", "events"],
     ),
     ("Auth", &["login"]),
-    ("Account", &["quota", "vip"]),
+    ("Account", &["quota", "vip", "whoami"]),
     ("Utility", &["update", "completions"]),
 ];
 
@@ -437,6 +438,16 @@ pub fn command_help_text(cmd: &str) -> (&'static str, &'static str, String) {
             ),
         ),
         "vip" => ("vip", "Show VIP and account info", String::new()),
+        "whoami" => (
+            "whoami [options]",
+            "Show the logged-in account identity",
+            format!(
+                "{B}OPTIONS:{R}\n\
+                 {opt}  -J, --json       {d}Output as JSON{R}\n",
+                opt = G,
+                d = D,
+            ),
+        ),
         "update" => ("update", "Check for updates and self-update", String::new()),
         "completions" => (
             "completions <shell>",

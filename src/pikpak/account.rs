@@ -40,6 +40,18 @@ impl PikPak {
             .ok_or_else(|| anyhow!("no invite code in response"))
     }
 
+    /// Account identity from the auth host (rclone's getUserInfo endpoint).
+    pub fn user_info(&self) -> Result<serde_json::Value> {
+        let token = self.access_token()?;
+        let url = self.auth_url("v1/user/me");
+
+        let mut rb = self.http.get(&url).bearer_auth(&token);
+        rb = self.authed_headers(rb);
+
+        let response = rb.send().context("user info request failed")?;
+        json_or_api_error(response, "user info")
+    }
+
     pub fn transfer_quota(&self) -> Result<TransferQuotaResponse> {
         let token = self.access_token()?;
         let url = self.drive_url("vip/v1/quantity/list");

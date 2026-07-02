@@ -67,6 +67,7 @@ fn entry() -> Result<()> {
         "cat" => cmd::cat::run(&args[1..]),
         "play" => cmd::play::run(&args[1..]),
         "vip" => cmd::vip::run(),
+        "whoami" => cmd::whoami::run(&args[1..]),
         "login" => cmd::login::run(&args[1..]),
         "update" => cmd::update::run(),
         "completions" => cmd::completions::run(&args[1..]),
