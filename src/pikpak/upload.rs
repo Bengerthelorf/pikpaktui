@@ -129,16 +129,43 @@ impl PikPak {
                         ok += sub_ok;
                         failed += sub_fail;
                     }
-                    Err(_) => failed += 1,
+                    Err(e) => {
+                        // The whole subtree is skipped, so count its files —
+                        // "1 failed" for a folder of 200 would misreport badly.
+                        eprintln!("  [error] mkdir '{}': {:#}", name, e);
+                        failed += Self::count_files_in(&path).max(1);
+                    }
                 }
             } else if path.is_file() {
                 match self.upload_file(Some(parent_id), &path) {
                     Ok(_) => ok += 1,
-                    Err(_) => failed += 1,
+                    Err(e) => {
+                        eprintln!("  [error] '{}': {:#}", path.display(), e);
+                        failed += 1;
+                    }
                 }
             }
         }
         Ok((ok, failed))
+    }
+
+    fn count_files_in(dir: &Path) -> usize {
+        std::fs::read_dir(dir)
+            .map(|rd| {
+                rd.flatten()
+                    .map(|e| {
+                        let p = e.path();
+                        if p.is_dir() {
+                            Self::count_files_in(&p)
+                        } else if p.is_file() {
+                            1
+                        } else {
+                            0
+                        }
+                    })
+                    .sum()
+            })
+            .unwrap_or(0)
     }
 
     fn oss_initiate_multipart(&self, oss: &OssArgs) -> Result<String> {
@@ -254,11 +281,15 @@ impl PikPak {
                 ));
             }
 
+            // Fail at the part that lost its ETag: an empty one silently
+            // recorded here only surfaces later as a confusing
+            // CompleteMultipartUpload error (or a corrupt accepted object).
             let etag = response
                 .headers()
                 .get("ETag")
                 .and_then(|v| v.to_str().ok())
-                .unwrap_or("")
+                .filter(|t| !t.is_empty())
+                .ok_or_else(|| anyhow!("OSS upload part {} returned no ETag", part_num))?
                 .to_string();
 
             etags.push(etag);
