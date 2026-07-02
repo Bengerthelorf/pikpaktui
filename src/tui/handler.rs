@@ -2011,6 +2011,10 @@ impl App {
                     .file_name()
                     .map(|n| n.to_string_lossy().into_owned())
             })
+            .flat_map(|n| {
+                let sidecar = format!("{n}.part");
+                [n, sidecar]
+            })
             .collect();
         for item in cart_items {
             // Sanitized: the name is server data and must not escape dest.

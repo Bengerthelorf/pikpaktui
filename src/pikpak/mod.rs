@@ -11,6 +11,7 @@ mod share;
 mod upload;
 
 use auth::{CaptchaInitResponse, SigninResponse};
+pub(crate) use download::part_path;
 pub use file_info::FileInfoResponse;
 pub use models::{Entry, EntryKind, SessionToken};
 pub use responses::{
@@ -438,11 +439,23 @@ pub(crate) fn sanitize_filename(name: &str) -> String {
 /// extension when needed. PikPak folders may hold duplicate names (and
 /// sanitization can collapse distinct ones), but a local directory cannot —
 /// without this, two same-named entries download into one interleaved file.
+/// The ".part" sidecar of each reserved name is reserved too, so a cloud file
+/// literally named "a.part" can't fight over the sidecar of "a".
 pub(crate) fn unique_local_name(
     taken: &mut std::collections::HashSet<String>,
     name: &str,
 ) -> String {
-    if taken.insert(name.to_string()) {
+    fn reserve(taken: &mut std::collections::HashSet<String>, cand: &str) -> bool {
+        let sidecar = format!("{cand}.part");
+        if taken.contains(cand) || taken.contains(&sidecar) {
+            return false;
+        }
+        taken.insert(cand.to_string());
+        taken.insert(sidecar);
+        true
+    }
+
+    if reserve(taken, name) {
         return name.to_string();
     }
     let (stem, ext) = match name.rsplit_once('.') {
@@ -454,7 +467,7 @@ pub(crate) fn unique_local_name(
             Some(e) => format!("{stem} ({n}).{e}"),
             None => format!("{stem} ({n})"),
         };
-        if taken.insert(candidate.clone()) {
+        if reserve(taken, &candidate) {
             return candidate;
         }
     }
@@ -812,6 +825,42 @@ mod tests {
         assert_eq!(total, 5);
         assert_eq!(std::fs::read(&dest).unwrap(), b"hello");
         assert_eq!(server.download_hits.load(Ordering::SeqCst), 1);
+        server.handle.join().unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn download_to_resumes_from_part_sidecar() {
+        // file_info + ranged download = 2 requests
+        let server = start_mock_download_server(b"hello", false, 2);
+        let dir = temp_test_dir("download-part-resume");
+        let dest = dir.join("file.bin");
+        std::fs::write(part_path(&dest), b"he").unwrap();
+        let client = test_client(server.base_url, dir.join("session.json"));
+
+        let total = client.download_to("file", &dest).unwrap();
+
+        assert_eq!(total, 5);
+        assert_eq!(std::fs::read(&dest).unwrap(), b"hello");
+        assert!(!part_path(&dest).exists(), "sidecar must be renamed away");
+        server.handle.join().unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn download_to_restarts_when_same_named_file_is_foreign() {
+        // A same-named local file that is smaller than the remote is NOT
+        // treated as a partial: the download runs fresh via the sidecar.
+        let server = start_mock_download_server(b"hello", false, 2);
+        let dir = temp_test_dir("download-foreign-file");
+        let dest = dir.join("file.bin");
+        std::fs::write(&dest, b"XX").unwrap();
+        let client = test_client(server.base_url, dir.join("session.json"));
+
+        let total = client.download_to("file", &dest).unwrap();
+
+        assert_eq!(total, 5);
+        assert_eq!(std::fs::read(&dest).unwrap(), b"hello");
         server.handle.join().unwrap();
         std::fs::remove_dir_all(dir).unwrap();
     }

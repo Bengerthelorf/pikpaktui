@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::fs;
 use std::io::{Read as _, Seek, SeekFrom, Write as _};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
@@ -230,7 +230,7 @@ fn download_worker(
     msg_tx: &Sender<DownloadMsg>,
     cancel_flag: &Arc<AtomicBool>,
 ) -> anyhow::Result<()> {
-    let (url, total_size) = client.download_url(file_id)?;
+    let (mut url, total_size) = client.download_url(file_id)?;
 
     let _ = msg_tx.send(DownloadMsg::Started { id, total_size });
 
@@ -238,33 +238,77 @@ fn download_worker(
         fs::create_dir_all(parent)?;
     }
 
-    let mut existing_size = dest.metadata().map(|m| m.len()).unwrap_or(0);
-
-    if total_size > 0 {
-        if existing_size == total_size {
-            let _ = msg_tx.send(DownloadMsg::Done { id });
-            return Ok(());
-        }
-        if existing_size > total_size {
-            // Whatever is on disk is not a partial of this file (stale or
-            // foreign content); appending to it would corrupt silently.
-            existing_size = 0;
-        }
+    // The finished name is only ever a verified complete file; partial data
+    // lives in a .part sidecar (shared scheme with the CLI download).
+    let existing_size = dest.metadata().map(|m| m.len()).unwrap_or(0);
+    if total_size > 0 && existing_size == total_size {
+        let _ = msg_tx.send(DownloadMsg::Done { id });
+        return Ok(());
     }
+    let part = crate::pikpak::part_path(dest);
 
+    let mut renewed = false;
+    let downloaded = loop {
+        let mut part_size = part.metadata().map(|m| m.len()).unwrap_or(0);
+        if total_size > 0 && part_size > total_size {
+            part_size = 0;
+        }
+
+        match stream_attempt(client, &url, &part, part_size, id, msg_tx, cancel_flag) {
+            Ok(None) => {
+                // Cancelled/paused: keep the .part for resume, free the slot.
+                let _ = msg_tx.send(DownloadMsg::Stopped { id });
+                return Ok(());
+            }
+            Ok(Some(w)) if total_size == 0 || w == total_size => break w,
+            // Short body or dropped connection: the .part keeps what arrived,
+            // and one fresh link (they expire mid-transfer on long downloads)
+            // resumes from that offset.
+            Ok(Some(_)) | Err(_) if !renewed => {
+                renewed = true;
+                url = client.download_url(file_id)?.0;
+            }
+            Ok(Some(w)) => {
+                anyhow::bail!("incomplete download: got {w} of {total_size} bytes");
+            }
+            Err(e) => return Err(e),
+        }
+    };
+
+    fs::rename(&part, dest)?;
+    let _ = msg_tx.send(DownloadMsg::Progress {
+        id,
+        downloaded,
+        speed: 0.0,
+    });
+    let _ = msg_tx.send(DownloadMsg::Done { id });
+    Ok(())
+}
+
+/// One transfer pass into the .part file. Returns `None` when cancelled,
+/// otherwise the total bytes present after the pass.
+fn stream_attempt(
+    client: &PikPak,
+    url: &str,
+    part: &Path,
+    part_size: u64,
+    id: u64,
+    msg_tx: &Sender<DownloadMsg>,
+    cancel_flag: &Arc<AtomicBool>,
+) -> anyhow::Result<Option<u64>> {
     // Shared range/resume contract with the CLI download (see download_stream).
-    let (response, start_offset) = client.download_stream(&url, existing_size)?;
+    let (response, start_offset) = client.download_stream(url, part_size)?;
 
     let mut file = if start_offset > 0 {
         let mut f = fs::OpenOptions::new()
             .write(true)
             .create(true)
             .truncate(false)
-            .open(dest)?;
+            .open(part)?;
         f.seek(SeekFrom::Start(start_offset))?;
         f
     } else {
-        fs::File::create(dest)?
+        fs::File::create(part)?
     };
 
     let mut reader = response;
@@ -276,8 +320,7 @@ fn download_worker(
 
     loop {
         if cancel_flag.load(Ordering::Relaxed) {
-            let _ = msg_tx.send(DownloadMsg::Stopped { id });
-            return Ok(());
+            return Ok(None);
         }
 
         let n = reader.read(&mut buf)?;
@@ -301,18 +344,7 @@ fn download_worker(
         }
     }
 
-    // A well-formed but short body would otherwise count as success.
-    if total_size > 0 && downloaded != total_size {
-        anyhow::bail!("incomplete download: got {downloaded} of {total_size} bytes");
-    }
-
-    let _ = msg_tx.send(DownloadMsg::Progress {
-        id,
-        downloaded,
-        speed: 0.0,
-    });
-    let _ = msg_tx.send(DownloadMsg::Done { id });
-    Ok(())
+    Ok(Some(downloaded))
 }
 
 #[derive(Serialize, Deserialize)]

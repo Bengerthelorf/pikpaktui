@@ -6,6 +6,14 @@ use std::path::Path;
 
 use super::{Entry, EntryKind, PikPak, sanitize_filename};
 
+/// Sidecar path for in-progress data: "name.ext" downloads as "name.ext.part"
+/// and is renamed only after the byte count checks out.
+pub(crate) fn part_path(dest: &Path) -> std::path::PathBuf {
+    let mut os = dest.as_os_str().to_owned();
+    os.push(".part");
+    std::path::PathBuf::from(os)
+}
+
 impl PikPak {
     /// Returns (download_url, total_size) for a file.
     pub fn download_url(&self, file_id: &str) -> Result<(String, u64)> {
@@ -66,41 +74,70 @@ impl PikPak {
 
     pub fn download_to(&self, file_id: &str, dest: &std::path::Path) -> Result<u64> {
         let info = self.file_info(file_id)?;
-        let download_url = info
+        let mut download_url = info
             .download_url()
-            .ok_or_else(|| anyhow!("no download link for file {}", file_id))?;
+            .ok_or_else(|| anyhow!("no download link for file {}", file_id))?
+            .to_string();
         let total_size = info.file_size();
 
-        let mut existing_size = dest.metadata().map(|m| m.len()).unwrap_or(0);
-        if total_size > 0 {
-            if existing_size == total_size {
-                return Ok(existing_size);
-            }
-            if existing_size > total_size {
-                // Not a partial of this file (stale or foreign content);
-                // appending to it would corrupt silently. Start over.
-                existing_size = 0;
-            }
+        // The finished name is only ever a verified complete file; partial
+        // data lives in a .part sidecar, so an unrelated same-named local
+        // file can never be mistaken for a resumable partial.
+        let existing_size = dest.metadata().map(|m| m.len()).unwrap_or(0);
+        if total_size > 0 && existing_size == total_size {
+            return Ok(existing_size);
         }
+        let part = part_path(dest);
 
-        let (response, start_offset) = self.download_stream(download_url, existing_size)?;
-        let mut file = if start_offset > 0 {
-            fs::OpenOptions::new().append(true).open(dest)?
-        } else {
-            fs::File::create(dest)?
+        let mut renewed = false;
+        let written = loop {
+            let mut part_size = part.metadata().map(|m| m.len()).unwrap_or(0);
+            if total_size > 0 && part_size > total_size {
+                part_size = 0;
+            }
+
+            let attempt = (|| -> Result<u64> {
+                let (response, start_offset) = self.download_stream(&download_url, part_size)?;
+                let mut file = if start_offset > 0 {
+                    fs::OpenOptions::new().append(true).open(&part)?
+                } else {
+                    fs::File::create(&part)?
+                };
+                let mut reader: Box<dyn io::Read> = Box::new(response);
+                let bytes = io::copy(&mut reader, &mut file).context("download write failed")?;
+                Ok(start_offset + bytes)
+            })();
+
+            match attempt {
+                Ok(w) if total_size == 0 || w == total_size => break w,
+                // Short body or dropped connection: the .part keeps what
+                // arrived, and one fresh link (they expire mid-transfer on
+                // long downloads) resumes from that offset.
+                Ok(_) | Err(_) if !renewed => {
+                    renewed = true;
+                    download_url = self
+                        .file_info(file_id)?
+                        .download_url()
+                        .ok_or_else(|| anyhow!("no download link for file {}", file_id))?
+                        .to_string();
+                }
+                Ok(w) => {
+                    return Err(anyhow!(
+                        "incomplete download: got {} of {} bytes",
+                        w,
+                        total_size
+                    ));
+                }
+                Err(e) => return Err(e),
+            }
         };
 
-        let mut reader: Box<dyn io::Read> = Box::new(response);
-        let bytes = io::copy(&mut reader, &mut file).context("download write failed")?;
-        let written = start_offset + bytes;
-        // A well-formed but short body would otherwise count as success.
-        if total_size > 0 && written != total_size {
-            return Err(anyhow!(
-                "incomplete download: got {} of {} bytes",
-                written,
-                total_size
-            ));
-        }
+        fs::rename(&part, dest).with_context(|| {
+            format!(
+                "downloaded but could not move '{}' into place",
+                part.display()
+            )
+        })?;
         Ok(written)
     }
 
