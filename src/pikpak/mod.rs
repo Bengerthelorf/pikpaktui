@@ -16,8 +16,8 @@ pub use file_info::FileInfoResponse;
 pub use models::{Entry, EntryKind, SessionToken};
 pub use responses::{
     CreateShareResponse, EventsResponse, MyShare, OfflineListResponse, OfflineTask,
-    OfflineTaskResponse, QuotaInfo, ShareInfoResponse, ShareListResponse, TransferBand,
-    TransferQuotaResponse, VipInfoResponse,
+    OfflineTaskResponse, QuotaInfo, ShareDetailResponse, ShareEntry, ShareInfoResponse,
+    ShareListResponse, TransferBand, TransferQuotaResponse, VipInfoResponse,
 };
 
 use anyhow::{Context, Result, anyhow};

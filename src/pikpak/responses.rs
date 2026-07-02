@@ -46,6 +46,25 @@ pub struct CreateShareResponse {
 pub struct ShareEntry {
     pub id: String,
     pub name: String,
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub size: Option<String>,
+}
+
+impl ShareEntry {
+    pub fn is_folder(&self) -> bool {
+        self.kind.ends_with("folder")
+    }
+}
+
+/// One page of a folder inside a share (drive/v1/share/detail).
+#[derive(Debug, Deserialize)]
+pub struct ShareDetailResponse {
+    #[serde(default)]
+    pub files: Vec<ShareEntry>,
+    #[serde(default)]
+    pub next_page_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

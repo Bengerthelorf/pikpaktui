@@ -214,6 +214,7 @@ pub fn command_help_text(cmd: &str) -> (&'static str, &'static str, String) {
                  {opt}  share <path...>        {d}Create a share link{R}\n\
                  {opt}  share -l               {d}List your shares{R}\n\
                  {opt}  share -S <url>         {d}Save a share to your drive{R}\n\
+                 {opt}  share -b <url> [path]  {d}Browse folders inside a share{R}\n\
                  {opt}  share -D <id...>       {d}Delete share(s){R}\n\
                  \n{B}OPTIONS (create):{R}\n\
                  {opt}  -p, --password   {d}Protect with a password{R}\n\

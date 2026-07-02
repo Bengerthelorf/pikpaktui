@@ -1,8 +1,8 @@
 use anyhow::{Context, Result, anyhow};
 
 use super::{
-    CreateShareResponse, MyShare, PikPak, ShareInfoResponse, ShareListResponse, ensure_success,
-    json_or_api_error, sanitize,
+    CreateShareResponse, MyShare, PikPak, ShareEntry, ShareInfoResponse, ShareListResponse,
+    ensure_success, json_or_api_error, sanitize,
 };
 
 impl PikPak {
@@ -98,6 +98,47 @@ impl PikPak {
 
         let response = rb.send().context("create share request failed")?;
         json_or_api_error(response, "create share")
+    }
+
+    /// List one folder inside a share (paginated). `parent_id` comes from a
+    /// folder entry returned by `share_info` or a previous detail call —
+    /// nested share folders are unreachable through `share_info` alone.
+    pub fn share_detail(
+        &self,
+        share_id: &str,
+        parent_id: &str,
+        pass_code_token: &str,
+    ) -> Result<Vec<ShareEntry>> {
+        let token = self.access_token()?;
+        let url = self.drive_url("drive/v1/share/detail");
+
+        let mut entries: Vec<ShareEntry> = Vec::new();
+        let mut page_token: Option<String> = None;
+        loop {
+            let mut rb = self.http.get(&url).bearer_auth(&token).query(&[
+                ("share_id", share_id),
+                ("parent_id", parent_id),
+                ("pass_code_token", pass_code_token),
+                ("limit", "100"),
+                ("thumbnail_size", "SIZE_SMALL"),
+            ]);
+            if let Some(ref pt) = page_token {
+                rb = rb.query(&[("page_token", pt.as_str())]);
+            }
+            rb = self.authed_headers(rb);
+
+            let response = rb.send().context("share detail request failed")?;
+            let resp: super::ShareDetailResponse = json_or_api_error(response, "share detail")?;
+            let got_any = !resp.files.is_empty();
+            entries.extend(resp.files);
+
+            match resp.next_page_token.filter(|t| !t.is_empty()) {
+                Some(t) if !got_any || page_token.as_deref() == Some(t.as_str()) => break,
+                Some(t) => page_token = Some(t),
+                None => break,
+            }
+        }
+        Ok(entries)
     }
 
     pub fn list_shares(&self) -> Result<Vec<MyShare>> {

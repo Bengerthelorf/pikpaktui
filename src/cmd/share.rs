@@ -4,13 +4,14 @@ use std::io::Write as _;
 pub fn run(args: &[String]) -> Result<()> {
     if args.is_empty() {
         return Err(anyhow!(
-            "Usage:\n  pikpaktui share [-p] [-d <days>] [-J] [-o <file>] <path...>\n  pikpaktui share -S [-n] [-p <code>] [-t <path>] [-J] <url>\n  pikpaktui share -l [-J]\n  pikpaktui share -D <share_id...>"
+            "Usage:\n  pikpaktui share [-p] [-d <days>] [-J] [-o <file>] <path...>\n  pikpaktui share -S [-n] [-p <code>] [-t <path>] [-J] <url>\n  pikpaktui share -b [-p <code>] [-J] <url> [path]\n  pikpaktui share -l [-J]\n  pikpaktui share -D <share_id...>"
         ));
     }
 
     let list_mode = args.iter().any(|a| a == "-l" || a == "--list");
     let delete_mode = args.iter().any(|a| a == "-D" || a == "--delete");
     let save_mode = args.iter().any(|a| a == "-S" || a == "--save");
+    let browse_mode = args.iter().any(|a| a == "-b" || a == "--browse");
 
     if list_mode {
         run_list(args)
@@ -18,9 +19,116 @@ pub fn run(args: &[String]) -> Result<()> {
         run_delete(args)
     } else if save_mode {
         run_save(args)
+    } else if browse_mode {
+        run_browse(args)
     } else {
         run_create(args)
     }
+}
+
+/// Extract the share id from a full share URL, or pass a bare id through.
+fn extract_share_id(share_url: &str) -> &str {
+    if share_url.contains("/s/") {
+        let trimmed = share_url.trim_end_matches('/');
+        trimmed.rsplit('/').next().unwrap_or(trimmed)
+    } else {
+        share_url
+    }
+}
+
+fn run_browse(args: &[String]) -> Result<()> {
+    let mut share_url: Option<&str> = None;
+    let mut inner_path: Option<&str> = None;
+    let mut pass_code = "";
+    let mut json = false;
+    let mut iter = args.iter();
+
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "-b" | "--browse" => {}
+            "-J" | "--json" => json = true,
+            "-p" | "--pass-code" => {
+                pass_code = iter
+                    .next()
+                    .ok_or_else(|| anyhow!("-p requires a pass code"))?
+                    .as_str();
+            }
+            s if s.starts_with('-') && s != "-" => {
+                return Err(anyhow!("unknown option: {s}"));
+            }
+            arg => {
+                if share_url.is_none() {
+                    share_url = Some(arg);
+                } else if inner_path.is_none() {
+                    inner_path = Some(arg);
+                } else {
+                    return Err(anyhow!("unexpected argument: {}", arg));
+                }
+            }
+        }
+    }
+
+    let share_url = share_url.ok_or_else(|| anyhow!("no share URL or ID provided"))?;
+    let share_id = extract_share_id(share_url);
+
+    let client = super::cli_client()?;
+    let spinner = super::Spinner::new("Fetching share...");
+    let info = client.share_info(share_id, pass_code)?;
+
+    // Walk the requested path folder by folder: share_info only exposes the
+    // top level, everything deeper comes from share/detail.
+    let mut entries = info.files;
+    let mut walked = String::new();
+    for seg in inner_path
+        .unwrap_or("")
+        .trim_matches('/')
+        .split('/')
+        .filter(|s| !s.is_empty())
+    {
+        let folder = entries
+            .iter()
+            .find(|e| e.name == seg && e.is_folder())
+            .ok_or_else(|| anyhow!("folder not found in share: '{}{}'", walked, seg))?;
+        entries = client.share_detail(share_id, &folder.id, &info.pass_code_token)?;
+        walked.push_str(seg);
+        walked.push('/');
+    }
+    drop(spinner);
+
+    if json {
+        let out: Vec<_> = entries
+            .iter()
+            .map(|e| {
+                serde_json::json!({
+                    "id": e.id,
+                    "name": e.name,
+                    "folder": e.is_folder(),
+                    "size": e.size.as_deref().and_then(|s| s.parse::<u64>().ok()),
+                })
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&out)?);
+        return Ok(());
+    }
+
+    if entries.is_empty() {
+        println!("(empty)");
+        return Ok(());
+    }
+    for e in &entries {
+        if e.is_folder() {
+            println!("  \x1b[1;34m{}/\x1b[0m", e.name);
+        } else {
+            let size = e
+                .size
+                .as_deref()
+                .and_then(|s| s.parse::<u64>().ok())
+                .map(super::format_size)
+                .unwrap_or_default();
+            println!("  {}  \x1b[2m{}\x1b[0m", e.name, size);
+        }
+    }
+    Ok(())
 }
 
 fn run_create(args: &[String]) -> Result<()> {
@@ -139,13 +247,7 @@ fn run_save(args: &[String]) -> Result<()> {
     }
 
     let share_url = share_url.ok_or_else(|| anyhow!("no share URL or ID provided"))?;
-
-    let share_id = if share_url.contains("mypikpak.com/s/") {
-        let trimmed = share_url.trim_end_matches('/');
-        trimmed.rsplit('/').next().unwrap_or(trimmed)
-    } else {
-        share_url
-    };
+    let share_id = extract_share_id(share_url);
 
     let client = super::cli_client()?;
 
