@@ -13,10 +13,10 @@ pub fn run(args: &[String]) -> Result<()> {
         match arg.as_str() {
             "-l" | "--long" => long = true,
             "-J" | "--json" => json = true,
-            _ => {
-                if let Ok(n) = arg.parse::<u32>() {
-                    limit = n;
-                }
+            other => {
+                limit = other.parse::<u32>().map_err(|_| {
+                    anyhow::anyhow!("unknown trash argument: {other}\nUsage: pikpaktui trash [-l] [-J] [limit]")
+                })?;
             }
         }
     }

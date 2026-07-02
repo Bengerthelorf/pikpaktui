@@ -338,11 +338,18 @@ fn run_list(args: &[String]) -> Result<()> {
 }
 
 fn run_delete(args: &[String]) -> Result<()> {
-    let ids: Vec<&str> = args
-        .iter()
-        .filter(|a| *a != "-D" && *a != "--delete")
-        .map(|a| a.as_str())
-        .collect();
+    let mut ids: Vec<&str> = Vec::new();
+    for a in args {
+        match a.as_str() {
+            "-D" | "--delete" => {}
+            // Share ids never start with '-'; a stray flag here would be
+            // submitted to the API as an id.
+            s if s.starts_with('-') => {
+                return Err(anyhow!("unknown option: {s}"));
+            }
+            s => ids.push(s),
+        }
+    }
 
     if ids.is_empty() {
         return Err(anyhow!("share -D requires at least one share_id"));

@@ -9,12 +9,14 @@ pub fn run(args: &[String]) -> Result<()> {
 
     let client = super::cli_client()?;
 
-    let file_url = &args[0];
+    // The URL is positional so flags may come before or after it — the usage
+    // string itself shows `offline [--dry-run] <url>`.
+    let mut file_url: Option<&str> = None;
     let mut parent_path: Option<&str> = None;
     let mut name: Option<&str> = None;
     let mut dry_run = false;
 
-    let mut i = 1;
+    let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
             "--to" | "-t" => {
@@ -34,14 +36,22 @@ pub fn run(args: &[String]) -> Result<()> {
                 );
             }
             "--dry-run" | "-n" => dry_run = true,
-            other => {
+            other if other.starts_with('-') && other != "-" => {
                 return Err(anyhow!(
                     "unknown option: {other}\nRun `pikpaktui offline --help` for usage."
                 ));
             }
+            url => {
+                if file_url.is_some() {
+                    return Err(anyhow!("only one URL can be submitted at a time"));
+                }
+                file_url = Some(url);
+            }
         }
         i += 1;
     }
+
+    let file_url = file_url.ok_or_else(|| anyhow!("no URL given"))?;
 
     let parent_id = match parent_path {
         Some(p) => Some(client.resolve_path(p)?),

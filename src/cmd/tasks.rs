@@ -4,8 +4,13 @@ use unicode_width::UnicodeWidthStr;
 pub fn run(args: &[String]) -> Result<()> {
     let client = super::cli_client()?;
 
-    let sub = args.first().map(|s| s.as_str()).unwrap_or("list");
-    let rest = if args.is_empty() { &[][..] } else { &args[1..] };
+    // `tasks -J` / `tasks 20` are documented list invocations: only a known
+    // sub-command word consumes the first argument.
+    let (sub, rest) = match args.first().map(|s| s.as_str()) {
+        Some(s @ ("list" | "ls" | "retry" | "delete" | "rm")) => (s, &args[1..]),
+        Some(_) => ("list", &args[..]),
+        None => ("list", &[][..]),
+    };
 
     match sub {
         "list" | "ls" => {
@@ -14,10 +19,12 @@ pub fn run(args: &[String]) -> Result<()> {
             for a in rest {
                 match a.as_str() {
                     "-J" | "--json" => json = true,
-                    _ => {
-                        if let Ok(n) = a.parse::<u32>() {
-                            limit = n;
-                        }
+                    other => {
+                        limit = other.parse::<u32>().map_err(|_| {
+                            anyhow::anyhow!(
+                                "unknown tasks argument: {other}\nUsage: pikpaktui tasks [list|retry|delete] [-J] [limit]"
+                            )
+                        })?;
                     }
                 }
             }

@@ -12,10 +12,12 @@ pub fn run(args: &[String]) -> Result<()> {
     for arg in args {
         match arg.as_str() {
             "-J" | "--json" => json = true,
-            _ => {
-                if let Ok(n) = arg.parse::<u32>() {
-                    limit = n;
-                }
+            other => {
+                limit = other.parse::<u32>().map_err(|_| {
+                    anyhow::anyhow!(
+                        "unknown events argument: {other}\nUsage: pikpaktui events [-J] [limit]"
+                    )
+                })?;
             }
         }
     }
@@ -85,7 +87,13 @@ pub fn run(args: &[String]) -> Result<()> {
         })
         .collect();
 
-    let w_event = rows.iter().map(|r| r.event.len()).max().unwrap_or(5).max(5);
+    // Display width, not bytes: a localized event name would skew the column.
+    let w_event = rows
+        .iter()
+        .map(|r| UnicodeWidthStr::width(r.event.as_str()))
+        .max()
+        .unwrap_or(5)
+        .max(5);
     let w_icon = rows
         .iter()
         .map(|r| UnicodeWidthStr::width(r.kind_icon))

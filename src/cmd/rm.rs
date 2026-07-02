@@ -11,8 +11,14 @@ pub fn run(args: &[String]) -> Result<()> {
     let mut dry_run = false;
     let mut paths: Vec<&str> = Vec::new();
 
+    let mut opts_done = false;
     for arg in args {
+        if opts_done {
+            paths.push(arg);
+            continue;
+        }
         match arg.as_str() {
+            "--" => opts_done = true,
             "-f" | "--force" => force = true,
             "-r" | "--recursive" => recursive = true,
             "-rf" | "-fr" => {
@@ -20,6 +26,13 @@ pub fn run(args: &[String]) -> Result<()> {
                 force = true;
             }
             "-n" | "--dry-run" => dry_run = true,
+            // A typo'd flag must not fall through as a path: `rm -R x`
+            // would try to delete a file literally named "-R".
+            s if s.starts_with('-') && s != "-" => {
+                return Err(anyhow!(
+                    "unknown option: {s} (use -- to delete names starting with '-')"
+                ));
+            }
             _ => paths.push(arg),
         }
     }

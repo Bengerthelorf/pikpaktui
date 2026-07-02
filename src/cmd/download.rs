@@ -27,7 +27,7 @@ pub fn run(args: &[String]) -> Result<()> {
                     return Err(anyhow!("-j must be at least 1"));
                 }
             }
-            "-o" => {
+            "-o" | "--output" => {
                 output = Some(
                     iter.next()
                         .ok_or_else(|| anyhow!("-o requires an output path"))?
@@ -50,6 +50,18 @@ pub fn run(args: &[String]) -> Result<()> {
 
     if paths.is_empty() {
         return Err(anyhow!("no file path specified"));
+    }
+    if target_dir.is_none() {
+        // Single-file form takes `<path> [output]`; extra positionals were
+        // silently dropped, and a positional output was silently beaten by -o.
+        if paths.len() > 2 {
+            return Err(anyhow!(
+                "too many arguments: expected <path> [output] (use -t <dir> for multiple sources)"
+            ));
+        }
+        if output.is_some() && paths.len() > 1 {
+            return Err(anyhow!("both -o and a positional output were given"));
+        }
     }
 
     let client = super::cli_client()?;
