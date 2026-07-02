@@ -22,6 +22,9 @@ impl PathInput {
 }
 
 impl App {
+    /// Cycle already-known candidates synchronously; otherwise fetch them on
+    /// a worker thread (resolve + ls block for a network round-trip) and
+    /// apply through OpResult::PathCandidates when they arrive.
     pub(super) fn tab_complete(&self, input: &mut PathInput) {
         if !input.candidates.is_empty() {
             let idx = match input.candidate_idx {
@@ -32,71 +35,81 @@ impl App {
             // Use stored completion_base instead of re-parsing the current value
             let parent = &input.completion_base;
             let selected = &input.candidates[idx];
-            input.value = if parent.is_empty() {
-                format!("{}/", selected)
-            } else if parent == "/" {
-                format!("/{}/", selected)
-            } else {
-                format!("{}/{}/", parent, selected)
-            };
+            input.value = join_completed(parent, selected);
             return;
         }
 
         let (parent_path, prefix) = split_path_prefix(&input.value);
+        let value_snapshot = input.value.clone();
+        let current_folder = self.current_folder_id.clone();
+        let client = std::sync::Arc::clone(&self.client);
+        let tx = self.result_tx.clone();
 
-        let parent_id = if parent_path.is_empty() {
-            // Relative: use current folder
-            self.current_folder_id.clone()
-        } else {
-            match self.client.resolve_path(&parent_path) {
-                Ok(id) => id,
+        std::thread::spawn(move || {
+            let parent_id = if parent_path.is_empty() {
+                // Relative: use current folder
+                current_folder
+            } else {
+                match client.resolve_path(&parent_path) {
+                    Ok(id) => id,
+                    Err(_) => return,
+                }
+            };
+
+            let entries = match client.ls(&parent_id) {
+                Ok(e) => e,
                 Err(_) => return,
+            };
+
+            let prefix_lower = prefix.to_lowercase();
+            let matches: Vec<String> = entries
+                .iter()
+                .filter(|e| e.kind == EntryKind::Folder)
+                .filter(|e| e.name.to_lowercase().starts_with(&prefix_lower))
+                .map(|e| e.name.clone())
+                .collect();
+
+            if matches.is_empty() {
+                return;
             }
-        };
 
-        let entries = match self.client.ls(&parent_id) {
-            Ok(e) => e,
-            Err(_) => return,
-        };
+            let _ = tx.send(super::OpResult::PathCandidates {
+                value: value_snapshot,
+                parent: parent_path,
+                matches,
+            });
+        });
+    }
+}
 
-        let prefix_lower = prefix.to_lowercase();
-        let matches: Vec<String> = entries
-            .iter()
-            .filter(|e| e.kind == EntryKind::Folder)
-            .filter(|e| e.name.to_lowercase().starts_with(&prefix_lower))
-            .map(|e| e.name.clone())
-            .collect();
+/// Fill the input from freshly computed candidates (single match completes
+/// directly, several start a Tab cycle).
+pub(super) fn apply_path_candidates(
+    input: &mut PathInput,
+    parent_path: String,
+    matches: Vec<String>,
+) {
+    // Store the parent path as completion base for subsequent Tab presses
+    input.completion_base = parent_path.clone();
 
-        if matches.is_empty() {
-            return;
-        }
+    if matches.len() == 1 {
+        input.value = join_completed(&parent_path, &matches[0]);
+        input.candidates.clear();
+        input.candidate_idx = None;
+    } else {
+        input.candidates = matches;
+        input.candidate_idx = Some(0);
+        input.value = join_completed(&parent_path, &input.candidates[0]);
+    }
+}
 
-        // Store the parent path as completion base for subsequent Tab presses
-        input.completion_base = parent_path.clone();
-
-        if matches.len() == 1 {
-            let name = &matches[0];
-            input.value = if parent_path.is_empty() {
-                format!("{}/", name)
-            } else if parent_path == "/" {
-                format!("/{}/", name)
-            } else {
-                format!("{}/{}/", parent_path, name)
-            };
-            input.candidates.clear();
-            input.candidate_idx = None;
-        } else {
-            input.candidates = matches;
-            input.candidate_idx = Some(0);
-            let first = &input.candidates[0];
-            input.value = if parent_path.is_empty() {
-                format!("{}/", first)
-            } else if parent_path == "/" {
-                format!("/{}/", first)
-            } else {
-                format!("{}/{}/", parent_path, first)
-            };
-        }
+fn join_completed(parent: &str, name: &str) -> String {
+    if parent.is_empty() {
+        format!("{}/", name)
+    } else if parent == "/" {
+        format!("/{}/", name)
+    } else {
+        format!("{}/{}/", parent, name)
     }
 }
 

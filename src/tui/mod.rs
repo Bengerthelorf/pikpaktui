@@ -127,6 +127,21 @@ enum OpResult {
     },
     MyShares(Result<Vec<crate::pikpak::MyShare>>),
     UpdateAvailable(Option<String>),
+    /// Folder listing for the move/copy picker; the id guards against a reply
+    /// landing after the user already navigated elsewhere.
+    PickerLs(String, Result<Vec<Entry>>),
+    /// Tab-completion candidates computed off-thread; `value` is the input
+    /// text they were computed for.
+    PathCandidates {
+        value: String,
+        parent: String,
+        matches: Vec<String>,
+    },
+    LoginDone {
+        email: String,
+        password: String,
+        result: std::result::Result<(), String>,
+    },
 }
 
 #[derive(Default)]
@@ -893,6 +908,83 @@ impl App {
                     self.update_available = Some(version);
                 }
                 OpResult::UpdateAvailable(None) => {}
+                OpResult::PickerLs(folder_id, result) => {
+                    let picker = match &mut self.input {
+                        InputMode::MovePicker { picker, .. }
+                        | InputMode::CopyPicker { picker, .. }
+                        | InputMode::CartMovePicker { picker }
+                        | InputMode::CartCopyPicker { picker } => Some(picker),
+                        _ => None,
+                    };
+                    let mut log = None;
+                    if let Some(p) = picker
+                        && p.folder_id == folder_id
+                    {
+                        match result {
+                            Ok(mut entries) => {
+                                crate::config::sort_entries(
+                                    &mut entries,
+                                    self.config.sort_field,
+                                    self.config.sort_reverse,
+                                );
+                                p.entries = entries;
+                            }
+                            Err(e) => log = Some(format!("Picker load failed: {e:#}")),
+                        }
+                        p.loading = false;
+                    }
+                    if let Some(msg) = log {
+                        self.push_log(msg);
+                    }
+                }
+                OpResult::PathCandidates {
+                    value,
+                    parent,
+                    matches,
+                } => {
+                    let input = match &mut self.input {
+                        InputMode::MoveInput { input, .. }
+                        | InputMode::CopyInput { input, .. }
+                        | InputMode::CartMoveInput { input }
+                        | InputMode::CartCopyInput { input } => Some(input),
+                        _ => None,
+                    };
+                    // Only apply if the user hasn't typed since Tab was hit.
+                    if let Some(inp) = input
+                        && inp.value == value
+                    {
+                        completion::apply_path_candidates(inp, parent, matches);
+                    }
+                }
+                OpResult::LoginDone {
+                    email,
+                    password,
+                    result,
+                } => match result {
+                    Ok(()) => {
+                        if let Err(e) = AppConfig::save_credentials(&email, &password) {
+                            self.push_log(format!("Warning: failed to save config: {e:#}"));
+                        }
+                        // Adopt the session (and device identity) the login
+                        // client just wrote.
+                        match PikPak::new() {
+                            Ok(fresh) => self.client = Arc::new(fresh),
+                            Err(e) => self.push_log(format!("client rebuild failed: {e:#}")),
+                        }
+                        self.input = InputMode::Normal;
+                        self.refresh();
+                        self.push_log("Login successful".to_string());
+                    }
+                    Err(e) => {
+                        self.input = InputMode::Login {
+                            field: LoginField::Email,
+                            email,
+                            password,
+                            error: Some(format!("Login failed: {e}")),
+                            logging_in: false,
+                        };
+                    }
+                },
             }
         }
 
@@ -914,30 +1006,24 @@ impl App {
         }
     }
 
+    /// Log in on a worker thread so the "Logging in..." frame actually
+    /// renders (the event loop used to block inside the HTTP calls). A fresh
+    /// client does the signin — it writes the same session file — and the
+    /// result comes back through poll_results as LoginDone.
     fn attempt_login(&mut self, email: &str, password: &str) {
-        let Some(client) = Arc::get_mut(&mut self.client) else {
-            self.push_log("Cannot login: client is in use by background tasks".to_string());
-            return;
-        };
-        match client.login(email, password) {
-            Ok(()) => {
-                if let Err(e) = AppConfig::save_credentials(email, password) {
-                    self.push_log(format!("Warning: failed to save config: {e:#}"));
-                }
-                self.input = InputMode::Normal;
-                self.refresh();
-                self.push_log("Login successful".to_string());
-            }
-            Err(e) => {
-                self.input = InputMode::Login {
-                    field: LoginField::Email,
-                    email: email.to_string(),
-                    password: password.to_string(),
-                    error: Some(format!("Login failed: {e:#}")),
-                    logging_in: false,
-                };
-            }
-        }
+        let email = email.to_string();
+        let password = password.to_string();
+        let tx = self.result_tx.clone();
+        std::thread::spawn(move || {
+            let result = PikPak::new()
+                .and_then(|mut fresh| fresh.login(&email, &password))
+                .map_err(|e| format!("{e:#}"));
+            let _ = tx.send(OpResult::LoginDone {
+                email,
+                password,
+                result,
+            });
+        });
     }
 
     fn current_path_display(&self) -> String {

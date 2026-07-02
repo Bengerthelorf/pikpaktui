@@ -1124,29 +1124,27 @@ impl App {
         };
     }
 
+    /// Start a picker on the current folder; the listing arrives via
+    /// OpResult::PickerLs so a slow link never freezes keystrokes.
     fn build_picker_state(&mut self) -> Option<PickerState> {
         let folder_id = self.current_folder_id.clone();
         let breadcrumb = self.breadcrumb.clone();
-        match self.client.ls(&folder_id) {
-            Ok(mut entries) => {
-                crate::config::sort_entries(
-                    &mut entries,
-                    self.config.sort_field,
-                    self.config.sort_reverse,
-                );
-                Some(PickerState {
-                    folder_id,
-                    breadcrumb,
-                    entries,
-                    selected: 0,
-                    loading: false,
-                })
-            }
-            Err(e) => {
-                self.push_log(format!("Picker load failed: {e:#}"));
-                None
-            }
-        }
+        self.spawn_picker_ls(folder_id.clone());
+        Some(PickerState {
+            folder_id,
+            breadcrumb,
+            entries: Vec::new(),
+            selected: 0,
+            loading: true,
+        })
+    }
+
+    fn spawn_picker_ls(&self, folder_id: String) {
+        let client = Arc::clone(&self.client);
+        let tx = self.result_tx.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(OpResult::PickerLs(folder_id.clone(), client.ls(&folder_id)));
+        });
     }
 
     fn init_picker(&mut self, source: Entry, is_move: bool) {
@@ -1192,16 +1190,8 @@ impl App {
                     picker.breadcrumb.push((old_id, entry.name.clone()));
                     picker.selected = 0;
                     picker.loading = true;
-                    match self.client.ls(&picker.folder_id) {
-                        Ok(entries) => {
-                            picker.entries = entries;
-                            picker.loading = false;
-                        }
-                        Err(e) => {
-                            self.push_log(format!("Picker load failed: {e:#}"));
-                            picker.loading = false;
-                        }
-                    }
+                    picker.entries.clear();
+                    self.spawn_picker_ls(picker.folder_id.clone());
                 }
                 PickerKeyResult::Navigated
             }
@@ -1210,16 +1200,8 @@ impl App {
                     picker.folder_id = parent_id;
                     picker.selected = 0;
                     picker.loading = true;
-                    match self.client.ls(&picker.folder_id) {
-                        Ok(entries) => {
-                            picker.entries = entries;
-                            picker.loading = false;
-                        }
-                        Err(e) => {
-                            self.push_log(format!("Picker load failed: {e:#}"));
-                            picker.loading = false;
-                        }
-                    }
+                    picker.entries.clear();
+                    self.spawn_picker_ls(picker.folder_id.clone());
                 }
                 PickerKeyResult::Navigated
             }
