@@ -50,7 +50,7 @@ pub struct PikPak {
 
 impl PikPak {
     pub fn new() -> Result<Self> {
-        Ok(Self {
+        let mut client = Self {
             http: reqwest::blocking::Client::builder()
                 .user_agent(USER_AGENT)
                 .connect_timeout(std::time::Duration::from_secs(10))
@@ -71,7 +71,15 @@ impl PikPak {
             thumbnail_size: "SIZE_MEDIUM".to_string(),
             ls_cache: Mutex::new(HashMap::new()),
             refresh_lock: Mutex::new(()),
-        })
+        };
+        // Re-adopt the device identity from the saved session: without it,
+        // every run after the login one sent no x-device-id/x-captcha-token,
+        // a known cause of intermittent 403/riskLimited responses.
+        if let Ok(Some(session)) = client.load_session() {
+            client.device_id = session.device_id;
+            client.captcha_token = session.captcha_token;
+        }
+        Ok(client)
     }
 
     pub fn load_session(&self) -> Result<Option<SessionToken>> {
@@ -164,6 +172,8 @@ impl PikPak {
             access_token: signin.access_token,
             refresh_token: signin.refresh_token,
             expires_at_unix: now.saturating_add(expires_in),
+            device_id: self.device_id.clone(),
+            captcha_token: self.captcha_token.clone(),
         };
 
         self.save_session(&token)?;
@@ -246,12 +256,11 @@ impl PikPak {
             "client_secret": self.client_secret,
         });
 
-        let response = self
-            .http
-            .post(&url)
-            .json(&payload)
-            .send()
-            .context("token refresh request failed")?;
+        let mut rb = self.http.post(&url).json(&payload);
+        if !self.device_id.is_empty() {
+            rb = rb.header("x-device-id", &self.device_id);
+        }
+        let response = rb.send().context("token refresh request failed")?;
 
         let status = response.status();
         if !status.is_success() {
@@ -270,6 +279,8 @@ impl PikPak {
             access_token: refreshed.access_token.clone(),
             refresh_token: refreshed.refresh_token,
             expires_at_unix: now_unix().saturating_add(expires_in),
+            device_id: self.device_id.clone(),
+            captcha_token: self.captcha_token.clone(),
         };
         self.save_session(&token)?;
 
@@ -544,6 +555,7 @@ mod tests {
                 access_token: "test-access".into(),
                 refresh_token: "test-refresh".into(),
                 expires_at_unix: now_unix() + 3600,
+                ..Default::default()
             })
             .unwrap();
         client
@@ -677,6 +689,7 @@ mod tests {
             access_token: "a".into(),
             refresh_token: "r".into(),
             expires_at_unix: 100,
+            ..Default::default()
         };
         assert!(!token.is_expired(99));
         assert!(token.is_expired(100));
@@ -707,6 +720,7 @@ mod tests {
             access_token: "old".into(),
             refresh_token: "r".into(),
             expires_at_unix: now_unix() - 1,
+            ..Default::default()
         };
         assert!(expired.is_expired(now_unix()));
 
@@ -714,6 +728,7 @@ mod tests {
             access_token: "good".into(),
             refresh_token: "r".into(),
             expires_at_unix: now_unix() + 600,
+            ..Default::default()
         };
         assert!(!valid.is_expired(now_unix() + 300));
     }

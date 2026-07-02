@@ -18,11 +18,19 @@ pub struct Entry {
     pub thumbnail_link: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SessionToken {
     pub access_token: String,
     pub refresh_token: String,
     pub expires_at_unix: i64,
+    /// Device identity established at login. Persisted because reference
+    /// clients (alist, PikPakAPI) send x-device-id on every call; omitting it
+    /// after a restart is a known cause of intermittent 403/riskLimited on
+    /// download-link fetches. Defaults keep pre-existing session files valid.
+    #[serde(default)]
+    pub device_id: String,
+    #[serde(default)]
+    pub captcha_token: String,
 }
 
 impl SessionToken {
