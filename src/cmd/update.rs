@@ -64,27 +64,107 @@ fn version_newer(latest: &str, current: &str) -> bool {
 }
 
 pub fn run() -> Result<()> {
+    use anyhow::{Context, anyhow};
+
     let current = cargo_crate_version!();
     println!("Current version: {}", current);
     println!("Checking for updates...");
 
-    let status = self_update::backends::github::Update::configure()
+    let releases = self_update::backends::github::ReleaseList::configure()
         .repo_owner("Bengerthelorf")
         .repo_name("pikpaktui")
-        .bin_name("pikpaktui")
-        .target(platform_target())
-        .show_download_progress(true)
-        .current_version(current)
         .build()?
-        .update()?;
+        .fetch()?;
+    let release = releases
+        .first()
+        .ok_or_else(|| anyhow!("no releases found"))?;
 
-    if status.updated() {
-        println!("Updated to version {}!", status.version());
-    } else {
+    if !version_newer(&release.version, current) {
         println!("Already up to date.");
+        return Ok(());
+    }
+    println!("Updating to v{}...", release.version);
+
+    let target = platform_target();
+    let asset = release
+        .asset_for(target, None)
+        .ok_or_else(|| anyhow!("no release asset for this platform ({target})"))?;
+
+    // The release publishes a sha256sums.txt alongside the archives; refuse
+    // to replace the running binary unless the download matches it, so a
+    // tampered asset or a corrupted transfer can't execute as us.
+    let sums_asset = release
+        .assets
+        .iter()
+        .find(|a| a.name == "sha256sums.txt")
+        .ok_or_else(|| anyhow!("release has no sha256sums.txt; refusing to update unverified"))?;
+    let mut sums = Vec::new();
+    self_update::Download::from_url(&sums_asset.download_url)
+        .download_to(&mut sums)
+        .context("failed to download sha256sums.txt")?;
+    let sums = String::from_utf8_lossy(&sums);
+    let expected = sums
+        .lines()
+        .find_map(|line| {
+            let (hash, file) = line.split_once("  ").or_else(|| line.split_once(' '))?;
+            (file.trim() == asset.name).then(|| hash.trim().to_lowercase())
+        })
+        .ok_or_else(|| anyhow!("sha256sums.txt has no entry for '{}'", asset.name))?;
+
+    let tmp_dir = self_update::TempDir::new().context("cannot create temp dir")?;
+    let archive_path = tmp_dir.path().join(&asset.name);
+    {
+        let archive = std::fs::File::create(&archive_path)
+            .with_context(|| format!("cannot create '{}'", archive_path.display()))?;
+        self_update::Download::from_url(&asset.download_url)
+            .show_progress(true)
+            .download_to(archive)
+            .context("failed to download release archive")?;
     }
 
+    let actual = sha256_file(&archive_path)?;
+    if actual != expected {
+        return Err(anyhow!(
+            "checksum mismatch for {} — refusing to install.\n  expected {}\n  actual   {}",
+            asset.name,
+            expected,
+            actual
+        ));
+    }
+    println!("Checksum verified.");
+
+    let bin_name = if cfg!(windows) {
+        "pikpaktui.exe"
+    } else {
+        "pikpaktui"
+    };
+    self_update::Extract::from_source(&archive_path)
+        .extract_file(tmp_dir.path(), bin_name)
+        .context("failed to extract binary from archive")?;
+    let new_exe = tmp_dir.path().join(bin_name);
+    self_update::self_replace::self_replace(&new_exe).context("failed to replace binary")?;
+
+    println!("Updated to v{}!", release.version);
     Ok(())
+}
+
+fn sha256_file(path: &std::path::Path) -> Result<String> {
+    use anyhow::Context;
+    use sha2::{Digest, Sha256};
+    let mut file =
+        std::fs::File::open(path).with_context(|| format!("cannot open '{}'", path.display()))?;
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut file, &mut hasher).context("failed to hash archive")?;
+    Ok(hex_lower(&hasher.finalize()))
+}
+
+fn hex_lower(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        let _ = write!(s, "{:02x}", b);
+    }
+    s
 }
 
 #[cfg(test)]
@@ -108,5 +188,23 @@ mod tests {
     fn prereleases_compare_between_themselves() {
         assert!(version_newer("0.6.0-rc2", "0.6.0-rc1"));
         assert!(!version_newer("0.6.0-rc1", "0.6.0-rc2"));
+    }
+
+    #[test]
+    fn hex_lower_is_zero_padded_lowercase() {
+        assert_eq!(super::hex_lower(&[0x00, 0x0f, 0xff, 0xa0]), "000fffa0");
+    }
+
+    #[test]
+    fn sha256_matches_known_vector() {
+        let dir = std::env::temp_dir().join(format!("pk-sha-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("hello.bin");
+        std::fs::write(&path, b"hello").unwrap();
+        assert_eq!(
+            super::sha256_file(&path).unwrap(),
+            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }
