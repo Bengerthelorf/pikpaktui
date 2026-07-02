@@ -21,6 +21,12 @@ impl AppConfig {
                 .with_context(|| format!("failed to read config {}", path.display()))?;
             let cfg: AppConfig =
                 toml::from_str(&raw).with_context(|| "failed to parse login.toml")?;
+            // A superseded login.yaml is world-readable plaintext; don't let
+            // it linger once the toml is authoritative.
+            let legacy = path.with_file_name("login.yaml");
+            if legacy.exists() {
+                let _ = fs::remove_file(&legacy);
+            }
             return Ok(cfg);
         }
         let legacy = path.with_file_name("login.yaml");
@@ -28,6 +34,14 @@ impl AppConfig {
             let raw = fs::read_to_string(&legacy)
                 .with_context(|| format!("failed to read legacy config {}", legacy.display()))?;
             let cfg = Self::parse_legacy_yaml(&raw);
+            // Finish the migration: rewrite as 0600 login.toml and delete the
+            // yaml, which was created world-readable and would otherwise keep
+            // the plaintext password around indefinitely.
+            if let (Some(u), Some(p)) = (&cfg.username, &cfg.password)
+                && Self::save_credentials(u, p).is_ok()
+            {
+                let _ = fs::remove_file(&legacy);
+            }
             return Ok(cfg);
         }
         Ok(Self::default())
