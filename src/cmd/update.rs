@@ -37,13 +37,51 @@ pub fn check_for_update() -> Option<String> {
 }
 
 fn version_newer(latest: &str, current: &str) -> bool {
-    let parse = |v: &str| -> Vec<u32> {
-        v.trim_start_matches('v')
-            .split('.')
-            .filter_map(|s| s.parse().ok())
-            .collect()
-    };
-    parse(latest) > parse(current)
+    // Dropping non-numeric segments would make "v0.6.0-rc1" equal "v0.6.0".
+    fn parse(v: &str) -> (Vec<u32>, Option<&str>) {
+        let v = v.trim_start_matches('v');
+        let (core, pre) = match v.split_once('-') {
+            Some((c, p)) => (c, Some(p)),
+            None => (v, None),
+        };
+        (core.split('.').filter_map(|s| s.parse().ok()).collect(), pre)
+    }
+    let (latest_core, latest_pre) = parse(latest);
+    let (current_core, current_pre) = parse(current);
+    if latest_core != current_core {
+        return latest_core > current_core;
+    }
+    // Same numeric core: a release outranks any pre-release; between
+    // pre-releases, lexical order is good enough for rc1 < rc2.
+    match (latest_pre, current_pre) {
+        (None, Some(_)) => true,
+        (Some(l), Some(c)) => l > c,
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::version_newer;
+
+    #[test]
+    fn plain_numeric_comparison() {
+        assert!(version_newer("v0.0.57", "0.0.56"));
+        assert!(!version_newer("0.0.56", "0.0.56"));
+        assert!(!version_newer("v0.0.55", "0.0.56"));
+    }
+
+    #[test]
+    fn prerelease_is_older_than_release() {
+        assert!(!version_newer("v0.6.0-rc1", "0.6.0"));
+        assert!(version_newer("v0.6.0", "0.6.0-rc1"));
+    }
+
+    #[test]
+    fn prereleases_compare_between_themselves() {
+        assert!(version_newer("0.6.0-rc2", "0.6.0-rc1"));
+        assert!(!version_newer("0.6.0-rc1", "0.6.0-rc2"));
+    }
 }
 
 pub fn run() -> Result<()> {
