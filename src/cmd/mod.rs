@@ -502,10 +502,22 @@ pub fn split_parent_name(path: &str) -> Result<(String, String)> {
 
 pub fn find_entry(client: &PikPak, parent_id: &str, name: &str) -> Result<pikpak::Entry> {
     let entries = client.ls_cached(parent_id)?;
-    entries
-        .into_iter()
-        .find(|e| e.name == name)
-        .ok_or_else(|| anyhow!("'{}' not found", name))
+    // PikPak allows duplicate names in a folder; first-match would silently
+    // pick whichever the API lists first — possibly not the one the user saw.
+    let mut matches: Vec<pikpak::Entry> = entries.into_iter().filter(|e| e.name == name).collect();
+    match matches.len() {
+        0 => Err(anyhow!("'{}' not found", name)),
+        1 => Ok(matches.remove(0)),
+        n => {
+            let ids: Vec<String> = matches.iter().map(|e| format!("  id: {}", e.id)).collect();
+            Err(anyhow!(
+                "'{}' is ambiguous: {} entries share this name:\n{}\nrename one first (or operate on it in the TUI)",
+                name,
+                n,
+                ids.join("\n")
+            ))
+        }
+    }
 }
 
 /// Shared body for the star/unstar commands: parse `[-n] <path...>`, resolve
@@ -601,7 +613,7 @@ pub fn run_transfer(
         if paths.is_empty() {
             return Err(anyhow!("Usage: pikpaktui {cmd} [-n] -t <dst> <src...>"));
         }
-        let dest_id = client.resolve_path(dst)?;
+        let dest_id = client.resolve_folder(dst)?;
         let mut ids: Vec<String> = Vec::new();
         for path in &paths {
             let (parent, name) = split_parent_name(path)?;
@@ -635,7 +647,10 @@ pub fn run_transfer(
         let (src_parent, src_name) = split_parent_name(paths[0])?;
         let src_parent_id = client.resolve_path(&src_parent)?;
         let entry = find_entry(&client, &src_parent_id, &src_name)?;
-        let dest_id = client.resolve_path(paths[1])?;
+        // The destination becomes batchMove/batchCopy's to.parent_id, so it
+        // must be a folder — resolving `mv /a.txt /b.txt` (rename intent) to
+        // b.txt's file id would hand the server a nonsense parent.
+        let dest_id = client.resolve_folder(paths[1])?;
 
         if dry_run {
             println!(

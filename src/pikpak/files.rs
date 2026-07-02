@@ -75,10 +75,7 @@ impl PikPak {
 
         for name in path_components(path) {
             let entries = self.ls(&current_id)?;
-            let child = entries
-                .into_iter()
-                .find(|e| e.name == name && e.kind == crate::pikpak::EntryKind::Folder)
-                .ok_or_else(|| anyhow!("folder not found: {name}"))?;
+            let child = pick_unique(entries, name, true, path)?;
             breadcrumb.push((current_id, name.to_string()));
             current_id = child.id;
         }
@@ -310,17 +307,72 @@ impl PikPak {
             return Ok(String::new());
         }
 
+        let comps = path_components(path);
         let mut current_id = String::new();
-        for seg in path_components(path) {
+        for (i, seg) in comps.iter().enumerate() {
             let entries = self.ls_cached(&current_id)?;
-            let found = entries
-                .into_iter()
-                .find(|e| e.name == *seg)
-                .ok_or_else(|| anyhow!("not found: '{}' in path '{}'", seg, path))?;
-            current_id = found.id;
+            // Intermediate segments must be folders: a file id passed to a
+            // later ls() yields a bogus "not found" (or worse) instead of a
+            // clear error here.
+            let folders_only = i + 1 != comps.len();
+            current_id = pick_unique(entries, seg, folders_only, path)?.id;
         }
 
         Ok(current_id)
+    }
+
+    /// Like `resolve_path`, but every segment — including the last — must be
+    /// a folder. Use for destinations: batchMove/batchCopy take the id as
+    /// `to.parent_id`, and handing them a file id has server-defined results.
+    pub fn resolve_folder(&self, path: &str) -> Result<String> {
+        let path = path.trim();
+        if path.is_empty() || path == "/" {
+            return Ok(String::new());
+        }
+
+        let mut current_id = String::new();
+        for seg in path_components(path) {
+            let entries = self.ls_cached(&current_id)?;
+            current_id = pick_unique(entries, seg, true, path)?.id;
+        }
+
+        Ok(current_id)
+    }
+}
+
+/// Select the single entry named `name`, erroring on zero or several matches.
+/// PikPak folders can hold duplicate names, and first-match resolution would
+/// silently operate on whichever one the API lists first.
+fn pick_unique(
+    entries: Vec<Entry>,
+    name: &str,
+    folders_only: bool,
+    full_path: &str,
+) -> Result<Entry> {
+    let mut matches: Vec<Entry> = entries
+        .into_iter()
+        .filter(|e| {
+            e.name == name && (!folders_only || e.kind == crate::pikpak::EntryKind::Folder)
+        })
+        .collect();
+    match matches.len() {
+        0 => Err(anyhow!(
+            "{} not found: '{}' in path '{}'",
+            if folders_only { "folder" } else { "entry" },
+            name,
+            full_path
+        )),
+        1 => Ok(matches.remove(0)),
+        n => {
+            let ids: Vec<String> = matches.iter().map(|e| format!("  id: {}", e.id)).collect();
+            Err(anyhow!(
+                "'{}' in path '{}' is ambiguous: {} entries share this name:\n{}\nrename one first (or operate on it in the TUI)",
+                name,
+                full_path,
+                n,
+                ids.join("\n")
+            ))
+        }
     }
 }
 

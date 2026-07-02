@@ -50,7 +50,10 @@ pub fn run(args: &[String]) -> Result<()> {
                 }
                 accumulated.push_str(seg);
                 let entries = client.ls(&current_id)?;
-                if let Some(existing) = entries.into_iter().find(|e| e.name == *seg) {
+                if let Some(existing) = entries
+                    .into_iter()
+                    .find(|e| e.name == *seg && e.kind == crate::pikpak::EntryKind::Folder)
+                {
                     println!("  /{} (exists, id: {})", accumulated, existing.id);
                     current_id = existing.id;
                 } else {
@@ -68,7 +71,12 @@ pub fn run(args: &[String]) -> Result<()> {
 
         for seg in &segments {
             let entries = client.ls(&current_id)?;
-            if let Some(existing) = entries.into_iter().find(|e| e.name == *seg) {
+            // Only a folder counts as "exists": matching a same-named file
+            // would make it the parent id for the next mkdir call.
+            if let Some(existing) = entries
+                .into_iter()
+                .find(|e| e.name == *seg && e.kind == crate::pikpak::EntryKind::Folder)
+            {
                 current_id = existing.id;
             } else {
                 let entry = client.mkdir(&current_id, seg)?;
