@@ -19,7 +19,7 @@ pub fn run(args: &[String]) -> Result<()> {
 
     if !all && names.is_empty() {
         return Err(anyhow!(
-            "Usage: pikpaktui empty [-n] <name...>   |   pikpaktui empty [-n] [-f] --all"
+            "Usage: pikpaktui empty [-n] [-f] <name...>   |   pikpaktui empty [-n] [-f] --all"
         ));
     }
 
@@ -27,7 +27,7 @@ pub fn run(args: &[String]) -> Result<()> {
     if all {
         empty_all(&client, dry_run, force)
     } else {
-        empty_named(&client, &names, dry_run)
+        empty_named(&client, &names, dry_run, force)
     }
 }
 
@@ -52,6 +52,13 @@ fn empty_all(client: &PikPak, dry_run: bool, force: bool) -> Result<()> {
 
     if !force && !confirm("Permanently delete ALL trash items? This cannot be undone. [y/N] ")? {
         println!("Cancelled.");
+        return Ok(());
+    }
+
+    // One server-side call empties everything; the page-by-page drain below
+    // only remains as a fallback for deployments without the endpoint.
+    if client.empty_trash().is_ok() {
+        println!("Emptied trash ({}+ item(s))", batch.len());
         return Ok(());
     }
 
@@ -81,7 +88,7 @@ fn empty_all(client: &PikPak, dry_run: bool, force: bool) -> Result<()> {
     Ok(())
 }
 
-fn empty_named(client: &PikPak, names: &[&str], dry_run: bool) -> Result<()> {
+fn empty_named(client: &PikPak, names: &[&str], dry_run: bool, force: bool) -> Result<()> {
     let spinner = super::Spinner::new("Fetching trash...");
     let trash = client.ls_trash(500)?;
     drop(spinner);
@@ -110,6 +117,17 @@ fn empty_named(client: &PikPak, names: &[&str], dry_run: bool) -> Result<()> {
         for e in &targets {
             println!("  {} (id: {})", e.name, e.id);
         }
+        return Ok(());
+    }
+
+    // A name can match several trash items (successive deletions of the same
+    // file), so show exactly what will be destroyed and ask first.
+    println!("Will permanently delete {} item(s):", targets.len());
+    for e in &targets {
+        println!("  {} (id: {})", e.name, e.id);
+    }
+    if !force && !confirm("Proceed? This cannot be undone. [y/N] ")? {
+        println!("Cancelled.");
         return Ok(());
     }
 

@@ -183,6 +183,21 @@ impl PikPak {
         Ok(())
     }
 
+    /// Server-side "empty trash": one call clears everything, with none of
+    /// the list/delete paging races of draining it page by page.
+    pub fn empty_trash(&self) -> Result<()> {
+        let token = self.access_token()?;
+        let url = self.drive_url("drive/v1/files/trash:empty");
+
+        let mut rb = self.http.patch(&url).bearer_auth(&token);
+        rb = self.authed_headers(rb);
+
+        let response = rb.send().context("empty trash request failed")?;
+        ensure_success(response, "empty trash")?;
+        self.clear_ls_cache();
+        Ok(())
+    }
+
     pub fn untrash(&self, ids: &[&str]) -> Result<()> {
         let token = self.access_token()?;
         let url = self.drive_url("drive/v1/files:batchUntrash");
