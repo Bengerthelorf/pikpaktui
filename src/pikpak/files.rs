@@ -88,23 +88,52 @@ impl PikPak {
         Ok((current_id, breadcrumb))
     }
 
+    /// List trash contents, following pagination until `limit` entries are
+    /// collected or the listing is exhausted (a single page silently dropped
+    /// everything past the first 500 items). Pass `u32::MAX` for all of it.
     pub fn ls_trash(&self, limit: u32) -> Result<Vec<Entry>> {
         let token = self.access_token()?;
         let url = self.drive_url("drive/v1/files");
 
         let filters = r#"{"trashed":{"eq":true}}"#;
-        let mut rb = self.http.get(&url).bearer_auth(&token).query(&[
-            ("parent_id", "*"),
-            ("limit", &limit.to_string()),
-            ("filters", filters),
-            ("thumbnail_size", self.thumbnail_size.as_str()),
-        ]);
-        rb = self.authed_headers(rb);
+        let mut all_entries: Vec<Entry> = Vec::new();
+        let mut page_token: Option<String> = None;
 
-        let response = rb.send().context("ls_trash request failed")?;
-        let payload: DriveListResponse = json_or_api_error(response, "ls_trash")?;
-        let entries = payload.files.into_iter().map(|f| f.into_entry()).collect();
-        Ok(entries)
+        loop {
+            let page_size = (limit as u64 - all_entries.len() as u64).min(500).to_string();
+            let mut rb = self.http.get(&url).bearer_auth(&token).query(&[
+                ("parent_id", "*"),
+                ("limit", page_size.as_str()),
+                ("filters", filters),
+                ("thumbnail_size", self.thumbnail_size.as_str()),
+            ]);
+            if let Some(ref pt) = page_token {
+                rb = rb.query(&[("page_token", pt.as_str())]);
+            }
+            rb = self.authed_headers(rb);
+
+            let response = rb.send().context("ls_trash request failed")?;
+            let payload: DriveListResponse = json_or_api_error(response, "ls_trash")?;
+            let next = payload.next_page_token.filter(|t| !t.is_empty());
+
+            all_entries.extend(payload.files.into_iter().map(|f| f.into_entry()));
+            if all_entries.len() as u64 >= limit as u64 {
+                all_entries.truncate(limit as usize);
+                break;
+            }
+
+            match next {
+                Some(t) if page_token.as_deref() == Some(t.as_str()) => {
+                    return Err(anyhow!(
+                        "ls_trash pagination stuck: server repeated page token"
+                    ));
+                }
+                Some(t) => page_token = Some(t),
+                None => break,
+            }
+        }
+
+        Ok(all_entries)
     }
 
     pub fn mv(&self, ids: &[&str], to_parent_id: &str) -> Result<()> {

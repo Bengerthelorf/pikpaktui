@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 pub struct ShareListResponse {
     #[serde(default)]
     pub data: Vec<MyShare>,
+    #[serde(default)]
+    pub next_page_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

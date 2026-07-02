@@ -33,7 +33,7 @@ pub fn run(args: &[String]) -> Result<()> {
 
 fn empty_all(client: &PikPak, dry_run: bool, force: bool) -> Result<()> {
     let spinner = super::Spinner::new("Fetching trash...");
-    let batch = client.ls_trash(500)?;
+    let batch = client.ls_trash(u32::MAX)?;
     drop(spinner);
 
     if batch.is_empty() {
@@ -44,9 +44,6 @@ fn empty_all(client: &PikPak, dry_run: bool, force: bool) -> Result<()> {
     if dry_run {
         println!("[dry-run] Would permanently delete all trash:");
         print_items(&batch);
-        if batch.len() >= 500 {
-            println!("  ... and more (showing first 500)");
-        }
         return Ok(());
     }
 
@@ -90,7 +87,7 @@ fn empty_all(client: &PikPak, dry_run: bool, force: bool) -> Result<()> {
 
 fn empty_named(client: &PikPak, names: &[&str], dry_run: bool, force: bool) -> Result<()> {
     let spinner = super::Spinner::new("Fetching trash...");
-    let trash = client.ls_trash(500)?;
+    let trash = client.ls_trash(u32::MAX)?;
     drop(spinner);
 
     for name in names {

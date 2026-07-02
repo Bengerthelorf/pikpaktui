@@ -104,16 +104,33 @@ impl PikPak {
         let token = self.access_token()?;
         let url = self.drive_url("drive/v1/share/list");
 
-        let mut rb = self
-            .http
-            .get(&url)
-            .bearer_auth(&token)
-            .query(&[("limit", "100"), ("thumbnail_size", "SIZE_SMALL")]);
-        rb = self.authed_headers(rb);
+        // Paginate: a single page silently dropped every share past the
+        // first 100.
+        let mut shares: Vec<MyShare> = Vec::new();
+        let mut page_token: Option<String> = None;
+        loop {
+            let mut rb = self
+                .http
+                .get(&url)
+                .bearer_auth(&token)
+                .query(&[("limit", "100"), ("thumbnail_size", "SIZE_SMALL")]);
+            if let Some(ref pt) = page_token {
+                rb = rb.query(&[("page_token", pt.as_str())]);
+            }
+            rb = self.authed_headers(rb);
 
-        let response = rb.send().context("list shares request failed")?;
-        let resp: ShareListResponse = json_or_api_error(response, "list shares")?;
-        Ok(resp.data)
+            let response = rb.send().context("list shares request failed")?;
+            let resp: ShareListResponse = json_or_api_error(response, "list shares")?;
+            let got_any = !resp.data.is_empty();
+            shares.extend(resp.data);
+
+            match resp.next_page_token.filter(|t| !t.is_empty()) {
+                Some(t) if !got_any || page_token.as_deref() == Some(t.as_str()) => break,
+                Some(t) => page_token = Some(t),
+                None => break,
+            }
+        }
+        Ok(shares)
     }
 
     pub fn delete_shares(&self, share_ids: &[&str]) -> Result<()> {

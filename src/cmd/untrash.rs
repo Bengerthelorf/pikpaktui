@@ -20,7 +20,7 @@ pub fn run(args: &[String]) -> Result<()> {
     }
 
     let client = super::cli_client()?;
-    let trash_entries = client.ls_trash(500)?;
+    let trash_entries = client.ls_trash(u32::MAX)?;
 
     let mut ids = Vec::new();
     for name in &names {
