@@ -265,7 +265,7 @@ pikpaktui download [選項] -t <本機目錄> <路徑...>
 |------|------|
 | `-o`, `--output <檔案>` | 自訂輸出檔案名稱（僅單一檔案） |
 | `-t <本機目錄>` | 批次模式——將多個檔案下載至指定目錄 |
-| `-j`, `--jobs <n>` | 並行下載執行緒數（預設 1） |
+| `-j`, `--jobs <n>` | 遞迴下載資料夾時的檔案並行數（1–16，預設 1） |
 | `-n`, `--dry-run` | 預覽，不下載 |
 
 **範例：**
@@ -274,7 +274,7 @@ pikpaktui download [選項] -t <本機目錄> <路徑...>
 pikpaktui download "/My Pack/file.txt"
 pikpaktui download -o output.mp4 "/My Pack/video.mp4"
 pikpaktui download "/My Pack/folder"                      # 遞迴下載
-pikpaktui download -j4 -t ./videos/ /a.mp4 /b.mp4        # 4 並行批次
+pikpaktui download -j 4 "/My Pack/folder"                # 資料夾內最多 4 個檔案並行
 pikpaktui download -n "/My Pack/folder"
 ```
 
@@ -308,10 +308,11 @@ pikpaktui upload -n ./file.txt "/My Pack"          # 預覽
 
 ## share
 
-建立、列出、儲存和刪除分享連結。
+建立、瀏覽、列出、儲存和刪除分享連結。
 
 ```
 pikpaktui share [選項] <路徑...>      # 建立
+pikpaktui share -b <URL> [路徑]       # 瀏覽分享
 pikpaktui share -l                    # 列出我的分享
 pikpaktui share -S <URL>              # 儲存他人分享至網盤
 pikpaktui share -D <ID...>            # 刪除分享
@@ -334,6 +335,13 @@ pikpaktui share -D <ID...>            # 刪除分享
 | `-t <路徑>` | 儲存目標資料夾 |
 | `-n`, `--dry-run` | 預覽，不儲存 |
 
+**瀏覽選項（與 `-b` / `--browse` 搭配）：**
+
+| 參數 | 說明 |
+|------|------|
+| `-p`, `--pass-code <密碼>` | 加密分享的存取碼 |
+| `-J`, `--json` | JSON 輸出 |
+
 **範例：**
 
 ```bash
@@ -342,6 +350,8 @@ pikpaktui share -p "/My Pack/file.txt"           # 加密分享
 pikpaktui share -d 7 -p /a.txt /b.txt            # 多檔案+加密+7天
 
 pikpaktui share -l                               # 列出我的分享
+pikpaktui share -b "https://mypikpak.com/s/XXXX"             # 瀏覽分享根目錄
+pikpaktui share -b -p PO "https://mypikpak.com/s/XXXX" Movies # 瀏覽子目錄
 pikpaktui share -D abc123                        # 刪除指定分享
 
 pikpaktui share -S "https://mypikpak.com/s/XXXX"
@@ -362,8 +372,9 @@ pikpaktui offline [選項] <URL>
 | 參數 | 說明 |
 |------|------|
 | `--to`, `-t <路徑>` | PikPak 中的目標資料夾 |
-| `--name`, `-n <名稱>` | 覆寫任務/檔案名稱 |
-| `--dry-run` | 預覽，不建立任務 |
+| `--name <名稱>` | 覆寫任務/檔案名稱 |
+| `-p`, `--preview` | 顯示 URL/磁力連結內容，不建立任務 |
+| `-n`, `--dry-run` | 預覽，不建立任務 |
 
 **範例：**
 
@@ -371,6 +382,7 @@ pikpaktui offline [選項] <URL>
 pikpaktui offline "magnet:?xt=urn:btih:abc123..."
 pikpaktui offline --to "/Downloads" "https://example.com/file.zip"
 pikpaktui offline --to "/Downloads" --name "myvideo.mp4" "https://..."
+pikpaktui offline -p "magnet:?xt=..."              # 檢視內容
 pikpaktui offline --dry-run "magnet:?xt=..."
 ```
 
@@ -389,6 +401,7 @@ pikpaktui tasks [子指令] [選項] [數量]
 | 子指令 | 說明 |
 |--------|------|
 | `list`、`ls` | 列出任務（不指定時的預設行為） |
+| `show <ID>` | 取得並顯示單一任務的最新狀態 |
 | `retry <ID>` | 重試失敗的任務 |
 | `delete <ID...>`、`rm <ID...>` | 刪除任務 |
 
@@ -406,6 +419,7 @@ pikpaktui tasks [子指令] [選項] [數量]
 pikpaktui tasks
 pikpaktui tasks list 10
 pikpaktui tasks list --json
+pikpaktui tasks show abc12345
 pikpaktui tasks retry abc12345
 pikpaktui tasks delete abc12345
 pikpaktui tasks rm abc12345 def67890
@@ -460,6 +474,23 @@ pikpaktui untrash -n "file.txt"
 
 ---
 
+## empty
+
+永久刪除指定回收桶項目，或清空整個回收桶。
+
+```
+pikpaktui empty [-n] [-f] <檔案名稱...>
+pikpaktui empty [-n] [-f] --all
+```
+
+| 參數 | 說明 |
+|------|------|
+| `--all`、`-r`、`--recursive`、`/` | 清空整個回收桶 |
+| `-f`, `--force` | 清空全部項目時略過確認 |
+| `-n`, `--dry-run` | 預覽，不刪除 |
+
+---
+
 ## star / unstar / starred
 
 ```bash
@@ -500,7 +531,7 @@ pikpaktui events --json
 
 ## login
 
-登入 PikPak 並將憑證儲存至 `~/.config/pikpaktui/login.yaml`。
+登入 PikPak 並將憑證儲存至 `~/.config/pikpaktui/login.toml`。
 
 ```
 pikpaktui login [選項]
@@ -559,6 +590,16 @@ pikpaktui vip
 
 ---
 
+## whoami
+
+顯示目前工作階段對應的帳戶身分。
+
+```
+pikpaktui whoami [-J|--json]
+```
+
+---
+
 ## update
 
 檢查更新並從 GitHub Releases 自動更新二進位檔案。
@@ -573,7 +614,7 @@ pikpaktui update
 
 ## completions
 
-產生 Shell 補全腳本，目前僅支援 **Zsh**。
+產生 Bash、Zsh、Fish 與 PowerShell 的 Shell 補全腳本。
 
 ```
 pikpaktui completions <shell>
@@ -585,6 +626,9 @@ pikpaktui completions <shell>
 pikpaktui completions zsh
 pikpaktui completions zsh > ~/.zfunc/_pikpaktui
 eval "$(pikpaktui completions zsh)"
+pikpaktui completions bash > ~/.local/share/bash-completion/completions/pikpaktui
+pikpaktui completions fish > ~/.config/fish/completions/pikpaktui.fish
+pikpaktui completions powershell | Out-String | Invoke-Expression
 ```
 
 詳見 [Shell 補全](/zh-Hant/guide/shell-completions)。

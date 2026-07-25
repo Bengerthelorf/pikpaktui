@@ -100,24 +100,45 @@ pub(crate) struct PlayOption {
     pub available: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AsyncRequestKind {
+    Info,
+    FolderPreview,
+    FilePreview,
+    OfflineTasks,
+    Play,
+    PlayPicker,
+    GotoPath,
+    ParentListing,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct AsyncRequest {
+    id: u64,
+    kind: AsyncRequestKind,
+    target: String,
+}
+
 enum OpResult {
-    Ls(Result<Vec<Entry>>),
+    /// Main-pane folder listing. Folder and request ids prevent a delayed
+    /// reply from replacing a newer listing, including A -> B -> A navigation.
+    Ls(u64, String, Result<Vec<Entry>>),
     Ok(String),
     Err(String),
-    Info(Result<FileInfoResponse>, Option<String>),
-    ParentLs(String, Result<Vec<Entry>>),
-    PreviewLs(String, Result<Vec<Entry>>),
-    PreviewInfo(String, Result<FileInfoResponse>),
-    PreviewText(String, Result<(String, String, u64, bool)>),
-    PreviewThumbnail(String, Result<image::DynamicImage>),
-    OfflineTasks(Result<Vec<crate::pikpak::OfflineTask>>),
-    PlayInfo(Result<FileInfoResponse>),
-    PlayPickerInfo(Result<(FileInfoResponse, Vec<PlayOption>)>),
+    Info(AsyncRequest, Result<FileInfoResponse>, Option<String>),
+    ParentLs(AsyncRequest, Result<Vec<Entry>>),
+    PreviewLs(AsyncRequest, Result<Vec<Entry>>),
+    PreviewInfo(AsyncRequest, Result<FileInfoResponse>),
+    PreviewText(AsyncRequest, Result<(String, String, u64, bool)>),
+    PreviewThumbnail(AsyncRequest, Result<image::DynamicImage>),
+    OfflineTasks(AsyncRequest, Result<Vec<crate::pikpak::OfflineTask>>),
+    PlayInfo(AsyncRequest, Result<FileInfoResponse>),
+    PlayPickerInfo(AsyncRequest, Result<(FileInfoResponse, Vec<PlayOption>)>),
     TrashList(Result<Vec<Entry>>),
     TrashOp(String),
     OfflineOp(String),
-    InfoThumbnail(Result<image::DynamicImage>),
-    GotoPath(Result<(String, Vec<(String, String)>)>),
+    InfoThumbnail(AsyncRequest, Result<image::DynamicImage>),
+    GotoPath(AsyncRequest, Result<(String, Vec<(String, String)>)>),
     Quota(Result<crate::pikpak::QuotaInfo>),
     Upload(Result<String>),
     ShareCreated {
@@ -127,13 +148,15 @@ enum OpResult {
     },
     MyShares(Result<Vec<crate::pikpak::MyShare>>),
     UpdateAvailable(Option<String>),
-    /// Folder listing for the move/copy picker; the id guards against a reply
-    /// landing after the user already navigated elsewhere.
-    PickerLs(String, Result<Vec<Entry>>),
+    /// Folder listing for the move/copy picker; request and folder ids guard
+    /// against replies from both older navigation and cancelled dialogs.
+    PickerLs(u64, String, Result<Vec<Entry>>),
     /// Tab-completion candidates computed off-thread; `value` is the input
     /// text they were computed for.
     PathCandidates {
+        request_id: u64,
         value: String,
+        folder_context: String,
         parent: String,
         matches: Vec<String>,
     },
@@ -147,6 +170,7 @@ enum OpResult {
 #[derive(Default)]
 struct PickerState {
     folder_id: String,
+    listing_request_id: u64,
     breadcrumb: Vec<(String, String)>,
     entries: Vec<Entry>,
     selected: usize,
@@ -218,6 +242,8 @@ enum InputMode {
     },
     InfoLoading,
     InfoView {
+        request_id: u64,
+        target_id: String,
         info: FileInfoResponse,
         image: Option<image::DynamicImage>,
         has_thumbnail: bool,
@@ -289,6 +315,12 @@ struct App {
     client: Arc<PikPak>,
     config: TuiConfig,
     current_folder_id: String,
+    main_listing_request_id: u64,
+    async_request_generation: u64,
+    modal_request: Option<AsyncRequest>,
+    preview_request: Option<AsyncRequest>,
+    parent_listing_request: Option<AsyncRequest>,
+    path_completion_in_flight: Option<u64>,
     breadcrumb: Vec<(String, String)>,
     entries: Vec<Entry>,
     selected: usize,
@@ -300,6 +332,8 @@ struct App {
     spinner_idx: usize,
     last_spinner: Instant,
     show_help_sheet: bool,
+    help_scroll: usize,
+    help_scroll_max: Cell<usize>,
     result_rx: Receiver<OpResult>,
     result_tx: Sender<OpResult>,
     parent_entries: Vec<Entry>,
@@ -352,6 +386,12 @@ impl App {
             client: Arc::new(client),
             config,
             current_folder_id: String::new(),
+            main_listing_request_id: 0,
+            async_request_generation: 0,
+            modal_request: None,
+            preview_request: None,
+            parent_listing_request: None,
+            path_completion_in_flight: None,
             breadcrumb: Vec::new(),
             entries: Vec::new(),
             selected: 0,
@@ -363,6 +403,8 @@ impl App {
             spinner_idx: 0,
             last_spinner: Instant::now(),
             show_help_sheet: false,
+            help_scroll: 0,
+            help_scroll_max: Cell::new(0),
             result_rx: rx,
             result_tx: tx,
             parent_entries: Vec::new(),
@@ -432,6 +474,12 @@ impl App {
             client: Arc::new(client),
             config,
             current_folder_id: String::new(),
+            main_listing_request_id: 0,
+            async_request_generation: 0,
+            modal_request: None,
+            preview_request: None,
+            parent_listing_request: None,
+            path_completion_in_flight: None,
             breadcrumb: Vec::new(),
             entries: Vec::new(),
             selected: 0,
@@ -443,6 +491,8 @@ impl App {
             spinner_idx: 0,
             last_spinner: Instant::now(),
             show_help_sheet: false,
+            help_scroll: 0,
+            help_scroll_max: Cell::new(0),
             result_rx: rx,
             result_tx: tx,
             parent_entries: Vec::new(),
@@ -558,7 +608,15 @@ impl App {
     fn poll_results(&mut self) {
         while let Ok(result) = self.result_rx.try_recv() {
             match result {
-                OpResult::Ls(Ok(mut entries)) => {
+                OpResult::Ls(request_id, requested_folder_id, Ok(mut entries)) => {
+                    if !folder_listing_matches(
+                        &self.current_folder_id,
+                        self.main_listing_request_id,
+                        requested_folder_id.as_str(),
+                        request_id,
+                    ) {
+                        continue;
+                    }
                     self.finish_loading();
                     crate::config::sort_entries(
                         &mut entries,
@@ -576,7 +634,15 @@ impl App {
                     self.push_log(format!("Refreshed {}", self.current_path_display()));
                     self.on_cursor_move();
                 }
-                OpResult::Ls(Err(e)) => {
+                OpResult::Ls(request_id, requested_folder_id, Err(e)) => {
+                    if !folder_listing_matches(
+                        &self.current_folder_id,
+                        self.main_listing_request_id,
+                        requested_folder_id.as_str(),
+                        request_id,
+                    ) {
+                        continue;
+                    }
                     self.finish_loading();
                     self.push_log(format!("Refresh failed: {e:#}"));
                 }
@@ -588,35 +654,52 @@ impl App {
                     self.push_log(msg);
                     self.finish_loading();
                 }
-                OpResult::Info(Ok(info), thumb_fallback) => {
+                OpResult::Info(request, Ok(info), thumb_fallback) => {
+                    if !self.modal_request_matches(&request)
+                        || !matches!(self.input, InputMode::InfoLoading)
+                    {
+                        continue;
+                    }
                     self.finish_loading();
-                    if matches!(self.input, InputMode::InfoLoading) {
-                        let thumb_url = info
-                            .thumbnail_link
-                            .clone()
-                            .filter(|u| !u.is_empty())
-                            .or_else(|| thumb_fallback.filter(|u| !u.is_empty()));
-                        let has_thumbnail = thumb_url.is_some();
-                        self.input = InputMode::InfoView {
-                            info,
-                            image: None,
-                            has_thumbnail,
-                        };
-                        if let Some(url) = thumb_url {
-                            self.spawn_thumbnail_fetch(url, OpResult::InfoThumbnail);
-                        }
+                    let thumb_url = info
+                        .thumbnail_link
+                        .clone()
+                        .filter(|u| !u.is_empty())
+                        .or_else(|| thumb_fallback.filter(|u| !u.is_empty()));
+                    let has_thumbnail = thumb_url.is_some();
+                    self.input = InputMode::InfoView {
+                        request_id: request.id,
+                        target_id: request.target.clone(),
+                        info,
+                        image: None,
+                        has_thumbnail,
+                    };
+                    if let Some(url) = thumb_url {
+                        let thumbnail_request = request.clone();
+                        self.spawn_thumbnail_fetch(url, move |result| {
+                            OpResult::InfoThumbnail(thumbnail_request, result)
+                        });
+                    } else {
+                        self.modal_request = None;
                     }
                 }
-                OpResult::Info(Err(e), _) => {
-                    self.finish_loading();
-                    if matches!(self.input, InputMode::InfoLoading) {
-                        self.input = InputMode::Normal;
+                OpResult::Info(request, Err(e), _) => {
+                    if !self.modal_request_matches(&request)
+                        || !matches!(self.input, InputMode::InfoLoading)
+                    {
+                        continue;
                     }
+                    self.modal_request = None;
+                    self.finish_loading();
+                    self.input = InputMode::Normal;
                     self.push_log(format!("File info failed: {e:#}"));
                 }
-                OpResult::ParentLs(pid, Ok(mut entries)) => {
+                OpResult::ParentLs(request, Ok(mut entries)) => {
                     let expected = self.breadcrumb.last().map(|(id, _)| id.as_str());
-                    if expected == Some(&pid) {
+                    if self.parent_listing_request.as_ref() == Some(&request)
+                        && expected == Some(request.target.as_str())
+                    {
+                        self.parent_listing_request = None;
                         crate::config::sort_entries(
                             &mut entries,
                             self.config.sort_field,
@@ -632,54 +715,84 @@ impl App {
                         }
                     }
                 }
-                OpResult::ParentLs(pid, Err(e)) => {
+                OpResult::ParentLs(request, Err(e)) => {
                     let expected = self.breadcrumb.last().map(|(id, _)| id.as_str());
-                    if expected == Some(&pid) {
+                    if self.parent_listing_request.as_ref() == Some(&request)
+                        && expected == Some(request.target.as_str())
+                    {
+                        self.parent_listing_request = None;
                         self.push_log(format!("Parent listing failed: {e:#}"));
                     }
                 }
-                OpResult::PreviewLs(id, Ok(mut children)) => {
+                OpResult::PreviewLs(request, Ok(mut children)) => {
+                    let is_modal = self.modal_request_matches(&request)
+                        && matches!(self.input, InputMode::InfoLoading);
+                    let is_preview = self.preview_request_matches(&request);
+                    if !is_modal && !is_preview {
+                        continue;
+                    }
                     crate::config::sort_entries(
                         &mut children,
                         self.config.sort_field,
                         self.config.sort_reverse,
                     );
-                    if matches!(self.input, InputMode::InfoLoading) {
+                    if is_modal {
+                        self.modal_request = None;
                         self.finish_loading();
                         let name = self.preview_target_name.take().unwrap_or_default();
                         self.preview_state = PreviewState::FolderListing(children.clone());
-                        self.preview_target_id = Some(id);
+                        self.preview_target_id = Some(request.target);
                         self.input = InputMode::InfoFolderView {
                             name,
                             entries: children,
                         };
-                    } else if self.preview_target_id.as_deref() == Some(&id) {
+                    } else {
+                        self.preview_request = None;
                         self.preview_state = PreviewState::FolderListing(children);
                     }
                 }
-                OpResult::PreviewLs(id, Err(e)) => {
-                    if matches!(self.input, InputMode::InfoLoading) {
+                OpResult::PreviewLs(request, Err(e)) => {
+                    let is_modal = self.modal_request_matches(&request)
+                        && matches!(self.input, InputMode::InfoLoading);
+                    let is_preview = self.preview_request_matches(&request);
+                    if !is_modal && !is_preview {
+                        continue;
+                    }
+                    if is_modal {
+                        self.modal_request = None;
                         self.finish_loading();
                         self.input = InputMode::Normal;
-                    } else if self.preview_target_id.as_deref() == Some(&id) {
+                    } else {
+                        self.preview_request = None;
                         self.preview_state = PreviewState::Empty;
                     }
                     self.push_log(format!("Folder listing failed: {e:#}"));
                 }
-                OpResult::PreviewInfo(id, Ok(info)) => {
-                    if self.preview_target_id.as_deref() == Some(&id) {
-                        self.preview_state = PreviewState::FileDetailedInfo(info);
+                OpResult::PreviewInfo(request, Ok(info)) => {
+                    if !self.preview_request_matches(&request) {
+                        continue;
                     }
+                    self.preview_request = None;
+                    self.preview_state = PreviewState::FileDetailedInfo(info);
                 }
-                OpResult::PreviewInfo(id, Err(e)) => {
-                    if self.preview_target_id.as_deref() == Some(&id) {
-                        self.preview_state = PreviewState::Empty;
+                OpResult::PreviewInfo(request, Err(e)) => {
+                    if !self.preview_request_matches(&request) {
+                        continue;
                     }
+                    self.preview_request = None;
+                    self.preview_state = PreviewState::Empty;
                     self.push_log(format!("Preview info failed: {e:#}"));
                 }
-                OpResult::PreviewText(id, Ok((name, content, size, truncated))) => {
+                OpResult::PreviewText(request, Ok((name, content, size, truncated))) => {
+                    let is_modal = self.modal_request_matches(&request)
+                        && matches!(self.input, InputMode::InfoLoading);
+                    let is_preview = self.preview_request_matches(&request);
+                    if !is_modal && !is_preview {
+                        continue;
+                    }
                     let lines = highlight_content(&name, &content);
-                    if matches!(self.input, InputMode::InfoLoading) {
+                    if is_modal {
+                        self.modal_request = None;
                         self.finish_loading();
                         self.input = InputMode::TextPreviewView {
                             name: name.clone(),
@@ -692,8 +805,9 @@ impl App {
                             size,
                             truncated,
                         };
-                        self.preview_target_id = Some(id);
-                    } else if self.preview_target_id.as_deref() == Some(&id) {
+                        self.preview_target_id = Some(request.target);
+                    } else {
+                        self.preview_request = None;
                         self.preview_state = PreviewState::FileTextPreview {
                             name,
                             lines,
@@ -702,40 +816,66 @@ impl App {
                         };
                     }
                 }
-                OpResult::PreviewText(id, Err(e)) => {
-                    if matches!(self.input, InputMode::InfoLoading) {
+                OpResult::PreviewText(request, Err(e)) => {
+                    let is_modal = self.modal_request_matches(&request)
+                        && matches!(self.input, InputMode::InfoLoading);
+                    let is_preview = self.preview_request_matches(&request);
+                    if !is_modal && !is_preview {
+                        continue;
+                    }
+                    if is_modal {
+                        self.modal_request = None;
                         self.finish_loading();
                         self.input = InputMode::Normal;
-                    } else if self.preview_target_id.as_deref() == Some(&id) {
+                    } else {
+                        self.preview_request = None;
                         self.preview_state = PreviewState::FileBasicInfo;
                     }
                     self.push_log(format!("Text preview failed: {e:#}"));
                 }
-                OpResult::PreviewThumbnail(id, Ok(image)) => {
-                    if self.preview_target_id.as_deref() == Some(&id) {
-                        self.preview_state = PreviewState::ThumbnailImage { image };
+                OpResult::PreviewThumbnail(request, Ok(image)) => {
+                    if !self.preview_request_matches(&request) {
+                        continue;
                     }
+                    self.preview_request = None;
+                    self.preview_state = PreviewState::ThumbnailImage { image };
                 }
-                OpResult::PreviewThumbnail(id, Err(e)) => {
-                    if self.preview_target_id.as_deref() == Some(&id) {
-                        self.preview_state = PreviewState::FileBasicInfo;
+                OpResult::PreviewThumbnail(request, Err(e)) => {
+                    if !self.preview_request_matches(&request) {
+                        continue;
                     }
+                    self.preview_request = None;
+                    self.preview_state = PreviewState::FileBasicInfo;
                     self.push_log(format!("Thumbnail preview failed: {e:#}"));
                 }
-                OpResult::OfflineTasks(Ok(tasks)) => {
-                    self.finish_loading();
-                    if matches!(self.input, InputMode::InfoLoading) {
-                        self.input = InputMode::OfflineTasksView { tasks, selected: 0 };
+                OpResult::OfflineTasks(request, Ok(tasks)) => {
+                    if !self.modal_request_matches(&request)
+                        || !matches!(self.input, InputMode::InfoLoading)
+                    {
+                        continue;
                     }
+                    self.modal_request = None;
+                    self.finish_loading();
+                    self.input = InputMode::OfflineTasksView { tasks, selected: 0 };
                 }
-                OpResult::OfflineTasks(Err(e)) => {
-                    self.finish_loading();
-                    if matches!(self.input, InputMode::InfoLoading) {
-                        self.input = InputMode::Normal;
+                OpResult::OfflineTasks(request, Err(e)) => {
+                    if !self.modal_request_matches(&request)
+                        || !matches!(self.input, InputMode::InfoLoading)
+                    {
+                        continue;
                     }
+                    self.modal_request = None;
+                    self.finish_loading();
+                    self.input = InputMode::Normal;
                     self.push_log(format!("Failed to load offline tasks: {e:#}"));
                 }
-                OpResult::PlayInfo(Ok(info)) => {
+                OpResult::PlayInfo(request, Ok(info)) => {
+                    if !self.modal_request_matches(&request)
+                        || !matches!(self.input, InputMode::Normal)
+                    {
+                        continue;
+                    }
+                    self.modal_request = None;
                     self.finish_loading();
                     let url = info
                         .web_content_link
@@ -755,11 +895,23 @@ impl App {
                         };
                     }
                 }
-                OpResult::PlayInfo(Err(e)) => {
+                OpResult::PlayInfo(request, Err(e)) => {
+                    if !self.modal_request_matches(&request)
+                        || !matches!(self.input, InputMode::Normal)
+                    {
+                        continue;
+                    }
+                    self.modal_request = None;
                     self.finish_loading();
                     self.push_log(format!("Play info failed: {e:#}"));
                 }
-                OpResult::PlayPickerInfo(Ok((info, medias))) => {
+                OpResult::PlayPickerInfo(request, Ok((info, medias))) => {
+                    if !self.modal_request_matches(&request)
+                        || !matches!(self.input, InputMode::Normal)
+                    {
+                        continue;
+                    }
+                    self.modal_request = None;
                     self.finish_loading();
                     if medias.is_empty() {
                         self.push_log("No playback streams available".into());
@@ -772,7 +924,13 @@ impl App {
                         };
                     }
                 }
-                OpResult::PlayPickerInfo(Err(e)) => {
+                OpResult::PlayPickerInfo(request, Err(e)) => {
+                    if !self.modal_request_matches(&request)
+                        || !matches!(self.input, InputMode::Normal)
+                    {
+                        continue;
+                    }
+                    self.modal_request = None;
                     self.finish_loading();
                     self.push_log(format!("Play picker info failed: {e:#}"));
                 }
@@ -812,15 +970,50 @@ impl App {
                     self.push_log(msg);
                     self.open_offline_tasks_view();
                 }
-                OpResult::InfoThumbnail(Ok(img)) => {
-                    if let InputMode::InfoView { ref mut image, .. } = self.input {
-                        *image = Some(img);
+                OpResult::InfoThumbnail(request, Ok(img)) => {
+                    if !self.modal_request_matches(&request) {
+                        continue;
                     }
+                    let InputMode::InfoView {
+                        request_id,
+                        target_id,
+                        image,
+                        ..
+                    } = &mut self.input
+                    else {
+                        continue;
+                    };
+                    if *request_id != request.id || target_id != &request.target {
+                        continue;
+                    }
+                    *image = Some(img);
+                    self.modal_request = None;
                 }
-                OpResult::InfoThumbnail(Err(e)) => {
+                OpResult::InfoThumbnail(request, Err(e)) => {
+                    if !self.modal_request_matches(&request) {
+                        continue;
+                    }
+                    let matches_view = matches!(
+                        &self.input,
+                        InputMode::InfoView {
+                            request_id,
+                            target_id,
+                            ..
+                        } if *request_id == request.id && target_id == &request.target
+                    );
+                    if !matches_view {
+                        continue;
+                    }
+                    self.modal_request = None;
                     self.push_log(format!("Info thumbnail failed: {e:#}"));
                 }
-                OpResult::GotoPath(Ok((folder_id, new_breadcrumb))) => {
+                OpResult::GotoPath(request, Ok((folder_id, new_breadcrumb))) => {
+                    if !self.modal_request_matches(&request)
+                        || !matches!(self.input, InputMode::Normal)
+                    {
+                        continue;
+                    }
+                    self.modal_request = None;
                     self.finish_loading();
                     self.breadcrumb = new_breadcrumb;
                     self.current_folder_id = folder_id.clone();
@@ -832,13 +1025,15 @@ impl App {
                     self.refresh_parent();
                     self.clear_preview();
                     self.loading = true;
-                    let client = Arc::clone(&self.client);
-                    let tx = self.result_tx.clone();
-                    std::thread::spawn(move || {
-                        let _ = tx.send(OpResult::Ls(client.ls(&folder_id)));
-                    });
+                    self.request_main_listing(folder_id);
                 }
-                OpResult::GotoPath(Err(e)) => {
+                OpResult::GotoPath(request, Err(e)) => {
+                    if !self.modal_request_matches(&request)
+                        || !matches!(self.input, InputMode::Normal)
+                    {
+                        continue;
+                    }
+                    self.modal_request = None;
                     self.finish_loading();
                     self.push_log(format!("Go to path failed: {e:#}"));
                 }
@@ -908,7 +1103,7 @@ impl App {
                     self.update_available = Some(version);
                 }
                 OpResult::UpdateAvailable(None) => {}
-                OpResult::PickerLs(folder_id, result) => {
+                OpResult::PickerLs(request_id, folder_id, result) => {
                     let picker = match &mut self.input {
                         InputMode::MovePicker { picker, .. }
                         | InputMode::CopyPicker { picker, .. }
@@ -919,6 +1114,7 @@ impl App {
                     let mut log = None;
                     if let Some(p) = picker
                         && p.folder_id == folder_id
+                        && p.listing_request_id == request_id
                     {
                         match result {
                             Ok(mut entries) => {
@@ -938,10 +1134,17 @@ impl App {
                     }
                 }
                 OpResult::PathCandidates {
+                    request_id,
                     value,
+                    folder_context,
                     parent,
                     matches,
                 } => {
+                    if self.path_completion_in_flight != Some(request_id) {
+                        continue;
+                    }
+                    self.path_completion_in_flight = None;
+                    let current_folder_id = self.current_folder_id.clone();
                     let input = match &mut self.input {
                         InputMode::MoveInput { input, .. }
                         | InputMode::CopyInput { input, .. }
@@ -949,9 +1152,18 @@ impl App {
                         | InputMode::CartCopyInput { input } => Some(input),
                         _ => None,
                     };
-                    // Only apply if the user hasn't typed since Tab was hit.
+                    // Request identity protects a newly opened dialog from an
+                    // old dialog's response; value and folder protect edits
+                    // and navigation within the same dialog.
                     if let Some(inp) = input
-                        && inp.value == value
+                        && completion::path_candidate_result_matches(
+                            inp,
+                            request_id,
+                            value.as_str(),
+                            current_folder_id.as_str(),
+                            folder_context.as_str(),
+                        )
+                        && !matches.is_empty()
                     {
                         completion::apply_path_candidates(inp, parent, matches);
                     }
@@ -1082,25 +1294,99 @@ impl App {
 
     fn refresh(&mut self) {
         self.loading = true;
-        let client = Arc::clone(&self.client);
-        let tx = self.result_tx.clone();
         let fid = self.current_folder_id.clone();
-        std::thread::spawn(move || {
-            let _ = tx.send(OpResult::Ls(client.ls(&fid)));
-        });
+        self.request_main_listing(fid);
         self.refresh_parent();
         self.fetch_quota();
     }
 
+    fn request_main_listing(&mut self, folder_id: String) {
+        self.invalidate_main_listing();
+        let request_id = self.main_listing_request_id;
+        let client = Arc::clone(&self.client);
+        let tx = self.result_tx.clone();
+        std::thread::spawn(move || {
+            let result = client.ls(&folder_id);
+            let _ = tx.send(OpResult::Ls(request_id, folder_id, result));
+        });
+    }
+
+    fn invalidate_main_listing(&mut self) {
+        self.main_listing_request_id = self.main_listing_request_id.wrapping_add(1);
+    }
+
+    fn next_async_request_id(&mut self) -> u64 {
+        self.async_request_generation = self.async_request_generation.wrapping_add(1);
+        self.async_request_generation
+    }
+
+    fn new_async_request(
+        &mut self,
+        kind: AsyncRequestKind,
+        target: impl Into<String>,
+    ) -> AsyncRequest {
+        AsyncRequest {
+            id: self.next_async_request_id(),
+            kind,
+            target: target.into(),
+        }
+    }
+
+    fn begin_modal_request(
+        &mut self,
+        kind: AsyncRequestKind,
+        target: impl Into<String>,
+    ) -> AsyncRequest {
+        let request = self.new_async_request(kind, target);
+        self.modal_request = Some(request.clone());
+        request
+    }
+
+    fn begin_preview_request(
+        &mut self,
+        kind: AsyncRequestKind,
+        target: impl Into<String>,
+    ) -> AsyncRequest {
+        let request = self.new_async_request(kind, target);
+        self.preview_request = Some(request.clone());
+        request
+    }
+
+    fn modal_request_matches(&self, request: &AsyncRequest) -> bool {
+        self.modal_request.as_ref() == Some(request)
+    }
+
+    fn preview_request_matches(&self, request: &AsyncRequest) -> bool {
+        self.preview_request.as_ref() == Some(request)
+            && self.preview_target_id.as_deref() == Some(request.target.as_str())
+    }
+
+    fn invalidate_modal_request(&mut self) {
+        let request_owned_loading = self.modal_request.as_ref().is_some_and(|request| {
+            matches!(
+                request.kind,
+                AsyncRequestKind::Play | AsyncRequestKind::PlayPicker | AsyncRequestKind::GotoPath
+            )
+        });
+        self.modal_request = None;
+        if request_owned_loading {
+            self.finish_loading();
+        }
+    }
+
     fn refresh_parent(&mut self) {
-        if let Some((parent_id, _)) = self.breadcrumb.last() {
+        if let Some(parent_id) = self.breadcrumb.last().map(|(id, _)| id.clone()) {
+            let request =
+                self.new_async_request(AsyncRequestKind::ParentListing, parent_id.clone());
+            self.parent_listing_request = Some(request.clone());
             let client = Arc::clone(&self.client);
             let tx = self.result_tx.clone();
-            let pid = parent_id.clone();
+            let pid = parent_id;
             std::thread::spawn(move || {
-                let _ = tx.send(OpResult::ParentLs(pid.clone(), client.ls(&pid)));
+                let _ = tx.send(OpResult::ParentLs(request, client.ls(&pid)));
             });
         } else {
+            self.parent_listing_request = None;
             self.parent_entries.clear();
             self.parent_selected = 0;
         }
@@ -1110,12 +1396,14 @@ impl App {
         self.preview_state = PreviewState::Empty;
         self.preview_target_id = None;
         self.preview_target_name = None;
+        self.preview_request = None;
         self.pending_preview_fetch = false;
         self.preview_scroll = 0;
     }
 
     fn on_cursor_move(&mut self) {
         self.preview_scroll = 0;
+        self.preview_request = None;
         if !self.config.show_preview {
             return;
         }
@@ -1162,31 +1450,39 @@ impl App {
         let eid = entry.id.clone();
         match entry.kind {
             EntryKind::Folder => {
+                let request =
+                    self.begin_preview_request(AsyncRequestKind::FolderPreview, eid.clone());
                 // Folders always show content listing, never thumbnails
                 std::thread::spawn(move || {
-                    let _ = tx.send(OpResult::PreviewLs(eid.clone(), client.ls(&eid)));
+                    let _ = tx.send(OpResult::PreviewLs(request, client.ls(&eid)));
                 });
             }
             EntryKind::File => {
                 if let Some(ref thumb_url) = entry.thumbnail_link
                     && !thumb_url.is_empty()
                 {
+                    let request =
+                        self.begin_preview_request(AsyncRequestKind::FilePreview, eid.clone());
                     self.spawn_thumbnail_fetch(thumb_url.clone(), move |r| {
-                        OpResult::PreviewThumbnail(eid.clone(), r)
+                        OpResult::PreviewThumbnail(request, r)
                     });
                     return;
                 }
                 if theme::is_text_previewable(&entry) {
+                    let request =
+                        self.begin_preview_request(AsyncRequestKind::FilePreview, eid.clone());
                     let max_bytes = self.config.preview_max_size;
                     std::thread::spawn(move || {
                         let _ = tx.send(OpResult::PreviewText(
-                            eid.clone(),
+                            request,
                             client.fetch_text_preview(&eid, max_bytes),
                         ));
                     });
                 } else {
+                    let request =
+                        self.begin_preview_request(AsyncRequestKind::FilePreview, eid.clone());
                     std::thread::spawn(move || {
-                        let _ = tx.send(OpResult::PreviewInfo(eid.clone(), client.file_info(&eid)));
+                        let _ = tx.send(OpResult::PreviewInfo(request, client.file_info(&eid)));
                     });
                 }
             }
@@ -1323,6 +1619,338 @@ fn truncate_name(name: &str, max_width: usize) -> String {
         }
         out.push_str("...");
         out
+    }
+}
+
+fn folder_listing_matches(
+    current_folder_id: &str,
+    current_request_id: u64,
+    requested_folder_id: &str,
+    request_id: u64,
+) -> bool {
+    current_folder_id == requested_folder_id && current_request_id == request_id
+}
+
+#[cfg(test)]
+mod folder_listing_result_tests {
+    use super::{
+        App, AsyncRequest, AsyncRequestKind, InputMode, OpResult, PreviewState,
+        folder_listing_matches,
+    };
+    use crate::config::TuiConfig;
+    use crate::pikpak::{Entry, EntryKind, FileInfoResponse, PikPak};
+    use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+
+    fn test_app() -> App {
+        App::new_login(PikPak::new().unwrap(), None, TuiConfig::default())
+    }
+
+    fn info(id: &str, name: &str) -> FileInfoResponse {
+        FileInfoResponse {
+            id: Some(id.to_string()),
+            name: name.to_string(),
+            kind: Some("drive#file".to_string()),
+            size: None,
+            hash: None,
+            mime_type: None,
+            created_time: None,
+            modified_time: None,
+            web_content_link: Some("https://example.invalid/video".to_string()),
+            thumbnail_link: None,
+            links: None,
+            medias: None,
+        }
+    }
+
+    fn folder(id: &str, name: &str) -> Entry {
+        Entry {
+            id: id.to_string(),
+            name: name.to_string(),
+            kind: EntryKind::Folder,
+            size: 0,
+            created_time: String::new(),
+            modified_time: String::new(),
+            starred: false,
+            thumbnail_link: None,
+        }
+    }
+
+    fn request(id: u64, kind: AsyncRequestKind, target: &str) -> AsyncRequest {
+        AsyncRequest {
+            id,
+            kind,
+            target: target.to_string(),
+        }
+    }
+
+    #[test]
+    fn main_listing_result_is_bound_to_its_requested_folder() {
+        let result = OpResult::Ls(7, "folder-a".to_string(), Ok(Vec::new()));
+        let OpResult::Ls(request_id, requested_folder_id, _) = result else {
+            panic!("expected a main folder listing result");
+        };
+
+        assert!(folder_listing_matches(
+            "folder-a",
+            7,
+            requested_folder_id.as_str(),
+            request_id,
+        ));
+        assert!(!folder_listing_matches(
+            "folder-b",
+            7,
+            requested_folder_id.as_str(),
+            request_id,
+        ));
+    }
+
+    #[test]
+    fn older_listing_for_same_folder_cannot_replace_newer_listing() {
+        assert!(!folder_listing_matches("folder-a", 8, "folder-a", 7));
+        assert!(folder_listing_matches("folder-a", 8, "folder-a", 8));
+    }
+
+    #[test]
+    fn older_parent_listing_for_the_same_parent_cannot_replace_a_newer_one() {
+        let mut app = test_app();
+        app.breadcrumb = vec![("parent".to_string(), "child".to_string())];
+        let old_request = request(1, AsyncRequestKind::ParentListing, "parent");
+        let new_request = request(2, AsyncRequestKind::ParentListing, "parent");
+        app.parent_listing_request = Some(new_request.clone());
+        app.result_tx
+            .send(OpResult::ParentLs(
+                new_request,
+                Ok(vec![folder("new", "new")]),
+            ))
+            .unwrap();
+        app.result_tx
+            .send(OpResult::ParentLs(
+                old_request,
+                Ok(vec![folder("old", "old")]),
+            ))
+            .unwrap();
+
+        app.poll_results();
+
+        assert_eq!(app.parent_entries[0].id, "new");
+    }
+
+    #[test]
+    fn older_picker_listing_for_same_folder_cannot_replace_newer_dialog_result() {
+        let mut app = test_app();
+        app.input = InputMode::CopyPicker {
+            source: folder("source", "source"),
+            picker: super::PickerState {
+                folder_id: "folder-a".to_string(),
+                listing_request_id: 2,
+                breadcrumb: Vec::new(),
+                entries: Vec::new(),
+                selected: 0,
+                loading: true,
+            },
+        };
+        // The current dialog's response lands first, then the older request
+        // from a cancelled dialog returns for the same folder.
+        app.result_tx
+            .send(OpResult::PickerLs(
+                2,
+                "folder-a".to_string(),
+                Ok(vec![folder("new", "new")]),
+            ))
+            .unwrap();
+        app.result_tx
+            .send(OpResult::PickerLs(
+                1,
+                "folder-a".to_string(),
+                Ok(vec![folder("old", "old")]),
+            ))
+            .unwrap();
+
+        app.poll_results();
+
+        let InputMode::CopyPicker { picker, .. } = app.input else {
+            panic!("picker unexpectedly closed");
+        };
+        assert_eq!(picker.entries[0].id, "new");
+    }
+
+    #[test]
+    fn cached_child_navigation_finishes_the_invalidated_network_loading_state() {
+        let mut app = test_app();
+        app.input = InputMode::Normal;
+        app.entries = vec![folder("child", "child")];
+        app.selected = 0;
+        app.preview_target_id = Some("child".to_string());
+        app.preview_state = PreviewState::FolderListing(Vec::new());
+        app.loading = true;
+
+        app.handle_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+
+        assert!(!app.loading);
+    }
+
+    #[test]
+    fn cached_parent_navigation_finishes_the_invalidated_network_loading_state() {
+        let mut app = test_app();
+        app.input = InputMode::Normal;
+        app.current_folder_id = "child".to_string();
+        app.breadcrumb = vec![("parent".to_string(), "child".to_string())];
+        app.parent_entries = vec![folder("sibling", "sibling")];
+        app.loading = true;
+
+        app.handle_key(KeyCode::Backspace, KeyModifiers::NONE)
+            .unwrap();
+
+        assert!(!app.loading);
+    }
+
+    #[test]
+    fn stale_info_result_cannot_replace_a_newer_loading_target() {
+        let mut app = test_app();
+        app.input = InputMode::InfoLoading;
+        app.modal_request = Some(request(2, AsyncRequestKind::Info, "new-target"));
+        app.result_tx
+            .send(OpResult::Info(
+                request(1, AsyncRequestKind::Info, "old-target"),
+                Ok(info("old-target", "old")),
+                None,
+            ))
+            .unwrap();
+
+        app.poll_results();
+
+        assert!(matches!(app.input, InputMode::InfoLoading));
+    }
+
+    #[test]
+    fn stale_folder_preview_cannot_replace_a_newer_loading_target() {
+        let mut app = test_app();
+        app.input = InputMode::InfoLoading;
+        app.preview_target_id = Some("new-target".to_string());
+        app.preview_target_name = Some("new".to_string());
+        app.modal_request = Some(request(2, AsyncRequestKind::FolderPreview, "new-target"));
+        app.result_tx
+            .send(OpResult::PreviewLs(
+                request(1, AsyncRequestKind::FolderPreview, "old-target"),
+                Ok(Vec::new()),
+            ))
+            .unwrap();
+
+        app.poll_results();
+
+        assert!(matches!(app.input, InputMode::InfoLoading));
+    }
+
+    #[test]
+    fn stale_thumbnail_cannot_land_on_a_different_info_view() {
+        let mut app = test_app();
+        app.modal_request = Some(request(2, AsyncRequestKind::Info, "new-target"));
+        app.input = InputMode::InfoView {
+            request_id: 2,
+            target_id: "new-target".to_string(),
+            info: info("new-target", "new"),
+            image: None,
+            has_thumbnail: true,
+        };
+        app.result_tx
+            .send(OpResult::InfoThumbnail(
+                request(1, AsyncRequestKind::Info, "old-target"),
+                Ok(image::DynamicImage::new_rgb8(1, 1)),
+            ))
+            .unwrap();
+
+        app.poll_results();
+
+        let InputMode::InfoView { image, .. } = app.input else {
+            panic!("info view was unexpectedly replaced");
+        };
+        assert!(image.is_none());
+    }
+
+    #[test]
+    fn delayed_play_result_cannot_replace_a_later_modal() {
+        let mut app = test_app();
+        app.input = InputMode::Settings {
+            selected: 0,
+            editing: false,
+            draft: TuiConfig::default(),
+            modified: false,
+        };
+        app.modal_request = Some(request(1, AsyncRequestKind::Play, "old-target"));
+        app.result_tx
+            .send(OpResult::PlayInfo(
+                request(1, AsyncRequestKind::Play, "old-target"),
+                Ok(info("old-target", "old")),
+            ))
+            .unwrap();
+
+        app.poll_results();
+
+        assert!(matches!(app.input, InputMode::Settings { .. }));
+    }
+
+    #[test]
+    fn keyboard_invalidation_of_pending_interactive_request_finishes_its_loading_state() {
+        for kind in [
+            AsyncRequestKind::Play,
+            AsyncRequestKind::PlayPicker,
+            AsyncRequestKind::GotoPath,
+        ] {
+            let mut app = test_app();
+            app.input = InputMode::Normal;
+            app.loading = true;
+            app.modal_request = Some(request(1, kind, "target"));
+
+            app.handle_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+
+            assert!(app.modal_request.is_none(), "{kind:?}");
+            assert!(!app.loading, "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn mouse_invalidation_of_pending_play_finishes_its_loading_state() {
+        let mut app = test_app();
+        app.input = InputMode::Normal;
+        app.loading = true;
+        app.modal_request = Some(request(1, AsyncRequestKind::Play, "video"));
+
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        });
+
+        assert!(app.modal_request.is_none());
+        assert!(!app.loading);
+    }
+
+    #[test]
+    fn delayed_goto_result_cannot_navigate_after_a_later_modal_opened() {
+        let mut app = test_app();
+        app.current_folder_id = "before".to_string();
+        app.input = InputMode::Settings {
+            selected: 0,
+            editing: false,
+            draft: TuiConfig::default(),
+            modified: false,
+        };
+        app.modal_request = Some(request(1, AsyncRequestKind::GotoPath, "/after"));
+        app.result_tx
+            .send(OpResult::GotoPath(
+                request(1, AsyncRequestKind::GotoPath, "/after"),
+                Ok((
+                    "after".to_string(),
+                    vec![("".to_string(), "after".to_string())],
+                )),
+            ))
+            .unwrap();
+
+        app.poll_results();
+
+        assert_eq!(app.current_folder_id, "before");
+        assert!(matches!(app.input, InputMode::Settings { .. }));
     }
 }
 

@@ -1,8 +1,9 @@
 use anyhow::{Context, Result, anyhow};
+use std::collections::HashSet;
 
 use super::{
     CreateShareResponse, MyShare, PikPak, ShareEntry, ShareInfoResponse, ShareListResponse,
-    ensure_success, json_or_api_error, sanitize,
+    ensure_success, json_or_api_error,
 };
 
 impl PikPak {
@@ -10,23 +11,12 @@ impl PikPak {
         let token = self.access_token()?;
         let url = self.drive_url("drive/v1/share");
 
-        let mut rb = self.http.get(&url).bearer_auth(&token).query(&[
+        let rb = self.http.get(&url).bearer_auth(&token).query(&[
             ("share_id", share_id),
             ("pass_code", pass_code),
             ("thumbnail_size", "SIZE_MEDIUM"),
         ]);
-        rb = self.authed_headers(rb);
-
-        let response = rb.send().context("share info request failed")?;
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().unwrap_or_default();
-            return Err(anyhow!(
-                "share info failed ({}): {}",
-                status,
-                sanitize(&body)
-            ));
-        }
+        let response = self.send_authed("share info", rb)?;
 
         let info: ShareInfoResponse = response.json().context("invalid share info json")?;
         if info.share_status != "OK" {
@@ -55,23 +45,14 @@ impl PikPak {
             "to": { "parent_id": to_parent_id },
         });
 
-        let mut rb = self.http.post(&url).bearer_auth(&token).json(&payload);
-        rb = self.authed_headers(rb);
-
-        let response = rb.send().context("save share request failed")?;
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().unwrap_or_default();
-            if body.contains("file_restore_own") {
+        let rb = self.http.post(&url).bearer_auth(&token).json(&payload);
+        if let Err(e) = self.send_authed("save share", rb) {
+            if format!("{e:#}").contains("file_restore_own") {
                 return Err(anyhow!(
                     "cannot save: these files already belong to your account"
                 ));
             }
-            return Err(anyhow!(
-                "save share failed ({}): {}",
-                status,
-                sanitize(&body)
-            ));
+            return Err(e);
         }
         self.clear_ls_cache();
         Ok(())
@@ -93,10 +74,8 @@ impl PikPak {
             "pass_code_option": if need_password { "REQUIRED" } else { "NOT_REQUIRED" },
         });
 
-        let mut rb = self.http.post(&url).bearer_auth(&token).json(&payload);
-        rb = self.authed_headers(rb);
-
-        let response = rb.send().context("create share request failed")?;
+        let rb = self.http.post(&url).bearer_auth(&token).json(&payload);
+        let response = self.send_authed("create share", rb)?;
         json_or_api_error(response, "create share")
     }
 
@@ -114,6 +93,7 @@ impl PikPak {
 
         let mut entries: Vec<ShareEntry> = Vec::new();
         let mut page_token: Option<String> = None;
+        let mut seen_page_tokens = HashSet::new();
         loop {
             let mut rb = self.http.get(&url).bearer_auth(&token).query(&[
                 ("share_id", share_id),
@@ -125,16 +105,13 @@ impl PikPak {
             if let Some(ref pt) = page_token {
                 rb = rb.query(&[("page_token", pt.as_str())]);
             }
-            rb = self.authed_headers(rb);
-
-            let response = rb.send().context("share detail request failed")?;
+            let response = self.send_authed("share detail", rb)?;
             let resp: super::ShareDetailResponse = json_or_api_error(response, "share detail")?;
-            let got_any = !resp.files.is_empty();
             entries.extend(resp.files);
 
             match resp.next_page_token.filter(|t| !t.is_empty()) {
-                Some(t) if !got_any || page_token.as_deref() == Some(t.as_str()) => break,
-                Some(t) => page_token = Some(t),
+                Some(t) if seen_page_tokens.insert(t.clone()) => page_token = Some(t),
+                Some(_) => break,
                 None => break,
             }
         }
@@ -149,6 +126,7 @@ impl PikPak {
         // first 100.
         let mut shares: Vec<MyShare> = Vec::new();
         let mut page_token: Option<String> = None;
+        let mut seen_page_tokens = HashSet::new();
         loop {
             let mut rb = self
                 .http
@@ -158,16 +136,13 @@ impl PikPak {
             if let Some(ref pt) = page_token {
                 rb = rb.query(&[("page_token", pt.as_str())]);
             }
-            rb = self.authed_headers(rb);
-
-            let response = rb.send().context("list shares request failed")?;
+            let response = self.send_authed("list shares", rb)?;
             let resp: ShareListResponse = json_or_api_error(response, "list shares")?;
-            let got_any = !resp.data.is_empty();
             shares.extend(resp.data);
 
             match resp.next_page_token.filter(|t| !t.is_empty()) {
-                Some(t) if !got_any || page_token.as_deref() == Some(t.as_str()) => break,
-                Some(t) => page_token = Some(t),
+                Some(t) if seen_page_tokens.insert(t.clone()) => page_token = Some(t),
+                Some(_) => break,
                 None => break,
             }
         }
@@ -180,10 +155,8 @@ impl PikPak {
 
         let payload = serde_json::json!({ "ids": share_ids });
 
-        let mut rb = self.http.post(&url).bearer_auth(&token).json(&payload);
-        rb = self.authed_headers(rb);
-
-        let response = rb.send().context("delete shares request failed")?;
+        let rb = self.http.post(&url).bearer_auth(&token).json(&payload);
+        let response = self.send_authed("delete shares", rb)?;
         ensure_success(response, "delete shares")
     }
 }

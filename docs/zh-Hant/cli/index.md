@@ -6,7 +6,7 @@ locale: zh-Hant
 ---
 
 
-pikpaktui 提供 27 條 CLI 子指令，適合腳本、自動化與進階使用者。所有指令均需有效工作階段——先執行 `pikpaktui`（TUI）登入，或使用 `pikpaktui login`。
+pikpaktui 提供 28 條 CLI 子指令，適合腳本、自動化與進階使用者。所有指令均需有效工作階段——先執行 `pikpaktui`（TUI）登入，或使用 `pikpaktui login`。
 
 ## 指令分組
 
@@ -36,7 +36,7 @@ pikpaktui 提供 27 條 CLI 子指令，適合腳本、自動化與進階使用�
 |------|------|
 | [`download`](/zh-Hant/cli/commands#download) | 下載檔案或資料夾 |
 | [`upload`](/zh-Hant/cli/commands#upload) | 上傳檔案至 PikPak |
-| [`share`](/zh-Hant/cli/commands#share) | 建立、列出、儲存或刪除分享連結 |
+| [`share`](/zh-Hant/cli/commands#share) | 建立、瀏覽、列出、儲存或刪除分享連結 |
 
 ### 離線下載
 
@@ -51,6 +51,7 @@ pikpaktui 提供 27 條 CLI 子指令，適合腳本、自動化與進階使用�
 |------|------|
 | [`trash`](/zh-Hant/cli/commands#trash) | 列出回收桶中的檔案 |
 | [`untrash`](/zh-Hant/cli/commands#untrash) | 依檔案名稱從回收桶復原檔案 |
+| [`empty`](/zh-Hant/cli/commands#empty) | 永久刪除指定或全部回收桶項目 |
 
 ### 加星號與活動記錄
 
@@ -73,6 +74,7 @@ pikpaktui 提供 27 條 CLI 子指令，適合腳本、自動化與進階使用�
 |------|------|
 | [`quota`](/zh-Hant/cli/commands#quota) | 儲存空間與頻寬配額 |
 | [`vip`](/zh-Hant/cli/commands#vip) | VIP 狀態與帳戶資訊 |
+| [`whoami`](/zh-Hant/cli/commands#whoami) | 顯示目前登入帳戶身分 |
 
 ### 工具程式
 
@@ -95,7 +97,7 @@ pikpaktui quota --json
 
 ### Dry run 預覽
 
-所有修改資料的指令均支援 `-n` / `--dry-run`，解析路徑後顯示操作計畫，不做實際變更：
+參數說明中列出 `-n` / `--dry-run` 的指令會解析路徑並顯示操作計畫，不做實際變更：
 
 ```bash
 pikpaktui rm -n "/My Pack/file.txt"

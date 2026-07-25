@@ -39,6 +39,28 @@ pikpaktui completions zsh > \
 搭配 [fzf-tab](https://github.com/Aloxaf/fzf-tab) 使用效果更佳——输入路径前缀后按 Tab 会弹出可模糊搜索的云端文件列表。
 :::
 
+## Bash
+
+```bash
+mkdir -p ~/.local/share/bash-completion/completions
+pikpaktui completions bash > ~/.local/share/bash-completion/completions/pikpaktui
+# 或仅为当前 Shell 加载：
+eval "$(pikpaktui completions bash)"
+```
+
+## Fish
+
+```fish
+mkdir -p ~/.config/fish/completions
+pikpaktui completions fish > ~/.config/fish/completions/pikpaktui.fish
+```
+
+## PowerShell
+
+```powershell
+pikpaktui completions powershell | Out-String | Invoke-Expression
+```
+
 ## 补全覆盖范围
 
 | 场景 | 补全内容 |
@@ -56,16 +78,16 @@ pikpaktui completions zsh > \
 | `pikpaktui upload -t /dst<Tab>` | `-t` 目标的云端路径 |
 | `pikpaktui share /path<Tab>` | 云端路径补全 |
 | `pikpaktui offline --to /dst<Tab>` | `--to` 目标的云端路径 |
-| `pikpaktui tasks <Tab>` | `list`、`ls`、`retry`、`delete`、`rm` |
-| `pikpaktui rm -<Tab>` | `-r`、`-f`、`-rf`、`-fr` |
-| `pikpaktui mkdir -<Tab>` | `-p` |
+| `pikpaktui tasks <Tab>` | `list`、`ls`、`show`、`retry`、`delete`、`rm` |
+| `pikpaktui rm -<Tab>` | 递归、强制删除和 dry-run 参数 |
+| `pikpaktui mkdir -<Tab>` | `-p`、`-n`、`--dry-run` |
 | `pikpaktui info /path<Tab>` | 云端路径 |
 | `pikpaktui cat /path<Tab>` | 云端路径 |
 | `pikpaktui play /path<Tab>` | 云端路径 |
 | `pikpaktui rename /path<Tab>` | 云端路径 |
 | `pikpaktui star /path<Tab>` | 云端路径 |
 | `pikpaktui unstar /path<Tab>` | 云端路径 |
-| `pikpaktui completions <Tab>` | `zsh` |
+| `pikpaktui completions <Tab>` | `bash`、`zsh`、`fish`、`powershell` |
 
 ## 云端路径补全原理
 
@@ -83,4 +105,4 @@ pikpaktui completions zsh > \
 
 ## 支持的 Shell
 
-目前仅支持 **Zsh**，暂不支持 Fish 和 Bash。
+目前支持 **Bash、Zsh、Fish 和 PowerShell**。

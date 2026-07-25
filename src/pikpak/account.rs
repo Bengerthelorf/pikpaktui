@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Result, anyhow};
 
 use super::{PikPak, QuotaInfo, TransferQuotaResponse, VipInfoResponse, json_or_api_error};
 
@@ -7,10 +7,8 @@ impl PikPak {
         let token = self.access_token()?;
         let url = self.drive_url("drive/v1/about");
 
-        let mut rb = self.http.get(&url).bearer_auth(&token);
-        rb = self.authed_headers(rb);
-
-        let response = rb.send().context("quota request failed")?;
+        let rb = self.http.get(&url).bearer_auth(&token);
+        let response = self.send_authed("quota", rb)?;
         json_or_api_error(response, "quota")
     }
 
@@ -18,10 +16,8 @@ impl PikPak {
         let token = self.access_token()?;
         let url = self.drive_url("drive/v1/privilege/vip");
 
-        let mut rb = self.http.get(&url).bearer_auth(&token);
-        rb = self.authed_headers(rb);
-
-        let response = rb.send().context("vip info request failed")?;
+        let rb = self.http.get(&url).bearer_auth(&token);
+        let response = self.send_authed("vip info", rb)?;
         json_or_api_error(response, "vip info")
     }
 
@@ -29,10 +25,8 @@ impl PikPak {
         let token = self.access_token()?;
         let url = self.drive_url("vip/v1/activity/inviteCode");
 
-        let mut rb = self.http.get(&url).bearer_auth(&token);
-        rb = self.authed_headers(rb);
-
-        let response = rb.send().context("invite code request failed")?;
+        let rb = self.http.get(&url).bearer_auth(&token);
+        let response = self.send_authed("invite code", rb)?;
         let data: serde_json::Value = json_or_api_error(response, "invite code")?;
         data["code"]
             .as_str()
@@ -45,10 +39,8 @@ impl PikPak {
         let token = self.access_token()?;
         let url = self.auth_url("v1/user/me");
 
-        let mut rb = self.http.get(&url).bearer_auth(&token);
-        rb = self.authed_headers(rb);
-
-        let response = rb.send().context("user info request failed")?;
+        let rb = self.http.get(&url).bearer_auth(&token);
+        let response = self.send_authed("user info", rb)?;
         json_or_api_error(response, "user info")
     }
 
@@ -56,14 +48,12 @@ impl PikPak {
         let token = self.access_token()?;
         let url = self.drive_url("vip/v1/quantity/list");
 
-        let mut rb = self
+        let rb = self
             .http
             .get(&url)
             .bearer_auth(&token)
             .query(&[("type", "transfer")]);
-        rb = self.authed_headers(rb);
-
-        let response = rb.send().context("transfer quota request failed")?;
+        let response = self.send_authed("transfer quota", rb)?;
         json_or_api_error(response, "transfer quota")
     }
 }

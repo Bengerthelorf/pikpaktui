@@ -23,13 +23,21 @@ impl PikPak {
             .to_string_lossy()
             .to_string();
 
-        let meta = fs::metadata(local_path)
+        let meta = fs::symlink_metadata(local_path)
             .with_context(|| format!("cannot stat '{}'", local_path.display()))?;
+        if meta.file_type().is_symlink() {
+            return Err(anyhow!(
+                "refusing to upload symbolic link file '{}'",
+                local_path.display()
+            ));
+        }
+        if !meta.is_file() {
+            return Err(anyhow!("not a regular file: '{}'", local_path.display()));
+        }
         let file_size = meta.len();
 
         let hash = pikpak_hash(local_path)?;
 
-        let token = self.access_token()?;
         let url = self.drive_url("drive/v1/files");
         let mut payload = serde_json::json!({
             "kind": "drive#file",
@@ -43,19 +51,9 @@ impl PikPak {
             payload["parent_id"] = serde_json::json!(pid);
         }
 
-        let mut rb = self.http.post(&url).bearer_auth(&token).json(&payload);
-        rb = self.authed_headers(rb);
-        let response = rb.send().context("upload init request failed")?;
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().unwrap_or_default();
-            return Err(anyhow!(
-                "upload init failed ({}): {}",
-                status,
-                sanitize(&body)
-            ));
-        }
-
+        let token = self.access_token()?;
+        let rb = self.http.post(&url).bearer_auth(&token).json(&payload);
+        let response = self.send_authed("upload init", rb)?;
         let init: UploadInitResponse = response.json().context("invalid upload init json")?;
 
         // Instant completion (hash dedup): the server already had this content,
@@ -106,6 +104,17 @@ impl PikPak {
     }
 
     pub fn upload_dir(&self, parent_id: &str, local_dir: &Path) -> Result<(usize, usize)> {
+        let local_meta = fs::symlink_metadata(local_dir)
+            .with_context(|| format!("cannot stat '{}'", local_dir.display()))?;
+        if local_meta.file_type().is_symlink() {
+            return Err(anyhow!(
+                "refusing to upload symbolic link directory '{}'",
+                local_dir.display()
+            ));
+        }
+        if !local_meta.is_dir() {
+            return Err(anyhow!("not a directory: '{}'", local_dir.display()));
+        }
         let name = local_dir
             .file_name()
             .ok_or_else(|| anyhow!("directory has no name"))?
@@ -121,7 +130,18 @@ impl PikPak {
             .with_context(|| format!("cannot read dir: {}", local_dir.display()))?;
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.is_dir() {
+            let file_type = match entry.file_type() {
+                Ok(file_type) => file_type,
+                Err(e) => {
+                    eprintln!("  [error] cannot inspect '{}': {e}", path.display());
+                    failed += 1;
+                    continue;
+                }
+            };
+            if file_type.is_symlink() {
+                eprintln!("  [skip] symbolic link '{}'", path.display());
+                failed += 1;
+            } else if file_type.is_dir() {
                 let name = path.file_name().unwrap_or_default().to_string_lossy();
                 match self.mkdir(parent_id, &name) {
                     Ok(sub) => {
@@ -136,7 +156,7 @@ impl PikPak {
                         failed += Self::count_files_in(&path).max(1);
                     }
                 }
-            } else if path.is_file() {
+            } else if file_type.is_file() {
                 match self.upload_file(Some(parent_id), &path) {
                     Ok(_) => ok += 1,
                     Err(e) => {
@@ -153,15 +173,10 @@ impl PikPak {
         std::fs::read_dir(dir)
             .map(|rd| {
                 rd.flatten()
-                    .map(|e| {
-                        let p = e.path();
-                        if p.is_dir() {
-                            Self::count_files_in(&p)
-                        } else if p.is_file() {
-                            1
-                        } else {
-                            0
-                        }
+                    .map(|e| match e.file_type() {
+                        Ok(file_type) if file_type.is_dir() => Self::count_files_in(&e.path()),
+                        Ok(file_type) if file_type.is_file() => 1,
+                        _ => 0,
                     })
                     .sum()
             })
@@ -566,4 +581,255 @@ pub(super) struct ResumableParams {
     pub(super) bucket: Option<String>,
     #[serde(default)]
     pub(super) key: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pikpak::SessionToken;
+    use std::io::Write as _;
+    use std::net::TcpListener;
+    use std::sync::Mutex;
+
+    fn temp_dir(label: &str) -> std::path::PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "pikpaktui-upload-{label}-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    fn upload_test_client(base_url: String, session_path: &Path) -> PikPak {
+        let mut client = PikPak::new().unwrap();
+        client.drive_base_url = base_url.clone();
+        client.auth_base_url = base_url;
+        client.session_path = session_path.to_path_buf();
+        client.device_id = "test-device".into();
+        client.user_id = "test-user".into();
+        client.captcha_token = Mutex::new("stale-captcha".into());
+        let captcha_expires_at_unix = crate::pikpak::now_unix() + 300;
+        client.captcha_expires_at_unix = Mutex::new(captcha_expires_at_unix);
+        client
+            .save_session(&SessionToken {
+                access_token: "test-access".into(),
+                refresh_token: "test-refresh".into(),
+                expires_at_unix: crate::pikpak::now_unix() + 3600,
+                device_id: "test-device".into(),
+                user_id: "test-user".into(),
+                captcha_token: "stale-captcha".into(),
+                captcha_expires_at_unix,
+            })
+            .unwrap();
+        client
+    }
+
+    fn write_response(stream: &mut std::net::TcpStream, code: u16, reason: &str, body: &[u8]) {
+        let header = format!(
+            "HTTP/1.1 {code} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
+        stream.write_all(header.as_bytes()).unwrap();
+        stream.write_all(body).unwrap();
+    }
+
+    fn start_upload_captcha_server(
+        refresh_succeeds: bool,
+    ) -> (String, std::thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+
+        let handle = std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            let mut request_index = 0usize;
+            while std::time::Instant::now() < deadline {
+                let (mut stream, _) = match listener.accept() {
+                    Ok(pair) => pair,
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                        continue;
+                    }
+                    Err(e) => panic!("accept failed: {e}"),
+                };
+                let mut buf = [0u8; 8192];
+                let n = stream.read(&mut buf).unwrap();
+                let request = String::from_utf8_lossy(&buf[..n]);
+                request_index += 1;
+
+                match request_index {
+                    1 => {
+                        assert!(request.starts_with("POST /drive/v1/files "));
+                        write_response(
+                            &mut stream,
+                            400,
+                            "Bad Request",
+                            br#"{"error_code":9,"error":"riskLimited"}"#,
+                        );
+                    }
+                    2 => {
+                        assert!(request.starts_with("POST /v1/shield/captcha/init?"));
+                        assert!(
+                            request.contains(r#""action":"POST:/drive/v1/files""#),
+                            "wrong captcha action: {request}"
+                        );
+                        if refresh_succeeds {
+                            write_response(
+                                &mut stream,
+                                200,
+                                "OK",
+                                br#"{"captcha_token":"fresh-captcha","expires_in":300}"#,
+                            );
+                        } else {
+                            write_response(
+                                &mut stream,
+                                500,
+                                "Internal Server Error",
+                                br#"{"error":"refresh failed"}"#,
+                            );
+                            break;
+                        }
+                    }
+                    3 => {
+                        assert!(request.starts_with("POST /drive/v1/files "));
+                        assert!(
+                            request
+                                .to_ascii_lowercase()
+                                .contains("x-captcha-token: fresh-captcha"),
+                            "retry did not use refreshed captcha: {request}"
+                        );
+                        write_response(
+                            &mut stream,
+                            200,
+                            "OK",
+                            br#"{"file":{"phase":"PHASE_TYPE_COMPLETE"}}"#,
+                        );
+                        break;
+                    }
+                    _ => panic!("unexpected request: {request}"),
+                }
+            }
+        });
+
+        (base_url, handle)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn count_files_does_not_follow_directory_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let root = temp_dir("count-symlink");
+        let outside = temp_dir("count-symlink-outside");
+        fs::write(root.join("inside.txt"), b"inside").unwrap();
+        fs::write(outside.join("outside.txt"), b"outside").unwrap();
+        symlink(&outside, root.join("escape")).unwrap();
+
+        assert_eq!(PikPak::count_files_in(&root), 1);
+
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(outside).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn directory_upload_rejects_symlink_root_before_remote_request() {
+        use std::os::unix::fs::symlink;
+
+        let root = temp_dir("root-symlink");
+        let target = root.join("target");
+        fs::create_dir(&target).unwrap();
+        let link = root.join("link");
+        symlink(&target, &link).unwrap();
+
+        let mut client = PikPak::new().unwrap();
+        client.session_path = root.join("missing-session.json");
+        let err = client.upload_dir("parent", &link).unwrap_err();
+
+        assert!(
+            err.to_string().contains("symbolic link"),
+            "unexpected error: {err:#}"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn file_upload_rejects_symlink_before_remote_request() {
+        use std::os::unix::fs::symlink;
+
+        let root = temp_dir("file-symlink");
+        let target = root.join("target.txt");
+        fs::write(&target, b"secret").unwrap();
+        let link = root.join("link.txt");
+        symlink(&target, &link).unwrap();
+
+        let mut client = PikPak::new().unwrap();
+        client.session_path = root.join("missing-session.json");
+        let err = client.upload_file(Some("parent"), &link).unwrap_err();
+
+        assert!(
+            err.to_string().contains("symbolic link"),
+            "unexpected error: {err:#}"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn directory_upload_skips_symlink_entry_as_one_failure() {
+        use std::os::unix::fs::symlink;
+
+        let root = temp_dir("entry-symlink");
+        let outside = temp_dir("entry-symlink-outside");
+        fs::write(outside.join("one.txt"), b"one").unwrap();
+        fs::write(outside.join("two.txt"), b"two").unwrap();
+        symlink(&outside, root.join("escape")).unwrap();
+
+        let mut client = PikPak::new().unwrap();
+        client.session_path = root.join("missing-session.json");
+        let result = client.upload_dir_inner("parent", &root).unwrap();
+
+        assert_eq!(result, (0, 1));
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(outside).unwrap();
+    }
+
+    #[test]
+    fn upload_init_refreshes_captcha_code_nine_once_and_retries() {
+        let dir = temp_dir("captcha-retry");
+        let file = dir.join("file.txt");
+        fs::write(&file, b"hello").unwrap();
+        let (base_url, handle) = start_upload_captcha_server(true);
+        let client = upload_test_client(base_url, &dir.join("session.json"));
+
+        let result = client.upload_file(Some("parent"), &file);
+
+        handle.join().unwrap();
+        fs::remove_dir_all(dir).unwrap();
+        assert_eq!(result.unwrap(), ("file.txt".into(), true));
+    }
+
+    #[test]
+    fn upload_init_surfaces_captcha_refresh_failure() {
+        let dir = temp_dir("captcha-refresh-failure");
+        let file = dir.join("file.txt");
+        fs::write(&file, b"hello").unwrap();
+        let (base_url, handle) = start_upload_captcha_server(false);
+        let client = upload_test_client(base_url, &dir.join("session.json"));
+
+        let result = client.upload_file(Some("parent"), &file);
+
+        handle.join().unwrap();
+        fs::remove_dir_all(dir).unwrap();
+        let err = result.unwrap_err();
+        assert!(
+            format!("{err:#}").contains("captcha refresh failed"),
+            "unexpected error: {err:#}"
+        );
+    }
 }

@@ -2,8 +2,8 @@ export default {
   slug: 'pikpaktui',
   install: {
     linux:   { name: 'Linux',   cmd: 'curl -fsSL https://app.snaix.homes/pikpaktui/install.sh | bash', note: 'debian, ubuntu, arch, alpine, fedora · musl static · x86_64 + arm64' },
-    macos:   { name: 'macOS',   cmd: 'brew install Bengerthelorf/tap/pikpaktui',                     note: 'homebrew; universal binary — arm64 + x86_64' },
-    cargo:   { name: 'Cargo',   cmd: 'cargo install pikpaktui',                                      note: 'builds from crates.io · rust 1.78+' },
+    macos:   { name: 'macOS',   cmd: 'brew install Bengerthelorf/tap/pikpaktui',                     note: 'homebrew; native binaries for arm64 + x86_64' },
+    cargo:   { name: 'Cargo',   cmd: 'cargo install pikpaktui',                                      note: 'builds from crates.io · Rust 1.90+' },
     source:  { name: 'source',  cmd: 'git clone https://github.com/Bengerthelorf/pikpaktui.git && cd pikpaktui && cargo build --release', note: 'binary at ./target/release/pikpaktui' },
   },
   sections: [

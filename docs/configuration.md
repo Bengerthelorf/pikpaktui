@@ -7,13 +7,13 @@ order: 3
 
 All configuration files live under `~/.config/pikpaktui/`.
 
-## Credentials — `login.yaml`
+## Credentials — `login.toml`
 
 Stores your PikPak account credentials. Created automatically on first login (via TUI or `pikpaktui login`).
 
-```yaml
-username: "you@example.com"
-password: "your-password"
+```toml
+username = "you@example.com"
+password = "your-password"
 ```
 
 You can also set credentials via environment variables for the `login` command:
@@ -29,9 +29,9 @@ Credentials are stored in plain text. Ensure `~/.config/pikpaktui/` has appropri
 ## TUI & CLI Settings — `config.toml`
 
 The main settings file. Edit manually or use the in-TUI settings panel (`,` to open, `s` to save).
+The scalar settings are top-level TOML keys; do not wrap them in a `[tui]` table.
 
 ```toml
-[tui]
 # UI
 nerd_font = false           # Nerd Font icons in TUI (requires a Nerd Font terminal)
 border_style = "thick"      # "rounded" | "thick" | "thick-rounded" | "double"
@@ -58,7 +58,7 @@ cli_nerd_font = false       # Nerd Font icons in CLI output
 player = "mpv"              # External video player command; set in TUI on first video play
 
 # Downloads
-download_jobs = 1           # Concurrent download threads (1–16)
+download_jobs = 1           # TUI download workers (1–16 in the settings UI)
 update_check = "notify"     # "notify" | "quiet" | "off"
 ```
 
@@ -79,7 +79,7 @@ update_check = "notify"
 Configure the image rendering protocol per terminal emulator, keyed by the `$TERM_PROGRAM` environment variable. Detected automatically — entries are added the first time each terminal is used.
 
 ```toml
-[tui.image_protocols]
+[image_protocols]
 ghostty = "kitty"
 "iTerm.app" = "iterm2"
 WezTerm = "auto"
@@ -92,7 +92,7 @@ Supported values: `"auto"` (detect), `"kitty"`, `"iterm2"`, `"sixel"`.
 Used when `color_scheme = "custom"`. Each value is an `[R, G, B]` array (0–255).
 
 ```toml
-[tui.custom_colors]
+[custom_colors]
 folder   = [92, 176, 255]   # Light blue
 archive  = [255, 102, 102]  # Light red
 image    = [255, 102, 255]  # Light magenta
@@ -129,5 +129,5 @@ These override config file values. Useful for CI or per-session overrides.
 | `PIKPAK_CAPTCHA_TOKEN` | CAPTCHA token if login is challenged |
 
 :::callout[Concurrent downloads]{kind="info"}
-Set `download_jobs` to match your bandwidth. Values between 2–4 are typical. Maximum is 16.
+`download_jobs` controls the TUI download queue only; CLI folder downloads use `download -j <n>`. Values between 2–4 are typical, and the TUI settings editor offers 1–16.
 :::

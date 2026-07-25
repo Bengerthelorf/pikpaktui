@@ -11,7 +11,9 @@ mod share;
 mod upload;
 
 use auth::{CaptchaInitResponse, SigninResponse};
+#[cfg(test)]
 pub(crate) use download::part_path;
+pub(crate) use download::{finish_partial_download, prepare_partial_download};
 pub use file_info::FileInfoResponse;
 pub use models::{Entry, EntryKind, SessionToken};
 pub use responses::{
@@ -52,6 +54,12 @@ const CAPTCHA_SALTS: &[&str] = &[
     "KJE2oveZ34du/g1tiimm",
 ];
 
+#[derive(Default)]
+struct LsCache {
+    generation: u64,
+    entries: HashMap<String, Vec<Entry>>,
+}
+
 pub struct PikPak {
     pub(crate) http: reqwest::blocking::Client,
     drive_base_url: String,
@@ -62,9 +70,19 @@ pub struct PikPak {
     device_id: String,
     /// Refreshed lazily during `&self` drive calls, hence the Mutex.
     captcha_token: Mutex<String>,
+    captcha_expires_at_unix: Mutex<i64>,
+    /// Serializes action-captcha refreshes. Reactive retries keep this held
+    /// through the retry so another action cannot replace the fresh token.
+    captcha_refresh_lock: Mutex<()>,
+    /// Action that produced the current in-memory captcha token. This lets
+    /// concurrent failures for the same action reuse one refresh safely.
+    captcha_action: Mutex<String>,
     user_id: String,
     pub thumbnail_size: String,
-    ls_cache: Mutex<HashMap<String, Vec<Entry>>>,
+    ls_cache: Mutex<LsCache>,
+    /// Serializes session-file writes and load/modify/save updates in this
+    /// process. A disk lock below coordinates separate CLI/TUI processes.
+    session_lock: Mutex<()>,
     refresh_lock: Mutex<()>,
 }
 
@@ -88,9 +106,13 @@ impl PikPak {
             session_path: default_session_path()?,
             device_id: String::new(),
             captcha_token: Mutex::new(String::new()),
+            captcha_expires_at_unix: Mutex::new(0),
+            captcha_refresh_lock: Mutex::new(()),
+            captcha_action: Mutex::new(String::new()),
             user_id: String::new(),
             thumbnail_size: "SIZE_MEDIUM".to_string(),
-            ls_cache: Mutex::new(HashMap::new()),
+            ls_cache: Mutex::new(LsCache::default()),
+            session_lock: Mutex::new(()),
             refresh_lock: Mutex::new(()),
         };
         // Re-adopt the device identity from the saved session: without it,
@@ -99,6 +121,7 @@ impl PikPak {
         if let Ok(Some(session)) = client.load_session() {
             client.device_id = session.device_id;
             client.captcha_token = Mutex::new(session.captcha_token);
+            client.captcha_expires_at_unix = Mutex::new(session.captcha_expires_at_unix);
             client.user_id = session.user_id;
         }
         Ok(client)
@@ -116,6 +139,31 @@ impl PikPak {
     }
 
     fn save_session(&self, token: &SessionToken) -> Result<()> {
+        let _guard = self.session_lock.lock().unwrap_or_else(|e| e.into_inner());
+        let _file_guard = self.lock_session_file()?;
+        self.save_session_unlocked(token)
+    }
+
+    fn lock_session_file(&self) -> Result<fs::File> {
+        if let Some(parent) = self.session_path.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create dir {}", parent.display()))?;
+        }
+        let lock_path = self.session_path.with_extension("lock");
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&lock_path)
+            .with_context(|| format!("failed to open session lock {}", lock_path.display()))?;
+        set_file_owner_only(&lock_path);
+        file.lock()
+            .with_context(|| format!("failed to lock session {}", lock_path.display()))?;
+        Ok(file)
+    }
+
+    fn save_session_unlocked(&self, token: &SessionToken) -> Result<()> {
         if let Some(parent) = self.session_path.parent() {
             fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create dir {}", parent.display()))?;
@@ -127,6 +175,16 @@ impl PikPak {
         fs::rename(&tmp_path, &self.session_path)
             .with_context(|| format!("failed to rename session {}", self.session_path.display()))?;
         set_file_owner_only(&self.session_path);
+        Ok(())
+    }
+
+    fn update_session(&self, update: impl FnOnce(&mut SessionToken)) -> Result<()> {
+        let _guard = self.session_lock.lock().unwrap_or_else(|e| e.into_inner());
+        let _file_guard = self.lock_session_file()?;
+        if let Some(mut session) = self.load_session()? {
+            update(&mut session);
+            self.save_session_unlocked(&session)?;
+        }
         Ok(())
     }
 
@@ -148,6 +206,9 @@ impl PikPak {
         self.device_id = md5_hex(email);
 
         let captcha = self.init_captcha(email)?;
+        let captcha_expires_in =
+            i64::try_from(captcha.expires_in).context("captcha expires_in overflow")?;
+        let captcha_expires_at_unix = now_unix().saturating_add(captcha_expires_in);
         let login_captcha = captcha
             .captcha_token
             // An empty token would sail through and fail signin with an opaque
@@ -166,6 +227,10 @@ impl PikPak {
                 )
             })?;
         *self.captcha_token.lock().unwrap_or_else(|e| e.into_inner()) = login_captcha.clone();
+        *self
+            .captcha_expires_at_unix
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = captcha_expires_at_unix;
 
         let url = self.auth_url("v1/auth/signin");
         let payload = serde_json::json!({
@@ -206,6 +271,7 @@ impl PikPak {
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .clone(),
+            captcha_expires_at_unix,
             user_id: signin.sub,
         };
 
@@ -279,12 +345,24 @@ impl PikPak {
     /// Use the refresh_token to obtain a new access_token without requiring
     /// the user's password. Saves the updated session to disk and returns
     /// the new access_token.
-    fn refresh_session(&self, refresh_token: &str) -> Result<String> {
+    fn refresh_session(&self, _refresh_token_hint: &str) -> Result<String> {
+        // Hold both locks through the HTTP exchange. A second process then
+        // reloads the newly rotated refresh token instead of submitting the
+        // stale one it observed before waiting.
+        let _guard = self.session_lock.lock().unwrap_or_else(|e| e.into_inner());
+        let _file_guard = self.lock_session_file()?;
+        let mut session = self
+            .load_session()?
+            .ok_or_else(|| anyhow!("not logged in, please login first"))?;
+        if !session.is_expired(now_unix() + 300) {
+            return Ok(session.access_token);
+        }
+
         let url = self.auth_url("v1/auth/token");
 
         let payload = serde_json::json!({
             "grant_type": "refresh_token",
-            "refresh_token": refresh_token,
+            "refresh_token": session.refresh_token.clone(),
             "client_id": self.client_id,
             "client_secret": self.client_secret,
         });
@@ -307,33 +385,77 @@ impl PikPak {
 
         let refreshed: SigninResponse = response.json().context("invalid token refresh json")?;
         let expires_in = i64::try_from(refreshed.expires_in).context("expires_in overflow")?;
+        let access_token = refreshed.access_token;
+        let refresh_token = refreshed.refresh_token;
+        let refreshed_user_id = refreshed.sub;
 
-        let token = SessionToken {
-            access_token: refreshed.access_token.clone(),
-            refresh_token: refreshed.refresh_token,
-            expires_at_unix: now_unix().saturating_add(expires_in),
-            device_id: self.device_id.clone(),
-            captcha_token: self
-                .captcha_token
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .clone(),
-            user_id: if refreshed.sub.is_empty() {
-                self.user_id.clone()
-            } else {
-                refreshed.sub
-            },
-        };
-        self.save_session(&token)?;
+        // Only token fields change; captcha/device fields remain the latest
+        // values loaded after acquiring the cross-process session lock.
+        session.access_token = access_token.clone();
+        session.refresh_token = refresh_token;
+        session.expires_at_unix = now_unix().saturating_add(expires_in);
+        if !self.device_id.is_empty() {
+            session.device_id.clone_from(&self.device_id);
+        }
+        if !refreshed_user_id.is_empty() {
+            session.user_id = refreshed_user_id;
+        }
+        self.save_session_unlocked(&session)?;
 
-        Ok(refreshed.access_token)
+        Ok(access_token)
     }
 
-    fn authed_headers(
+    fn request_action(&self, rb: &reqwest::blocking::RequestBuilder) -> Result<String> {
+        let request = rb
+            .try_clone()
+            .ok_or_else(|| anyhow!("cannot clone authenticated request"))?
+            .build()
+            .context("cannot inspect authenticated request")?;
+        Ok(format!("{}:{}", request.method(), request.url().path()))
+    }
+
+    fn captcha_snapshot(&self) -> (String, i64) {
+        let token = self
+            .captcha_token
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let expires_at = *self
+            .captcha_expires_at_unix
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        (token, expires_at)
+    }
+
+    fn captcha_needs_refresh(&self) -> bool {
+        let (token, expires_at) = self.captcha_snapshot();
+        if token.is_empty() {
+            !self.device_id.is_empty()
+        } else {
+            expires_at <= now_unix().saturating_add(30)
+        }
+    }
+
+    fn ensure_captcha_for_action(&self, action: &str) -> Result<()> {
+        if !self.captcha_needs_refresh() {
+            return Ok(());
+        }
+        let _guard = self
+            .captcha_refresh_lock
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        // Another request may have refreshed while this one waited.
+        if self.captcha_needs_refresh() {
+            self.refresh_captcha_for_action_locked(action)
+                .with_context(|| format!("captcha refresh for {action} failed"))?;
+        }
+        Ok(())
+    }
+
+    fn attach_authed_headers(
         &self,
-        rb: reqwest::blocking::RequestBuilder,
-    ) -> reqwest::blocking::RequestBuilder {
-        let mut rb = rb;
+        mut rb: reqwest::blocking::RequestBuilder,
+    ) -> (reqwest::blocking::RequestBuilder, String) {
         if !self.device_id.is_empty() {
             rb = rb.header("x-device-id", &self.device_id);
         }
@@ -343,9 +465,71 @@ impl PikPak {
             .unwrap_or_else(|e| e.into_inner())
             .clone();
         if !captcha.is_empty() {
-            rb = rb.header("x-captcha-token", captcha);
+            rb = rb.header("x-captcha-token", &captcha);
         }
-        rb
+        (rb, captcha)
+    }
+
+    fn send_authed(
+        &self,
+        op: &str,
+        rb: reqwest::blocking::RequestBuilder,
+    ) -> Result<reqwest::blocking::Response> {
+        let action = self.request_action(&rb)?;
+        let retry = rb
+            .try_clone()
+            .ok_or_else(|| anyhow!("cannot clone {op} request for captcha retry"))?;
+
+        self.ensure_captcha_for_action(&action)?;
+        let (first, used_captcha) = self.attach_authed_headers(rb);
+        let response = first
+            .send()
+            .with_context(|| format!("{op} request failed"))?;
+        let status = response.status();
+        if status.is_success() {
+            return Ok(response);
+        }
+        let body = response.text().unwrap_or_default();
+        if !api_error_requires_captcha_refresh(&body) {
+            return Err(anyhow!("{} failed ({}): {}", op, status, sanitize(&body)));
+        }
+
+        let _guard = self
+            .captcha_refresh_lock
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let current_captcha = self
+            .captcha_token
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let current_action = self
+            .captcha_action
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let current_expiry = *self
+            .captcha_expires_at_unix
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let same_action_was_refreshed = current_captcha != used_captcha
+            && current_action == action
+            && current_expiry > now_unix().saturating_add(30);
+        if !same_action_was_refreshed {
+            self.refresh_captcha_for_action_locked(&action)
+                .with_context(|| format!("captcha refresh for {action} failed"))?;
+        }
+
+        let (retry, _) = self.attach_authed_headers(retry);
+        let response = retry
+            .send()
+            .with_context(|| format!("{op} request failed"))?;
+        let status = response.status();
+        if status.is_success() {
+            return Ok(response);
+        }
+        let body = response.text().unwrap_or_default();
+        Err(anyhow!("{} failed ({}): {}", op, status, sanitize(&body)))
     }
 
     /// The salted MD5 chain reference clients compute for captcha refresh:
@@ -365,7 +549,7 @@ impl PikPak {
     /// Refresh the captcha token for one drive action ("METHOD:/path").
     /// Reference clients do this reactively when the API answers error_code 9
     /// (riskLimited); the new token is kept for subsequent calls.
-    fn refresh_captcha_for_action(&self, action: &str) -> Result<()> {
+    fn refresh_captcha_for_action_locked(&self, action: &str) -> Result<()> {
         let token = self.access_token()?;
         let url = self.auth_url("v1/shield/captcha/init");
         let timestamp = (now_unix_millis()).to_string();
@@ -414,6 +598,9 @@ impl PikPak {
             ));
         }
         let captcha: CaptchaInitResponse = response.json().context("invalid captcha json")?;
+        let expires_in =
+            i64::try_from(captcha.expires_in).context("captcha expires_in overflow")?;
+        let expires_at_unix = now_unix().saturating_add(expires_in);
         let new_token = captcha
             .captcha_token
             .filter(|t| !t.is_empty())
@@ -426,11 +613,20 @@ impl PikPak {
             })?;
 
         *self.captcha_token.lock().unwrap_or_else(|e| e.into_inner()) = new_token.clone();
-        // Persist so the next process starts with a live token.
-        if let Ok(Some(mut session)) = self.load_session() {
+        *self
+            .captcha_expires_at_unix
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = expires_at_unix;
+        *self
+            .captcha_action
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = action.to_string();
+        // Persist with one load/modify/save lock so an overlapping access-token
+        // refresh cannot be overwritten by this captcha update.
+        self.update_session(|session| {
             session.captcha_token = new_token;
-            let _ = self.save_session(&session);
-        }
+            session.captcha_expires_at_unix = expires_at_unix;
+        })?;
         Ok(())
     }
 
@@ -446,10 +642,9 @@ impl PikPak {
     /// resolution. Mutations call this on success so later path lookups see the
     /// new tree instead of a stale snapshot.
     fn clear_ls_cache(&self) {
-        self.ls_cache
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clear();
+        let mut cache = self.ls_cache.lock().unwrap_or_else(|e| e.into_inner());
+        cache.generation = cache.generation.wrapping_add(1);
+        cache.entries.clear();
     }
 
     pub fn http(&self) -> &reqwest::blocking::Client {
@@ -460,13 +655,11 @@ impl PikPak {
         let token = self.access_token()?;
         let url = self.drive_url("drive/v1/events");
 
-        let mut rb = self.http.get(&url).bearer_auth(&token).query(&[
+        let rb = self.http.get(&url).bearer_auth(&token).query(&[
             ("thumbnail_size", self.thumbnail_size.as_str()),
             ("limit", &limit.to_string()),
         ]);
-        rb = self.authed_headers(rb);
-
-        let response = rb.send().context("events request failed")?;
+        let response = self.send_authed("events", rb)?;
         json_or_api_error(response, "events")
     }
 }
@@ -560,21 +753,65 @@ fn now_unix_millis() -> i64 {
         .unwrap_or(0)
 }
 
-/// Pull PikPak's `error_code` out of an error body, if it is one.
-pub(super) fn api_error_code(body: &str) -> Option<i64> {
-    serde_json::from_str::<serde_json::Value>(body)
-        .ok()?
-        .get("error_code")?
-        .as_i64()
+/// PikPak reuses numeric error code 9 for unrelated business failures. Only
+/// the documented captcha/risk reasons may refresh and replay a request.
+fn api_error_requires_captcha_refresh(body: &str) -> bool {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
+        return false;
+    };
+    if value.get("error_code").and_then(|code| code.as_i64()) != Some(9) {
+        return false;
+    }
+    ["error", "reason", "error_description"]
+        .into_iter()
+        .filter_map(|field| value.get(field).and_then(|value| value.as_str()))
+        .any(|reason| {
+            reason.eq_ignore_ascii_case("captcha_invalid")
+                || reason.eq_ignore_ascii_case("risklimited")
+                || reason.eq_ignore_ascii_case("risk_limited")
+        })
 }
 
-/// Sanitize a filename from an API response to prevent path traversal.
+/// Sanitize an API-provided filename for a single portable path component.
 pub(crate) fn sanitize_filename(name: &str) -> String {
-    let cleaned = name.replace(['/', '\\'], "_").replace("..", "_");
-    // On Windows "C:evil" is drive-relative: Path::join replaces the base
-    // path entirely, so the file lands outside the download directory.
-    #[cfg(windows)]
-    let cleaned = cleaned.replace(':', "_");
+    let cleaned: String = name
+        .chars()
+        .map(|c| {
+            if c.is_control() || matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
+    let cleaned = cleaned.replace("..", "_");
+    let cleaned = cleaned.trim_end_matches([' ', '.']);
+    let mut cleaned = if cleaned.is_empty() {
+        "_".to_string()
+    } else {
+        cleaned.to_string()
+    };
+
+    let stem = cleaned
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_uppercase();
+    let reserved = matches!(
+        stem.as_str(),
+        "CON" | "CONIN$" | "CONOUT$" | "PRN" | "AUX" | "NUL"
+    ) || stem
+        .strip_prefix("COM")
+        .or_else(|| stem.strip_prefix("LPT"))
+        .is_some_and(|n| {
+            matches!(
+                n,
+                "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+            )
+        });
+    if reserved {
+        cleaned.insert(0, '_');
+    }
     cleaned
 }
 
@@ -590,11 +827,13 @@ pub(crate) fn unique_local_name(
 ) -> String {
     fn reserve(taken: &mut std::collections::HashSet<String>, cand: &str) -> bool {
         let sidecar = format!("{cand}.part");
-        if taken.contains(cand) || taken.contains(&sidecar) {
+        let identity = format!("{sidecar}.meta");
+        if taken.contains(cand) || taken.contains(&sidecar) || taken.contains(&identity) {
             return false;
         }
         taken.insert(cand.to_string());
         taken.insert(sidecar);
+        taken.insert(identity);
         true
     }
 
@@ -634,6 +873,59 @@ fn md5_hex(input: &str) -> String {
         write!(hex, "{:02x}", b).unwrap();
     }
     hex
+}
+
+#[cfg(test)]
+mod filename_safety_tests {
+    use super::{sanitize_filename, unique_local_name};
+    use std::collections::HashSet;
+
+    #[test]
+    fn sanitize_filename_replaces_windows_illegal_and_control_characters() {
+        assert_eq!(
+            sanitize_filename("a<b>c:d\"e/f\\g|h?i*j\u{1f}.txt"),
+            "a_b_c_d_e_f_g_h_i_j_.txt"
+        );
+    }
+
+    #[test]
+    fn sanitize_filename_removes_windows_trailing_dots_and_spaces() {
+        assert_eq!(sanitize_filename("report. "), "report");
+        assert_eq!(sanitize_filename("..."), "_");
+    }
+
+    #[test]
+    fn sanitize_filename_escapes_windows_reserved_device_stems() {
+        for name in [
+            "CON",
+            "con.txt",
+            "CONIN$",
+            "conout$.log",
+            "PRN",
+            "AUX.log",
+            "NUL",
+            "COM1",
+            "com¹.txt",
+            "LPT²",
+            "lpt9.bin",
+        ] {
+            assert!(
+                sanitize_filename(name).starts_with('_'),
+                "{name} remained a reserved device path"
+            );
+        }
+        assert_eq!(sanitize_filename("com10.txt"), "com10.txt");
+    }
+
+    #[test]
+    fn unique_name_reserves_partial_identity_sidecar() {
+        let mut taken = HashSet::new();
+        assert_eq!(unique_local_name(&mut taken, "movie.mkv"), "movie.mkv");
+        assert_eq!(
+            unique_local_name(&mut taken, "movie.mkv.part.meta"),
+            "movie.mkv.part (1).meta"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -684,11 +976,16 @@ mod unique_name_tests {
 mod tests {
     use super::drive::DriveListResponse;
     use super::*;
-    use std::collections::HashMap;
     use std::io::Write as _;
     use std::net::TcpListener;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
+
+    type PaginatedGetServer = (
+        String,
+        Arc<Mutex<Vec<Option<String>>>>,
+        std::thread::JoinHandle<()>,
+    );
 
     struct MockDownloadServer {
         base_url: String,
@@ -706,9 +1003,13 @@ mod tests {
             session_path,
             device_id: String::new(),
             captcha_token: Mutex::new(String::new()),
+            captcha_expires_at_unix: Mutex::new(0),
+            captcha_refresh_lock: Mutex::new(()),
+            captcha_action: Mutex::new(String::new()),
             user_id: String::new(),
             thumbnail_size: "SIZE_MEDIUM".to_string(),
-            ls_cache: Mutex::new(HashMap::new()),
+            ls_cache: Mutex::new(LsCache::default()),
+            session_lock: Mutex::new(()),
             refresh_lock: Mutex::new(()),
         };
         client
@@ -769,7 +1070,16 @@ mod tests {
                     });
 
                     if !ignore_range && let Some(start) = range_start {
-                        write_response(&mut stream, 206, "Partial Content", &content[start..]);
+                        let end = content.len().saturating_sub(1);
+                        let content_range =
+                            format!("Content-Range: bytes {start}-{end}/{}\r\n", content.len());
+                        write_response_with_headers(
+                            &mut stream,
+                            206,
+                            "Partial Content",
+                            &content[start..],
+                            &content_range,
+                        );
                     } else {
                         write_response(&mut stream, 200, "OK", content);
                     }
@@ -787,8 +1097,18 @@ mod tests {
     }
 
     fn write_response(stream: &mut std::net::TcpStream, code: u16, reason: &str, body: &[u8]) {
+        write_response_with_headers(stream, code, reason, body, "");
+    }
+
+    fn write_response_with_headers(
+        stream: &mut std::net::TcpStream,
+        code: u16,
+        reason: &str,
+        body: &[u8],
+        extra_headers: &str,
+    ) {
         let header = format!(
-            "HTTP/1.1 {code} {reason}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            "HTTP/1.1 {code} {reason}\r\nContent-Length: {}\r\n{extra_headers}Connection: close\r\n\r\n",
             body.len()
         );
         stream.write_all(header.as_bytes()).unwrap();
@@ -813,6 +1133,264 @@ mod tests {
             }
         });
         (base_url, handle)
+    }
+
+    fn start_paginated_get_server(responses: Vec<&'static str>) -> PaginatedGetServer {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let requested_tokens = Arc::new(Mutex::new(Vec::new()));
+        let captured = Arc::clone(&requested_tokens);
+        let handle = std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+            let mut served = 0usize;
+            while served < responses.len() && std::time::Instant::now() < deadline {
+                let (mut stream, _) = match listener.accept() {
+                    Ok(pair) => pair,
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                        continue;
+                    }
+                    Err(e) => panic!("share detail server accept failed: {e}"),
+                };
+                let mut buf = [0u8; 4096];
+                let n = std::io::Read::read(&mut stream, &mut buf).unwrap_or(0);
+                let request = String::from_utf8_lossy(&buf[..n]);
+                let target = request
+                    .lines()
+                    .next()
+                    .and_then(|line| line.split_whitespace().nth(1))
+                    .unwrap_or_default();
+                let page_token = target.split_once('?').and_then(|(_, query)| {
+                    query
+                        .split('&')
+                        .find_map(|pair| pair.strip_prefix("page_token=").map(str::to_string))
+                });
+                captured
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .push(page_token);
+                write_response(&mut stream, 200, "OK", responses[served].as_bytes());
+                served += 1;
+            }
+        });
+        (base_url, requested_tokens, handle)
+    }
+
+    fn start_captcha_refresh_server()
+    -> (String, Arc<Mutex<Vec<String>>>, std::thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let captured = Arc::clone(&requests);
+        let handle = std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            while std::time::Instant::now() < deadline {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let mut buf = [0u8; 8192];
+                        let n = std::io::Read::read(&mut stream, &mut buf).unwrap_or(0);
+                        let request = String::from_utf8_lossy(&buf[..n]).into_owned();
+                        let first_line = request.lines().next().unwrap_or_default().to_string();
+                        captured
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .push(request);
+
+                        if first_line.starts_with("POST /v1/shield/captcha/init") {
+                            write_response(
+                                &mut stream,
+                                200,
+                                "OK",
+                                br#"{"captcha_token":"fresh-captcha","expires_in":300}"#,
+                            );
+                        } else if first_line.starts_with("GET /drive/v1/about") {
+                            write_response(
+                                &mut stream,
+                                200,
+                                "OK",
+                                br#"{"quota":{"limit":"100","usage":"1"}}"#,
+                            );
+                        } else {
+                            write_response(&mut stream, 404, "Not Found", b"not found");
+                        }
+
+                        if captured.lock().unwrap_or_else(|e| e.into_inner()).len() == 2 {
+                            break;
+                        }
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                    }
+                    Err(e) => panic!("captcha server accept failed: {e}"),
+                }
+            }
+        });
+        (base_url, requests, handle)
+    }
+
+    #[derive(Clone, Copy)]
+    enum ReactiveCaptchaMode {
+        RetrySucceeds,
+        RefreshFails,
+        RetryStillLimited,
+    }
+
+    fn start_reactive_captcha_server(
+        mode: ReactiveCaptchaMode,
+    ) -> (String, Arc<Mutex<Vec<String>>>, std::thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let captured = Arc::clone(&requests);
+        let handle = std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            let mut about_attempts = 0usize;
+            while std::time::Instant::now() < deadline {
+                let (mut stream, _) = match listener.accept() {
+                    Ok(pair) => pair,
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                        continue;
+                    }
+                    Err(e) => panic!("reactive captcha server accept failed: {e}"),
+                };
+                let mut buf = [0u8; 8192];
+                let n = std::io::Read::read(&mut stream, &mut buf).unwrap_or(0);
+                let request = String::from_utf8_lossy(&buf[..n]).into_owned();
+                let first_line = request.lines().next().unwrap_or_default().to_string();
+                captured
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .push(request);
+
+                if first_line.starts_with("GET /drive/v1/about") {
+                    about_attempts += 1;
+                    if about_attempts == 1 || matches!(mode, ReactiveCaptchaMode::RetryStillLimited)
+                    {
+                        write_response(
+                            &mut stream,
+                            403,
+                            "Forbidden",
+                            br#"{"error_code":9,"error":"riskLimited"}"#,
+                        );
+                    } else {
+                        write_response(
+                            &mut stream,
+                            200,
+                            "OK",
+                            br#"{"quota":{"limit":"100","usage":"1"}}"#,
+                        );
+                    }
+                } else if first_line.starts_with("POST /v1/shield/captcha/init") {
+                    assert!(
+                        captured
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .last()
+                            .unwrap()
+                            .contains(r#""action":"GET:/drive/v1/about""#)
+                    );
+                    if matches!(mode, ReactiveCaptchaMode::RefreshFails) {
+                        write_response(
+                            &mut stream,
+                            500,
+                            "Internal Server Error",
+                            br#"{"error":"refresh failed"}"#,
+                        );
+                        break;
+                    }
+                    write_response(
+                        &mut stream,
+                        200,
+                        "OK",
+                        br#"{"captcha_token":"fresh-captcha","expires_in":300}"#,
+                    );
+                } else {
+                    write_response(&mut stream, 404, "Not Found", b"not found");
+                }
+
+                let request_count = captured.lock().unwrap_or_else(|e| e.into_inner()).len();
+                let expected = match mode {
+                    ReactiveCaptchaMode::RefreshFails => 2,
+                    ReactiveCaptchaMode::RetrySucceeds | ReactiveCaptchaMode::RetryStillLimited => {
+                        3
+                    }
+                };
+                if request_count >= expected {
+                    break;
+                }
+            }
+        });
+        (base_url, requests, handle)
+    }
+
+    fn start_concurrent_captcha_server(
+        guarded_requests: usize,
+    ) -> (String, Arc<AtomicUsize>, std::thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let refresh_count = Arc::new(AtomicUsize::new(0));
+        let refreshes = Arc::clone(&refresh_count);
+        let handle = std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+            let mut pending_refreshes: Vec<std::net::TcpStream> = Vec::new();
+            let mut first_refresh_at: Option<std::time::Instant> = None;
+            let mut about_count = 0usize;
+
+            while std::time::Instant::now() < deadline {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let mut buf = [0u8; 8192];
+                        let n = std::io::Read::read(&mut stream, &mut buf).unwrap_or(0);
+                        let request = String::from_utf8_lossy(&buf[..n]);
+                        let first_line = request.lines().next().unwrap_or_default();
+                        if first_line.starts_with("POST /v1/shield/captcha/init") {
+                            refreshes.fetch_add(1, Ordering::SeqCst);
+                            first_refresh_at.get_or_insert_with(std::time::Instant::now);
+                            pending_refreshes.push(stream);
+                        } else if first_line.starts_with("GET /drive/v1/about") {
+                            about_count += 1;
+                            write_response(
+                                &mut stream,
+                                200,
+                                "OK",
+                                br#"{"quota":{"limit":"100","usage":"1"}}"#,
+                            );
+                        } else {
+                            write_response(&mut stream, 404, "Not Found", b"not found");
+                        }
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(std::time::Duration::from_millis(2));
+                    }
+                    Err(e) => panic!("concurrent captcha server accept failed: {e}"),
+                }
+
+                let held_long_enough = first_refresh_at.is_some_and(|started| {
+                    started.elapsed() >= std::time::Duration::from_millis(250)
+                });
+                if !pending_refreshes.is_empty()
+                    && (pending_refreshes.len() >= guarded_requests || held_long_enough)
+                {
+                    for mut stream in pending_refreshes.drain(..) {
+                        write_response(
+                            &mut stream,
+                            200,
+                            "OK",
+                            br#"{"captcha_token":"fresh-captcha","expires_in":300}"#,
+                        );
+                    }
+                }
+                if about_count == guarded_requests && pending_refreshes.is_empty() {
+                    break;
+                }
+            }
+        });
+        (base_url, refresh_count, handle)
     }
 
     /// Server that answers drive listings (counting how many it serves) and
@@ -844,6 +1422,62 @@ mod tests {
         (base_url, list_hits, handle)
     }
 
+    fn start_blocking_listing_server() -> (
+        String,
+        std::sync::mpsc::Receiver<()>,
+        std::sync::mpsc::Sender<()>,
+        Arc<AtomicUsize>,
+        std::thread::JoinHandle<()>,
+    ) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let list_hits = Arc::new(AtomicUsize::new(0));
+        let hits = Arc::clone(&list_hits);
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+
+        let handle = std::thread::spawn(move || {
+            let (mut first, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = std::io::Read::read(&mut first, &mut buf);
+            hits.fetch_add(1, Ordering::SeqCst);
+            started_tx.send(()).unwrap();
+            release_rx
+                .recv_timeout(std::time::Duration::from_secs(2))
+                .unwrap();
+            write_response(
+                &mut first,
+                200,
+                "OK",
+                br#"{"files":[{"id":"old","name":"old","kind":"drive#folder"}]}"#,
+            );
+
+            listener.set_nonblocking(true).unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+            while std::time::Instant::now() < deadline {
+                match listener.accept() {
+                    Ok((mut second, _)) => {
+                        let _ = std::io::Read::read(&mut second, &mut buf);
+                        hits.fetch_add(1, Ordering::SeqCst);
+                        write_response(
+                            &mut second,
+                            200,
+                            "OK",
+                            br#"{"files":[{"id":"new","name":"new","kind":"drive#folder"}]}"#,
+                        );
+                        break;
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                    }
+                    Err(e) => panic!("listing server accept failed: {e}"),
+                }
+            }
+        });
+
+        (base_url, started_rx, release_tx, list_hits, handle)
+    }
+
     #[test]
     fn token_expiry_check() {
         let token = SessionToken {
@@ -854,6 +1488,23 @@ mod tests {
         };
         assert!(!token.is_expired(99));
         assert!(token.is_expired(100));
+    }
+
+    #[test]
+    fn session_token_preserves_captcha_expiry() {
+        let token: SessionToken = serde_json::from_str(
+            r#"{
+                "access_token":"a",
+                "refresh_token":"r",
+                "expires_at_unix":200,
+                "captcha_token":"captcha",
+                "captcha_expires_at_unix":123
+            }"#,
+        )
+        .unwrap();
+
+        let encoded = serde_json::to_value(token).unwrap();
+        assert_eq!(encoded["captcha_expires_at_unix"], 123);
     }
 
     #[test]
@@ -873,6 +1524,14 @@ mod tests {
         assert_eq!(resp.access_token, "new_access");
         assert_eq!(resp.refresh_token, "new_refresh");
         assert_eq!(resp.expires_in, 7200);
+    }
+
+    #[test]
+    fn captcha_response_exposes_its_expiry() {
+        let response: CaptchaInitResponse =
+            serde_json::from_str(r#"{"captcha_token":"captcha","expires_in":300}"#).unwrap();
+
+        assert_eq!(response.expires_in, 300);
     }
 
     #[test]
@@ -922,6 +1581,148 @@ mod tests {
     }
 
     #[test]
+    fn share_detail_follows_token_across_empty_intermediate_page() {
+        let (base_url, requested_tokens, handle) = start_paginated_get_server(vec![
+            r#"{
+                "files":[{"id":"first","name":"first","kind":"drive#file"}],
+                "next_page_token":"empty-page"
+            }"#,
+            r#"{"files":[],"next_page_token":"last-page"}"#,
+            r#"{"files":[{"id":"last","name":"last","kind":"drive#file"}]}"#,
+        ]);
+        let dir = temp_test_dir("share-detail-empty-page");
+        let client = test_client(base_url, dir.join("session.json"));
+
+        let entries = client.share_detail("share", "", "pass").unwrap();
+        handle.join().unwrap();
+
+        assert_eq!(
+            entries
+                .iter()
+                .map(|entry| entry.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["first", "last"]
+        );
+        assert_eq!(
+            *requested_tokens.lock().unwrap_or_else(|e| e.into_inner()),
+            vec![
+                None,
+                Some("empty-page".to_string()),
+                Some("last-page".to_string())
+            ]
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn share_detail_stops_before_reusing_any_seen_page_token() {
+        let (base_url, requested_tokens, handle) = start_paginated_get_server(vec![
+            r#"{
+                "files":[{"id":"root","name":"root","kind":"drive#file"}],
+                "next_page_token":"page-a"
+            }"#,
+            r#"{
+                "files":[{"id":"a","name":"a","kind":"drive#file"}],
+                "next_page_token":"page-b"
+            }"#,
+            r#"{
+                "files":[{"id":"b","name":"b","kind":"drive#file"}],
+                "next_page_token":"page-a"
+            }"#,
+        ]);
+        let dir = temp_test_dir("share-detail-token-cycle");
+        let client = test_client(base_url, dir.join("session.json"));
+
+        let result = client.share_detail("share", "", "pass");
+        handle.join().unwrap();
+
+        let entries = result.unwrap();
+        assert_eq!(
+            entries
+                .iter()
+                .map(|entry| entry.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["root", "a", "b"]
+        );
+        assert_eq!(
+            *requested_tokens.lock().unwrap_or_else(|e| e.into_inner()),
+            vec![None, Some("page-a".to_string()), Some("page-b".to_string())]
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn list_shares_follows_token_across_empty_intermediate_page() {
+        let (base_url, requested_tokens, handle) = start_paginated_get_server(vec![
+            r#"{
+                "data":[{"share_id":"first","share_url":"https://example/first"}],
+                "next_page_token":"empty-page"
+            }"#,
+            r#"{"data":[],"next_page_token":"last-page"}"#,
+            r#"{"data":[{"share_id":"last","share_url":"https://example/last"}]}"#,
+        ]);
+        let dir = temp_test_dir("list-shares-empty-page");
+        let client = test_client(base_url, dir.join("session.json"));
+
+        let shares = client.list_shares().unwrap();
+        handle.join().unwrap();
+
+        assert_eq!(
+            shares
+                .iter()
+                .map(|share| share.share_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["first", "last"]
+        );
+        assert_eq!(
+            *requested_tokens.lock().unwrap_or_else(|e| e.into_inner()),
+            vec![
+                None,
+                Some("empty-page".to_string()),
+                Some("last-page".to_string())
+            ]
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn list_shares_stops_before_reusing_any_seen_page_token() {
+        let (base_url, requested_tokens, handle) = start_paginated_get_server(vec![
+            r#"{
+                "data":[{"share_id":"root","share_url":"https://example/root"}],
+                "next_page_token":"page-a"
+            }"#,
+            r#"{
+                "data":[{"share_id":"a","share_url":"https://example/a"}],
+                "next_page_token":"page-b"
+            }"#,
+            r#"{
+                "data":[{"share_id":"b","share_url":"https://example/b"}],
+                "next_page_token":"page-a"
+            }"#,
+        ]);
+        let dir = temp_test_dir("list-shares-token-cycle");
+        let client = test_client(base_url, dir.join("session.json"));
+
+        let result = client.list_shares();
+        handle.join().unwrap();
+
+        let shares = result.unwrap();
+        assert_eq!(
+            shares
+                .iter()
+                .map(|share| share.share_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["root", "a", "b"]
+        );
+        assert_eq!(
+            *requested_tokens.lock().unwrap_or_else(|e| e.into_inner()),
+            vec![None, Some("page-a".to_string()), Some("page-b".to_string())]
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn drive_list_response_tolerates_non_numeric_size() {
         // A single entry with an empty/garbage size must not abort the whole
         // listing — it should fall back to size 0.
@@ -940,18 +1741,20 @@ mod tests {
     }
 
     #[test]
-    fn download_to_skips_already_complete_file() {
-        let server = start_mock_download_server(b"hello", false, 1);
+    fn download_to_replaces_unverified_same_size_destination() {
+        // Matching length alone cannot prove that an existing destination is
+        // the requested cloud file.
+        let server = start_mock_download_server(b"hello", false, 2);
         let dir = temp_test_dir("download-complete");
         let dest = dir.join("file.bin");
-        std::fs::write(&dest, b"hello").unwrap();
+        std::fs::write(&dest, b"WRONG").unwrap();
         let client = test_client(server.base_url, dir.join("session.json"));
 
         let total = client.download_to("file", &dest).unwrap();
 
         assert_eq!(total, 5);
         assert_eq!(std::fs::read(&dest).unwrap(), b"hello");
-        assert_eq!(server.download_hits.load(Ordering::SeqCst), 0);
+        assert_eq!(server.download_hits.load(Ordering::SeqCst), 1);
         server.handle.join().unwrap();
         std::fs::remove_dir_all(dir).unwrap();
     }
@@ -980,6 +1783,10 @@ mod tests {
         let dir = temp_test_dir("download-part-resume");
         let dest = dir.join("file.bin");
         std::fs::write(part_path(&dest), b"he").unwrap();
+        let mut identity_path = part_path(&dest).into_os_string();
+        identity_path.push(".meta");
+        let identity_path = std::path::PathBuf::from(identity_path);
+        std::fs::write(&identity_path, r#"{"file_id":"file","expected_size":5}"#).unwrap();
         let client = test_client(server.base_url, dir.join("session.json"));
 
         let total = client.download_to("file", &dest).unwrap();
@@ -987,6 +1794,39 @@ mod tests {
         assert_eq!(total, 5);
         assert_eq!(std::fs::read(&dest).unwrap(), b"hello");
         assert!(!part_path(&dest).exists(), "sidecar must be renamed away");
+        assert!(
+            !identity_path.exists(),
+            "completed download must remove partial identity"
+        );
+        server.handle.join().unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn download_to_preserves_partial_owned_by_different_file() {
+        // A prior download with the same destination must neither contribute
+        // its prefix nor be silently deleted.
+        let server = start_mock_download_server(b"hello", false, 1);
+        let dir = temp_test_dir("download-part-identity");
+        let dest = dir.join("file.bin");
+        std::fs::write(part_path(&dest), b"XX").unwrap();
+        let mut identity_path = part_path(&dest).into_os_string();
+        identity_path.push(".meta");
+        let identity_path = std::path::PathBuf::from(identity_path);
+        let identity = r#"{"file_id":"other-file","expected_size":5}"#;
+        std::fs::write(&identity_path, identity).unwrap();
+        let client = test_client(server.base_url, dir.join("session.json"));
+
+        let err = client.download_to("file", &dest).unwrap_err();
+
+        assert!(
+            format!("{err:#}").contains("belongs to remote file 'other-file'"),
+            "got: {err:#}"
+        );
+        assert_eq!(std::fs::read(part_path(&dest)).unwrap(), b"XX");
+        assert_eq!(std::fs::read_to_string(identity_path).unwrap(), identity);
+        assert!(!dest.exists());
+        assert_eq!(server.download_hits.load(Ordering::SeqCst), 0);
         server.handle.join().unwrap();
         std::fs::remove_dir_all(dir).unwrap();
     }
@@ -1087,6 +1927,378 @@ mod tests {
     }
 
     #[test]
+    fn file_info_surfaces_captcha_refresh_failure() {
+        let body = br#"{"error_code":9,"error":"riskLimited"}"#.to_vec();
+        let (base_url, handle) = start_canned_server(403, "Forbidden", body);
+        let dir = temp_test_dir("file-info-captcha-refresh");
+        let client = test_client(base_url, dir.join("session.json"));
+
+        let err = client.file_info("FID").unwrap_err();
+        let msg = format!("{err:#}");
+
+        assert!(msg.contains("captcha refresh"), "got: {msg}");
+        handle.join().unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn business_error_code_nine_is_not_replayed_as_captcha() {
+        let body =
+            br#"{"error_code":9,"error":"file_move_or_copy_to_cur","error_description":"same parent"}"#
+                .to_vec();
+        let (base_url, handle) = start_canned_server(400, "Bad Request", body);
+        let dir = temp_test_dir("business-code-nine");
+        let client = test_client(base_url, dir.join("session.json"));
+
+        let err = client.file_info("FID").unwrap_err();
+        let msg = format!("{err:#}");
+
+        assert!(msg.contains("file_move_or_copy_to_cur"), "got: {msg}");
+        assert!(!msg.contains("captcha refresh"), "got: {msg}");
+        handle.join().unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn expired_captcha_is_refreshed_before_guarded_request() {
+        let (base_url, requests, handle) = start_captcha_refresh_server();
+        let dir = temp_test_dir("proactive-captcha-refresh");
+        let session_path = dir.join("session.json");
+        let mut client = test_client(base_url.clone(), session_path);
+        client.auth_base_url = base_url;
+        *client
+            .captcha_token
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = "stale-captcha".to_string();
+        client
+            .save_session(&SessionToken {
+                access_token: "test-access".into(),
+                refresh_token: "test-refresh".into(),
+                expires_at_unix: now_unix() + 3600,
+                device_id: "device".into(),
+                captcha_token: "stale-captcha".into(),
+                captcha_expires_at_unix: now_unix() - 1,
+                user_id: "user".into(),
+            })
+            .unwrap();
+
+        client.quota().unwrap();
+        handle.join().unwrap();
+        let requests = requests.lock().unwrap_or_else(|e| e.into_inner());
+
+        assert_eq!(requests.len(), 2, "{requests:#?}");
+        assert!(
+            requests[0].starts_with("POST /v1/shield/captcha/init"),
+            "{requests:#?}"
+        );
+        assert!(
+            requests[1].starts_with("GET /drive/v1/about"),
+            "{requests:#?}"
+        );
+        assert!(
+            requests[1]
+                .to_ascii_lowercase()
+                .contains("x-captcha-token: fresh-captcha"),
+            "{requests:#?}"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    fn captcha_test_client(
+        base_url: String,
+        session_path: std::path::PathBuf,
+        captcha_expiry: i64,
+    ) -> PikPak {
+        let mut client = test_client(base_url.clone(), session_path);
+        client.auth_base_url = base_url;
+        client.device_id = "device".into();
+        client.user_id = "user".into();
+        *client
+            .captcha_token
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = "stale-captcha".into();
+        *client
+            .captcha_expires_at_unix
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = captcha_expiry;
+        client
+            .save_session(&SessionToken {
+                access_token: "test-access".into(),
+                refresh_token: "test-refresh".into(),
+                expires_at_unix: now_unix() + 3600,
+                device_id: "device".into(),
+                captcha_token: "stale-captcha".into(),
+                captcha_expires_at_unix: captcha_expiry,
+                user_id: "user".into(),
+            })
+            .unwrap();
+        client
+    }
+
+    #[test]
+    fn generic_authed_endpoint_refreshes_code_nine_and_retries_once() {
+        let (base_url, requests, handle) =
+            start_reactive_captcha_server(ReactiveCaptchaMode::RetrySucceeds);
+        let dir = temp_test_dir("generic-reactive-captcha");
+        let client = captcha_test_client(
+            base_url,
+            dir.join("session.json"),
+            now_unix().saturating_add(300),
+        );
+
+        let result = client.quota();
+
+        handle.join().unwrap();
+        let requests = requests.lock().unwrap_or_else(|e| e.into_inner());
+        assert!(
+            result.is_ok(),
+            "unexpected error: {:#}",
+            result.unwrap_err()
+        );
+        assert_eq!(requests.len(), 3, "{requests:#?}");
+        assert!(requests[0].starts_with("GET /drive/v1/about"));
+        assert!(requests[1].starts_with("POST /v1/shield/captcha/init"));
+        assert!(requests[2].starts_with("GET /drive/v1/about"));
+        assert!(
+            requests[2]
+                .to_ascii_lowercase()
+                .contains("x-captcha-token: fresh-captcha")
+        );
+        drop(requests);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn generic_authed_endpoint_surfaces_captcha_refresh_failure() {
+        let (base_url, requests, handle) =
+            start_reactive_captcha_server(ReactiveCaptchaMode::RefreshFails);
+        let dir = temp_test_dir("generic-captcha-refresh-failure");
+        let client = captcha_test_client(
+            base_url,
+            dir.join("session.json"),
+            now_unix().saturating_add(300),
+        );
+
+        let result = client.quota();
+
+        handle.join().unwrap();
+        let err = result.unwrap_err();
+        assert!(
+            format!("{err:#}").contains("captcha refresh failed"),
+            "unexpected error: {err:#}"
+        );
+        assert_eq!(requests.lock().unwrap_or_else(|e| e.into_inner()).len(), 2);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn generic_authed_endpoint_stops_after_second_code_nine() {
+        let (base_url, requests, handle) =
+            start_reactive_captcha_server(ReactiveCaptchaMode::RetryStillLimited);
+        let dir = temp_test_dir("generic-second-captcha-code-nine");
+        let client = captcha_test_client(
+            base_url,
+            dir.join("session.json"),
+            now_unix().saturating_add(300),
+        );
+
+        let result = client.quota();
+
+        handle.join().unwrap();
+        let err = result.unwrap_err();
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("quota failed (403 Forbidden)"),
+            "{message}"
+        );
+        assert!(message.contains("riskLimited"), "{message}");
+        assert_eq!(requests.lock().unwrap_or_else(|e| e.into_inner()).len(), 3);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn concurrent_expired_requests_share_one_proactive_captcha_refresh() {
+        const REQUESTS: usize = 4;
+        let (base_url, refresh_count, handle) = start_concurrent_captcha_server(REQUESTS);
+        let dir = temp_test_dir("concurrent-proactive-captcha");
+        let client = Arc::new(captcha_test_client(
+            base_url,
+            dir.join("session.json"),
+            now_unix().saturating_sub(1),
+        ));
+        let barrier = Arc::new(std::sync::Barrier::new(REQUESTS));
+        let mut threads = Vec::new();
+        for _ in 0..REQUESTS {
+            let client = Arc::clone(&client);
+            let barrier = Arc::clone(&barrier);
+            threads.push(std::thread::spawn(move || {
+                barrier.wait();
+                client.quota()
+            }));
+        }
+
+        let results: Vec<_> = threads.into_iter().map(|t| t.join().unwrap()).collect();
+        handle.join().unwrap();
+
+        assert!(results.iter().all(Result::is_ok), "{results:#?}");
+        assert_eq!(refresh_count.load(Ordering::SeqCst), 1);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn empty_captcha_token_is_refreshed_before_authenticated_request() {
+        let (base_url, requests, handle) = start_captcha_refresh_server();
+        let dir = temp_test_dir("empty-proactive-captcha");
+        let session_path = dir.join("session.json");
+        let client = captcha_test_client(base_url, session_path, 0);
+        *client
+            .captcha_token
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = String::new();
+        client
+            .save_session(&SessionToken {
+                access_token: "test-access".into(),
+                refresh_token: "test-refresh".into(),
+                expires_at_unix: now_unix() + 3600,
+                device_id: "device".into(),
+                captcha_token: String::new(),
+                captcha_expires_at_unix: 0,
+                user_id: "user".into(),
+            })
+            .unwrap();
+
+        let result = client.quota();
+
+        handle.join().unwrap();
+        let requests = requests.lock().unwrap_or_else(|e| e.into_inner());
+        assert!(
+            result.is_ok(),
+            "unexpected error: {:#}",
+            result.unwrap_err()
+        );
+        assert_eq!(requests.len(), 2, "{requests:#?}");
+        assert!(requests[0].starts_with("POST /v1/shield/captcha/init"));
+        assert!(requests[1].starts_with("GET /drive/v1/about"));
+        drop(requests);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn access_refresh_preserves_captcha_fields_under_session_lock() {
+        let body = br#"{
+            "access_token":"new-access",
+            "refresh_token":"new-refresh",
+            "expires_in":3600,
+            "sub":"user"
+        }"#
+        .to_vec();
+        let (base_url, handle) = start_canned_server(200, "OK", body);
+        let dir = temp_test_dir("access-captcha-session-race");
+        let session_path = dir.join("session.json");
+        let mut client = test_client(base_url.clone(), session_path);
+        client.auth_base_url = base_url;
+        client.device_id = "device".into();
+        client.user_id = "user".into();
+        let fresh_expiry = now_unix() + 300;
+        client
+            .save_session(&SessionToken {
+                access_token: "old-access".into(),
+                refresh_token: "old-refresh".into(),
+                expires_at_unix: now_unix() - 1,
+                device_id: "device".into(),
+                captcha_token: "new-captcha".into(),
+                captcha_expires_at_unix: fresh_expiry,
+                user_id: "user".into(),
+            })
+            .unwrap();
+
+        assert_eq!(client.refresh_session("old-refresh").unwrap(), "new-access");
+        handle.join().unwrap();
+        let saved = client.load_session().unwrap().unwrap();
+        assert_eq!(saved.access_token, "new-access");
+        assert_eq!(saved.refresh_token, "new-refresh");
+        assert_eq!(saved.captcha_token, "new-captcha");
+        assert_eq!(saved.captcha_expires_at_unix, fresh_expiry);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn separate_clients_honor_the_same_session_file_lock() {
+        let dir = temp_test_dir("cross-client-session-lock");
+        let session_path = dir.join("session.json");
+        let first = Arc::new(test_client(String::new(), session_path.clone()));
+        let second = Arc::new(test_client(String::new(), session_path));
+        first
+            .save_session(&SessionToken {
+                access_token: "before".into(),
+                refresh_token: "refresh".into(),
+                expires_at_unix: now_unix() + 3600,
+                ..Default::default()
+            })
+            .unwrap();
+
+        let file_guard = first.lock_session_file().unwrap();
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let writer = std::thread::spawn(move || {
+            ready_tx.send(()).unwrap();
+            let result = second.update_session(|session| {
+                session.access_token = "after".into();
+            });
+            done_tx.send(result).unwrap();
+        });
+
+        ready_rx.recv().unwrap();
+        assert!(
+            done_rx
+                .recv_timeout(std::time::Duration::from_millis(100))
+                .is_err(),
+            "a separate PikPak instance must wait for the disk lock"
+        );
+        drop(file_guard);
+        done_rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap()
+            .unwrap();
+        writer.join().unwrap();
+        assert_eq!(first.load_session().unwrap().unwrap().access_token, "after");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn concurrent_session_writes_do_not_race_shared_temp_file() {
+        const WRITERS: usize = 32;
+        let dir = temp_test_dir("concurrent-session-writes");
+        let client = Arc::new(test_client(String::new(), dir.join("shared-session.json")));
+        let barrier = Arc::new(std::sync::Barrier::new(WRITERS));
+        let mut threads = Vec::new();
+        for writer in 0..WRITERS {
+            let client = Arc::clone(&client);
+            let barrier = Arc::clone(&barrier);
+            threads.push(std::thread::spawn(move || {
+                let token = SessionToken {
+                    access_token: format!("access-{writer}"),
+                    refresh_token: format!("refresh-{writer}"),
+                    expires_at_unix: now_unix() + 3600,
+                    ..Default::default()
+                };
+                barrier.wait();
+                client.save_session(&token)
+            }));
+        }
+
+        let results: Vec<_> = threads.into_iter().map(|t| t.join().unwrap()).collect();
+
+        assert!(
+            results.iter().all(Result::is_ok),
+            "concurrent save failed: {results:#?}"
+        );
+        let saved = client.load_session().unwrap().unwrap();
+        assert!(saved.access_token.starts_with("access-"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn offline_list_reports_invalid_json() {
         let (base_url, handle) = start_canned_server(200, "OK", b"<html>nope</html>".to_vec());
         let dir = temp_test_dir("offline-list-bad-json");
@@ -1166,6 +2378,30 @@ mod tests {
         assert_eq!(list_hits.load(Ordering::SeqCst), 2);
 
         handle.join().unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn invalidation_during_inflight_listing_cannot_reinsert_stale_cache() {
+        let (base_url, started, release, list_hits, handle) = start_blocking_listing_server();
+        let dir = temp_test_dir("ls-cache-inflight-invalidation");
+        let client = Arc::new(test_client(base_url, dir.join("session.json")));
+        let requesting_client = Arc::clone(&client);
+
+        let request = std::thread::spawn(move || requesting_client.ls_cached("").unwrap());
+        started
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
+        client.clear_ls_cache();
+        release.send(()).unwrap();
+        let first = request.join().unwrap();
+        assert_eq!(first[0].name, "old");
+
+        let second = client.ls_cached("").unwrap();
+        handle.join().unwrap();
+
+        assert_eq!(second[0].name, "new");
+        assert_eq!(list_hits.load(Ordering::SeqCst), 2);
         std::fs::remove_dir_all(dir).unwrap();
     }
 

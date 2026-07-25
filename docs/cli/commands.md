@@ -277,7 +277,7 @@ pikpaktui download [options] -t <local_dir> <path...>
 |------|-------------|
 | `-o`, `--output <file>` | Custom output filename (single file only) |
 | `-t <local_dir>` | Batch mode — download multiple items into `<local_dir>` |
-| `-j`, `--jobs <n>` | Concurrent download threads (default: 1) |
+| `-j`, `--jobs <n>` | Concurrent files within recursive folder downloads (1–16; default: 1) |
 | `-n`, `--dry-run` | Preview without downloading |
 
 **Examples:**
@@ -287,12 +287,12 @@ pikpaktui download "/My Pack/file.txt"                  # to current dir
 pikpaktui download "/My Pack/file.txt" /tmp/file.txt    # to specific path
 pikpaktui download -o output.mp4 "/My Pack/video.mp4"   # custom name
 pikpaktui download "/My Pack/folder"                    # recursive folder
-pikpaktui download -j4 -t ./videos/ /a.mp4 /b.mp4      # 4 concurrent, batch
+pikpaktui download -j 4 "/My Pack/folder"              # up to 4 concurrent files in the folder
 pikpaktui download -n "/My Pack/folder"                 # dry run
 ```
 
 :::callout[Concurrent downloads]{kind="info"}
-`-j` / `--jobs` sets the number of parallel download threads. Values of 2–4 are typical; configurable in `config.toml` as `download_jobs`.
+`-j` / `--jobs` applies to files inside recursive folder downloads. Values of 2–4 are typical; the allowed range is 1–16.
 :::
 
 ---
@@ -329,10 +329,11 @@ If you upload a file that already exists on PikPak (matching hash), the upload c
 
 ## share
 
-Create, list, save, and delete share links.
+Create, browse, list, save, and delete share links.
 
 ```
 pikpaktui share [options] <path...>      # create
+pikpaktui share -b <url> [path]          # browse a share
 pikpaktui share -l                       # list your shares
 pikpaktui share -S <url>                 # save a share to your drive
 pikpaktui share -D <id...>               # delete share(s)
@@ -355,6 +356,13 @@ pikpaktui share -D <id...>               # delete share(s)
 | `-t <path>` | Destination folder in your drive |
 | `-n`, `--dry-run` | Preview without saving |
 
+**Browse options (with `-b` / `--browse`):**
+
+| Flag | Description |
+|------|-------------|
+| `-p`, `--pass-code <code>` | Pass code for a protected share |
+| `-J`, `--json` | JSON output |
+
 **Examples:**
 
 ```bash
@@ -366,6 +374,9 @@ pikpaktui share -J "/My Pack/file.txt"            # JSON output
 
 pikpaktui share -l                                # list all your shares
 pikpaktui share -l -J                             # JSON list
+
+pikpaktui share -b "https://mypikpak.com/s/XXXX"             # browse share root
+pikpaktui share -b -p PO "https://mypikpak.com/s/XXXX" Movies # browse a folder
 
 pikpaktui share -D abc123                         # delete one share
 pikpaktui share -D abc123 def456                  # delete multiple
@@ -388,8 +399,9 @@ pikpaktui offline [options] <url>
 | Flag | Description |
 |------|-------------|
 | `--to`, `-t <path>` | Destination folder in PikPak |
-| `--name`, `-n <name>` | Override the task/file name |
-| `--dry-run` | Preview without creating the task |
+| `--name <name>` | Override the task/file name |
+| `-p`, `--preview` | Show URL/magnet contents without creating a task |
+| `-n`, `--dry-run` | Preview without creating the task |
 
 **Examples:**
 
@@ -397,6 +409,7 @@ pikpaktui offline [options] <url>
 pikpaktui offline "magnet:?xt=urn:btih:abc123..."
 pikpaktui offline --to "/Downloads" "https://example.com/file.zip"
 pikpaktui offline --to "/Downloads" --name "myvideo.mp4" "https://..."
+pikpaktui offline -p "magnet:?xt=..."             # inspect contents
 pikpaktui offline --dry-run "magnet:?xt=..."
 ```
 
@@ -415,6 +428,7 @@ pikpaktui tasks [subcommand] [options] [limit]
 | Subcommand | Description |
 |------------|-------------|
 | `list`, `ls` | List tasks (default when no subcommand given) |
+| `show <id>` | Poll and show one task's latest state |
 | `retry <id>` | Retry a failed task |
 | `delete <id...>`, `rm <id...>` | Delete task(s) |
 
@@ -432,6 +446,7 @@ pikpaktui tasks [subcommand] [options] [limit]
 pikpaktui tasks                             # list up to 50 tasks
 pikpaktui tasks list 10                    # list 10 tasks
 pikpaktui tasks list --json                # JSON output
+pikpaktui tasks show abc12345              # show latest task state
 pikpaktui tasks retry abc12345             # retry a failed task
 pikpaktui tasks delete abc12345            # delete a task
 pikpaktui tasks rm abc12345 def67890       # delete multiple tasks
@@ -487,6 +502,23 @@ pikpaktui untrash -n "file.txt"         # dry run
 :::callout[tip]{kind="info"}
 Match is by exact filename, not by path. If multiple trashed files share the same name, the first match is restored.
 :::
+
+---
+
+## empty
+
+Permanently delete selected trash items, or empty the entire trash.
+
+```
+pikpaktui empty [-n] [-f] <name...>
+pikpaktui empty [-n] [-f] --all
+```
+
+| Flag | Description |
+|------|-------------|
+| `--all`, `-r`, `--recursive`, `/` | Empty the entire trash |
+| `-f`, `--force` | Skip confirmation when emptying all trash |
+| `-n`, `--dry-run` | Preview without deleting |
 
 ---
 
@@ -573,7 +605,7 @@ pikpaktui events --json
 
 ## login
 
-Log in to PikPak and save credentials to `~/.config/pikpaktui/login.yaml`.
+Log in to PikPak and save credentials to `~/.config/pikpaktui/login.toml`.
 
 ```
 pikpaktui login [options]
@@ -632,6 +664,16 @@ pikpaktui vip
 
 ---
 
+## whoami
+
+Show the identity associated with the current session.
+
+```
+pikpaktui whoami [-J|--json]
+```
+
+---
+
 ## update
 
 Check for updates and self-update the binary from GitHub releases.
@@ -646,7 +688,7 @@ Downloads the latest release for your platform and replaces the current binary i
 
 ## completions
 
-Generate shell completion scripts. Currently only **Zsh** is supported.
+Generate shell completion scripts for Bash, Zsh, Fish, and PowerShell.
 
 ```
 pikpaktui completions <shell>
@@ -658,6 +700,9 @@ pikpaktui completions <shell>
 pikpaktui completions zsh                            # print to stdout
 pikpaktui completions zsh > ~/.zfunc/_pikpaktui      # save to file
 eval "$(pikpaktui completions zsh)"                  # load in current shell
+pikpaktui completions bash > ~/.local/share/bash-completion/completions/pikpaktui
+pikpaktui completions fish > ~/.config/fish/completions/pikpaktui.fish
+pikpaktui completions powershell | Out-String | Invoke-Expression
 ```
 
 See [Shell Completions](/guide/shell-completions) for full setup instructions.

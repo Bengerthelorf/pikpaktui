@@ -2,6 +2,7 @@
 name = "pikpaktui"
 version = "0.0.57"
 edition = "2024"
+rust-version = "1.90"
 description = "A TUI and CLI client for PikPak cloud storage"
 license = "Apache-2.0"
 repository = "https://github.com/Bengerthelorf/pikpaktui"

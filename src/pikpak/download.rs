@@ -2,7 +2,10 @@ use anyhow::{Context, Result, anyhow};
 use std::fs;
 use std::io;
 use std::io::Read as _;
+use std::io::Write as _;
 use std::path::Path;
+
+use serde::{Deserialize, Serialize};
 
 use super::{Entry, EntryKind, PikPak, sanitize_filename};
 
@@ -12,6 +15,202 @@ pub(crate) fn part_path(dest: &Path) -> std::path::PathBuf {
     let mut os = dest.as_os_str().to_owned();
     os.push(".part");
     std::path::PathBuf::from(os)
+}
+
+fn part_identity_path(dest: &Path) -> std::path::PathBuf {
+    let mut os = part_path(dest).into_os_string();
+    os.push(".meta");
+    std::path::PathBuf::from(os)
+}
+
+#[derive(Debug, PartialEq, Eq, Deserialize, Serialize)]
+struct PartialIdentity {
+    file_id: String,
+    expected_size: u64,
+}
+
+fn parse_content_range(value: &str) -> Result<(u64, u64)> {
+    let value = value
+        .strip_prefix("bytes ")
+        .ok_or_else(|| anyhow!("invalid Content-Range unit: '{value}'"))?;
+    let (bounds, _) = value
+        .split_once('/')
+        .ok_or_else(|| anyhow!("invalid Content-Range: '{value}'"))?;
+    let (start, end) = bounds
+        .split_once('-')
+        .ok_or_else(|| anyhow!("invalid Content-Range bounds: '{bounds}'"))?;
+    let start = start
+        .parse::<u64>()
+        .with_context(|| format!("invalid Content-Range start: '{start}'"))?;
+    let end = end
+        .parse::<u64>()
+        .with_context(|| format!("invalid Content-Range end: '{end}'"))?;
+    if end < start {
+        return Err(anyhow!(
+            "invalid Content-Range bounds: end {end} precedes start {start}"
+        ));
+    }
+    Ok((start, end))
+}
+
+/// Prepare a resumable sidecar that is owned by exactly one remote file.
+///
+/// Unknown or mismatched sidecars are never deleted: `.part` and
+/// `.part.meta` are ordinary names a user may already own. Automatic callers
+/// can select another destination, while an explicit destination gets a clear
+/// conflict instead of silent local data loss.
+pub(crate) fn prepare_partial_download(
+    dest: &Path,
+    file_id: &str,
+    expected_size: u64,
+) -> Result<(std::path::PathBuf, u64)> {
+    let part = part_path(dest);
+    let identity_path = part_identity_path(dest);
+    let wanted = PartialIdentity {
+        file_id: file_id.to_string(),
+        expected_size,
+    };
+    let part_metadata = match fs::symlink_metadata(&part) {
+        Ok(metadata) => {
+            if !metadata.file_type().is_file() {
+                return Err(anyhow!(
+                    "partial download path '{}' is not a regular file; move or remove it first",
+                    part.display()
+                ));
+            }
+            Some(metadata)
+        }
+        Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+        Err(e) => {
+            return Err(e)
+                .with_context(|| format!("cannot inspect partial download '{}'", part.display()));
+        }
+    };
+
+    let identity = match fs::symlink_metadata(&identity_path) {
+        Ok(metadata) => {
+            if !metadata.file_type().is_file() {
+                return Err(anyhow!(
+                    "partial download identity '{}' is not a regular file; move or remove it first",
+                    identity_path.display()
+                ));
+            }
+            let raw = fs::read(&identity_path).with_context(|| {
+                format!(
+                    "cannot read partial download identity '{}'",
+                    identity_path.display()
+                )
+            })?;
+            Some(
+                serde_json::from_slice::<PartialIdentity>(&raw).with_context(|| {
+                    format!(
+                        "partial download identity '{}' is malformed; move or remove it first",
+                        identity_path.display()
+                    )
+                })?,
+            )
+        }
+        Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+        Err(e) => {
+            return Err(e).with_context(|| {
+                format!(
+                    "cannot inspect partial download identity '{}'",
+                    identity_path.display()
+                )
+            });
+        }
+    };
+
+    match identity {
+        Some(existing) if existing != wanted => {
+            return Err(anyhow!(
+                "partial download '{}' belongs to remote file '{}' (expected '{}'); move or remove its .part/.meta files first",
+                part.display(),
+                existing.file_id,
+                file_id
+            ));
+        }
+        Some(_) => {}
+        None if part_metadata.is_some() => {
+            return Err(anyhow!(
+                "partial download '{}' has no valid identity; move or remove it first",
+                part.display()
+            ));
+        }
+        None => {
+            let encoded = serde_json::to_vec(&wanted)
+                .context("failed to encode partial download identity")?;
+            let mut identity_file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&identity_path)
+                .with_context(|| {
+                    format!(
+                        "cannot claim partial download identity '{}'",
+                        identity_path.display()
+                    )
+                })?;
+            if let Err(e) = identity_file.write_all(&encoded) {
+                drop(identity_file);
+                let _ = fs::remove_file(&identity_path);
+                return Err(e).with_context(|| {
+                    format!(
+                        "cannot write partial download identity '{}'",
+                        identity_path.display()
+                    )
+                });
+            }
+        }
+    }
+
+    let size = part_metadata.map(|metadata| metadata.len()).unwrap_or(0);
+    if expected_size > 0 && size > expected_size {
+        return Err(anyhow!(
+            "partial download '{}' is larger than the expected {} bytes; move or remove it first",
+            part.display(),
+            expected_size
+        ));
+    }
+    Ok((part, size))
+}
+
+/// Move a complete partial into place and remove its resumable identity.
+pub(crate) fn finish_partial_download(dest: &Path, part: &Path) -> Result<()> {
+    let identity_path = part_identity_path(dest);
+    match fs::rename(part, dest) {
+        Ok(()) => {}
+        Err(first) if dest.exists() => {
+            fs::remove_file(dest).with_context(|| {
+                format!("cannot replace existing download '{}'", dest.display())
+            })?;
+            fs::rename(part, dest).with_context(|| {
+                format!(
+                    "downloaded but could not move '{}' into place after: {}",
+                    part.display(),
+                    first
+                )
+            })?;
+        }
+        Err(e) => {
+            return Err(e).with_context(|| {
+                format!(
+                    "downloaded but could not move '{}' into place",
+                    part.display()
+                )
+            });
+        }
+    }
+
+    match fs::remove_file(&identity_path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e).with_context(|| {
+            format!(
+                "cannot remove partial download identity '{}'",
+                identity_path.display()
+            )
+        }),
+    }
 }
 
 impl PikPak {
@@ -65,7 +264,19 @@ impl PikPak {
         }
 
         let start_offset = if status == reqwest::StatusCode::PARTIAL_CONTENT {
-            existing_size
+            let value = response
+                .headers()
+                .get(reqwest::header::CONTENT_RANGE)
+                .ok_or_else(|| anyhow!("partial download response is missing Content-Range"))?
+                .to_str()
+                .context("partial download Content-Range is not valid text")?;
+            let (actual_start, _) = parse_content_range(value)?;
+            if actual_start != existing_size {
+                return Err(anyhow!(
+                    "partial download started at byte {actual_start}, expected {existing_size}"
+                ));
+            }
+            actual_start
         } else {
             0
         };
@@ -80,14 +291,11 @@ impl PikPak {
             .to_string();
         let total_size = info.file_size();
 
-        // The finished name is only ever a verified complete file; partial
-        // data lives in a .part sidecar, so an unrelated same-named local
-        // file can never be mistaken for a resumable partial.
-        let existing_size = dest.metadata().map(|m| m.len()).unwrap_or(0);
-        if total_size > 0 && existing_size == total_size {
-            return Ok(existing_size);
+        let (part, initial_part_size) = prepare_partial_download(dest, file_id, total_size)?;
+        if total_size > 0 && initial_part_size == total_size {
+            finish_partial_download(dest, &part)?;
+            return Ok(total_size);
         }
-        let part = part_path(dest);
 
         let mut renewed = false;
         let written = loop {
@@ -132,12 +340,7 @@ impl PikPak {
             }
         };
 
-        fs::rename(&part, dest).with_context(|| {
-            format!(
-                "downloaded but could not move '{}' into place",
-                part.display()
-            )
-        })?;
+        finish_partial_download(dest, &part)?;
         Ok(written)
     }
 
@@ -265,12 +468,6 @@ impl PikPak {
                         // the whole body and serialize every worker.
                         let msg = rx.lock().unwrap_or_else(|e| e.into_inner()).recv();
                         let Ok((entry, dest)) = msg else { break };
-                        let local_size = dest.metadata().map(|m| m.len()).unwrap_or(0);
-                        if local_size > 0 && local_size == entry.size {
-                            println!("  skipping '{}' (already complete)", dest.display());
-                            ok.fetch_add(1, Ordering::Relaxed);
-                            continue;
-                        }
                         println!("  {}", dest.display());
                         match self.download_to(&entry.id, &dest) {
                             Ok(_) => {
@@ -303,5 +500,82 @@ impl PikPak {
         }
 
         Ok((total_ok, total_failed))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_dir(label: &str) -> std::path::PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir =
+            std::env::temp_dir().join(format!("pikpaktui-{label}-{}-{unique}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn unowned_partial_is_never_deleted_or_claimed() {
+        let dir = temp_dir("unowned-partial");
+        let dest = dir.join("movie");
+        let part = part_path(&dest);
+        fs::write(&part, b"user data").unwrap();
+
+        let err = prepare_partial_download(&dest, "remote", 100).unwrap_err();
+
+        assert!(format!("{err:#}").contains("has no valid identity"));
+        assert_eq!(fs::read(&part).unwrap(), b"user data");
+        assert!(!part_identity_path(&dest).exists());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn non_file_identity_cannot_cause_partial_deletion() {
+        let dir = temp_dir("identity-directory");
+        let dest = dir.join("movie");
+        let part = part_path(&dest);
+        let identity = part_identity_path(&dest);
+        fs::write(&part, b"user data").unwrap();
+        fs::create_dir(&identity).unwrap();
+
+        let err = prepare_partial_download(&dest, "remote", 100).unwrap_err();
+
+        assert!(format!("{err:#}").contains("is not a regular file"));
+        assert_eq!(fs::read(&part).unwrap(), b"user data");
+        assert!(identity.is_dir());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn content_range_must_report_the_requested_start() {
+        assert_eq!(parse_content_range("bytes 42-99/100").unwrap(), (42, 99));
+        assert!(parse_content_range("items 42-99/100").is_err());
+        assert!(parse_content_range("bytes 100-42/101").is_err());
+        assert!(parse_content_range("bytes nope-99/100").is_err());
+    }
+
+    #[test]
+    fn failed_final_move_keeps_partial_identity_for_retry() {
+        let dir = temp_dir("partial-finalize");
+        let dest = dir.join("occupied");
+        fs::create_dir(&dest).unwrap();
+        let (part, _) = prepare_partial_download(&dest, "file-id", 5).unwrap();
+        fs::write(&part, b"hello").unwrap();
+        let identity = part_identity_path(&dest);
+
+        let result = finish_partial_download(&dest, &part);
+
+        assert!(result.is_err());
+        assert!(part.exists(), "complete partial should remain retryable");
+        assert!(
+            identity.exists(),
+            "partial identity should remain for retry"
+        );
+        fs::remove_dir_all(dir).unwrap();
     }
 }

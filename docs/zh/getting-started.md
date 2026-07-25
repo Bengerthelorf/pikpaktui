@@ -6,7 +6,7 @@ locale: zh
 ---
 
 
-pikpaktui 是一个 [PikPak](https://mypikpak.com) 云存储的终端客户端，提供交互式 TUI 和包含 26 条子命令的完整 CLI。由纯 Rust 编写，无 OpenSSL，无 C 依赖。
+pikpaktui 是一个 [PikPak](https://mypikpak.com) 云存储的终端客户端，提供交互式 TUI 和包含 28 条子命令的完整 CLI。由纯 Rust 编写，无 OpenSSL，无 C 依赖。
 
 ## 系统要求
 
@@ -48,7 +48,7 @@ cargo build --release
 pikpaktui
 ```
 
-首次运行会显示登录表单，输入 PikPak 邮箱和密码。登录成功后，凭据保存至 `~/.config/pikpaktui/login.yaml`，会话保存至 `~/.config/pikpaktui/session.json`，之后无需再次登录（会自动刷新）。
+首次运行会显示登录表单，输入 PikPak 邮箱和密码。登录成功后，凭据保存至 `~/.config/pikpaktui/login.toml`，会话保存至 `~/.config/pikpaktui/session.json`，之后无需再次登录（会自动刷新）。
 
 ![TUI 主界面](/images/main.jpeg)
 
@@ -130,7 +130,7 @@ pikpaktui rm -rf "/My Pack/old-folder"    # 永久删除
 
 # 传输
 pikpaktui download "/My Pack/video.mp4"
-pikpaktui download -j4 -t ./videos/ /a.mp4 /b.mp4  # 4 并发
+pikpaktui download -j 4 "/My Pack/Movies"  # 文件夹内最多 4 个文件并发
 pikpaktui upload ./notes.txt "/My Pack"
 
 # 离线下载
@@ -139,7 +139,7 @@ pikpaktui offline --to "/Downloads" "https://example.com/file.zip"
 ```
 
 :::callout[Dry run 预览]{kind="info"}
-所有修改数据的命令都支持 `-n` / `--dry-run`——会解析路径并展示操作计划，不做任何实际修改。
+多数文件与传输命令支持 `-n` / `--dry-run`；使用前请查看对应命令的参数说明。
 :::
 
 ## 通过 CLI 登录
@@ -169,5 +169,5 @@ PIKPAK_USER=you@example.com PIKPAK_PASS=yourpassword pikpaktui login
 
 - [TUI 指南](/zh/guide/tui) — 所有视图的完整快捷键参考
 - [配置](/zh/guide/configuration) — 自定义配色、字体、播放器等
-- [CLI 命令参考](/zh/cli/commands) — 全部 27 条命令详解
+- [CLI 命令参考](/zh/cli/commands) — 全部 28 条命令详解
 - [Shell 补全](/zh/guide/shell-completions) — 在 zsh 中 Tab 补全云端路径

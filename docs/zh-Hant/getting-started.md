@@ -6,7 +6,7 @@ locale: zh-Hant
 ---
 
 
-pikpaktui 是一個 [PikPak](https://mypikpak.com) 雲端儲存的終端機客戶端，提供互動式 TUI 與包含 27 條子指令的完整 CLI。由純 Rust 撰寫，無 OpenSSL，無 C 相依。
+pikpaktui 是一個 [PikPak](https://mypikpak.com) 雲端儲存的終端機客戶端，提供互動式 TUI 與包含 28 條子指令的完整 CLI。由純 Rust 撰寫，無 OpenSSL，無 C 相依。
 
 ## 系統需求
 
@@ -48,7 +48,7 @@ cargo build --release
 pikpaktui
 ```
 
-首次執行會顯示登入表單，輸入 PikPak 電子郵件與密碼。登入成功後，憑證儲存至 `~/.config/pikpaktui/login.yaml`，工作階段儲存至 `~/.config/pikpaktui/session.json`，之後無需再次登入（會自動更新）。
+首次執行會顯示登入表單，輸入 PikPak 電子郵件與密碼。登入成功後，憑證儲存至 `~/.config/pikpaktui/login.toml`，工作階段儲存至 `~/.config/pikpaktui/session.json`，之後無需再次登入（會自動更新）。
 
 ![TUI 主畫面](/images/main.jpeg)
 
@@ -130,7 +130,7 @@ pikpaktui rm -rf "/My Pack/old-folder"    # 永久刪除
 
 # 傳輸
 pikpaktui download "/My Pack/video.mp4"
-pikpaktui download -j4 -t ./videos/ /a.mp4 /b.mp4  # 4 並行
+pikpaktui download -j 4 "/My Pack/Movies"  # 資料夾內最多 4 個檔案並行
 pikpaktui upload ./notes.txt "/My Pack"
 
 # 離線下載
@@ -139,7 +139,7 @@ pikpaktui offline --to "/Downloads" "https://example.com/file.zip"
 ```
 
 :::callout[Dry run 預覽]{kind="info"}
-所有修改資料的指令均支援 `-n` / `--dry-run`——解析路徑後顯示操作計畫，不做任何實際變更。
+多數檔案與傳輸指令支援 `-n` / `--dry-run`；使用前請查看個別指令的參數說明。
 :::
 
 ## 透過 CLI 登入
@@ -169,5 +169,5 @@ PIKPAK_USER=you@example.com PIKPAK_PASS=yourpassword pikpaktui login
 
 - [TUI 指南](/zh-Hant/guide/tui) — 所有檢視的完整快捷鍵參考
 - [設定](/zh-Hant/guide/configuration) — 自訂配色、字型、播放器等
-- [CLI 指令參考](/zh-Hant/cli/commands) — 全部 27 條指令詳解
+- [CLI 指令參考](/zh-Hant/cli/commands) — 全部 28 條指令詳解
 - [Shell 補全](/zh-Hant/guide/shell-completions) — 在 zsh 中 Tab 補全雲端路徑

@@ -39,6 +39,28 @@ pikpaktui completions zsh > \
 搭配 [fzf-tab](https://github.com/Aloxaf/fzf-tab) 使用效果更佳——輸入路徑前綴後按 Tab 會彈出可模糊搜尋的雲端檔案清單。
 :::
 
+## Bash
+
+```bash
+mkdir -p ~/.local/share/bash-completion/completions
+pikpaktui completions bash > ~/.local/share/bash-completion/completions/pikpaktui
+# 或僅為目前 Shell 載入：
+eval "$(pikpaktui completions bash)"
+```
+
+## Fish
+
+```fish
+mkdir -p ~/.config/fish/completions
+pikpaktui completions fish > ~/.config/fish/completions/pikpaktui.fish
+```
+
+## PowerShell
+
+```powershell
+pikpaktui completions powershell | Out-String | Invoke-Expression
+```
+
 ## 補全涵蓋範圍
 
 | 情境 | 補全內容 |
@@ -55,14 +77,14 @@ pikpaktui completions zsh > \
 | `pikpaktui upload -t /dst<Tab>` | `-t` 目標的雲端路徑 |
 | `pikpaktui share /path<Tab>` | 雲端路徑補全 |
 | `pikpaktui offline --to /dst<Tab>` | `--to` 目標的雲端路徑 |
-| `pikpaktui tasks <Tab>` | `list`、`ls`、`retry`、`delete`、`rm` |
-| `pikpaktui rm -<Tab>` | `-r`、`-f`、`-rf`、`-fr` |
-| `pikpaktui mkdir -<Tab>` | `-p` |
+| `pikpaktui tasks <Tab>` | `list`、`ls`、`show`、`retry`、`delete`、`rm` |
+| `pikpaktui rm -<Tab>` | 遞迴、強制刪除與 dry-run 參數 |
+| `pikpaktui mkdir -<Tab>` | `-p`、`-n`、`--dry-run` |
 | `pikpaktui info /path<Tab>` | 雲端路徑 |
 | `pikpaktui cat /path<Tab>` | 雲端路徑 |
 | `pikpaktui play /path<Tab>` | 雲端路徑 |
 | `pikpaktui rename /path<Tab>` | 雲端路徑 |
-| `pikpaktui completions <Tab>` | `zsh` |
+| `pikpaktui completions <Tab>` | `bash`、`zsh`、`fish`、`powershell` |
 
 ## 雲端路徑補全原理
 
@@ -80,4 +102,4 @@ pikpaktui completions zsh > \
 
 ## 支援的 Shell
 
-目前僅支援 **Zsh**，尚不支援 Fish 和 Bash。
+目前支援 **Bash、Zsh、Fish 與 PowerShell**。

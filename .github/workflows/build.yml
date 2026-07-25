@@ -180,10 +180,53 @@ jobs:
           name: ${{ matrix.name }}
           path: dist/*
 
+  release-guard:
+    name: Validate Release Tag
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify tag, package version, and main ancestry
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TAG="${GITHUB_REF_NAME}"
+          if [[ ! "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            echo "::error::Release tag must be an exact vX.Y.Z semantic version: $TAG"
+            exit 1
+          fi
+          TAG_VERSION="${BASH_REMATCH[1]}"
+
+          MANIFEST_VERSION=$(awk -F '"' '/^version = "/ { print $2; exit }' Cargo.toml)
+          LOCK_VERSION=$(
+            awk -F '"' \
+              '$0 == "name = \"pikpaktui\"" { getline; if ($0 ~ /^version = "/) { print $2; exit } }' \
+              Cargo.lock
+          )
+          if [[ -z "$MANIFEST_VERSION" || -z "$LOCK_VERSION" ]]; then
+            echo "::error::Could not read the pikpaktui version from Cargo.toml and Cargo.lock."
+            exit 1
+          fi
+          if [[ "$TAG_VERSION" != "$MANIFEST_VERSION" || "$TAG_VERSION" != "$LOCK_VERSION" ]]; then
+            echo "::error::Version mismatch: tag=$TAG_VERSION Cargo.toml=$MANIFEST_VERSION Cargo.lock=$LOCK_VERSION"
+            exit 1
+          fi
+
+          git fetch --quiet origin "+refs/heads/main:refs/remotes/origin/main"
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" "refs/remotes/origin/main"; then
+            echo "::error::Release commit $GITHUB_SHA is not part of origin/main."
+            exit 1
+          fi
+
   release:
     name: Create Release
     runs-on: ubuntu-latest
-    needs: build
+    needs: [build, release-guard]
     if: startsWith(github.ref, 'refs/tags/')
     permissions:
       contents: write
@@ -208,6 +251,7 @@ jobs:
             if ls *.exe 1>/dev/null 2>&1; then
               zip "../${name}.zip" pikpaktui.exe
             else
+              chmod +x pikpaktui
               tar czf "../${name}.tar.gz" pikpaktui
             fi
             cd ..
@@ -294,9 +338,8 @@ jobs:
   publish-crate:
     name: Publish to crates.io
     runs-on: ubuntu-latest
-    needs: test
+    needs: [release, release-guard]
     if: startsWith(github.ref, 'refs/tags/')
-    continue-on-error: true
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -313,7 +356,7 @@ jobs:
   update-tap:
     name: Update Homebrew Formula
     runs-on: ubuntu-latest
-    needs: release
+    needs: [release, release-guard]
     if: startsWith(github.ref, 'refs/tags/')
     steps:
       - name: Checkout
@@ -331,18 +374,21 @@ jobs:
           VERSION=${{ steps.release.outputs.VERSION }}
           URL_ARM_MAC="https://github.com/Bengerthelorf/pikpaktui/releases/download/${VERSION}/pikpaktui-aarch64-macos.tar.gz"
           URL_INTEL_MAC="https://github.com/Bengerthelorf/pikpaktui/releases/download/${VERSION}/pikpaktui-x86_64-macos.tar.gz"
-          URL_LINUX="https://github.com/Bengerthelorf/pikpaktui/releases/download/${VERSION}/pikpaktui-x86_64-linux.tar.gz"
+          URL_ARM_LINUX="https://github.com/Bengerthelorf/pikpaktui/releases/download/${VERSION}/pikpaktui-aarch64-linux.tar.gz"
+          URL_INTEL_LINUX="https://github.com/Bengerthelorf/pikpaktui/releases/download/${VERSION}/pikpaktui-x86_64-linux.tar.gz"
 
           wget -q -O pikpaktui-aarch64-macos.tar.gz "$URL_ARM_MAC"
           wget -q -O pikpaktui-x86_64-macos.tar.gz "$URL_INTEL_MAC"
-          wget -q -O pikpaktui-x86_64-linux.tar.gz "$URL_LINUX"
+          wget -q -O pikpaktui-aarch64-linux.tar.gz "$URL_ARM_LINUX"
+          wget -q -O pikpaktui-x86_64-linux.tar.gz "$URL_INTEL_LINUX"
 
       - name: Calculate SHA256
         id: shasum
         run: |
           echo "SHA_ARM_MAC=$(sha256sum pikpaktui-aarch64-macos.tar.gz | cut -d ' ' -f 1)" >> $GITHUB_OUTPUT
           echo "SHA_INTEL_MAC=$(sha256sum pikpaktui-x86_64-macos.tar.gz | cut -d ' ' -f 1)" >> $GITHUB_OUTPUT
-          echo "SHA_LINUX=$(sha256sum pikpaktui-x86_64-linux.tar.gz | cut -d ' ' -f 1)" >> $GITHUB_OUTPUT
+          echo "SHA_ARM_LINUX=$(sha256sum pikpaktui-aarch64-linux.tar.gz | cut -d ' ' -f 1)" >> $GITHUB_OUTPUT
+          echo "SHA_INTEL_LINUX=$(sha256sum pikpaktui-x86_64-linux.tar.gz | cut -d ' ' -f 1)" >> $GITHUB_OUTPUT
 
       - name: Checkout Tap Repository
         uses: actions/checkout@v4
@@ -371,8 +417,13 @@ jobs:
                 sha256 "${{ steps.shasum.outputs.SHA_INTEL_MAC }}"
               end
             elsif OS.linux?
-              url "https://github.com/Bengerthelorf/pikpaktui/releases/download/${{ steps.release.outputs.VERSION }}/pikpaktui-x86_64-linux.tar.gz"
-              sha256 "${{ steps.shasum.outputs.SHA_LINUX }}"
+              if Hardware::CPU.arm?
+                url "https://github.com/Bengerthelorf/pikpaktui/releases/download/${{ steps.release.outputs.VERSION }}/pikpaktui-aarch64-linux.tar.gz"
+                sha256 "${{ steps.shasum.outputs.SHA_ARM_LINUX }}"
+              else
+                url "https://github.com/Bengerthelorf/pikpaktui/releases/download/${{ steps.release.outputs.VERSION }}/pikpaktui-x86_64-linux.tar.gz"
+                sha256 "${{ steps.shasum.outputs.SHA_INTEL_LINUX }}"
+              end
             end
 
             def install

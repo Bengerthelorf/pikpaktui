@@ -12,8 +12,8 @@ use super::completion::PathInput;
 use super::download::{DownloadTask, TaskStatus};
 use super::local_completion::LocalPathInput;
 use super::{
-    App, InputMode, LoginField, OpResult, PickerState, PlayOption, PreviewState, handle_text_input,
-    widgets,
+    App, AsyncRequestKind, InputMode, LoginField, OpResult, PickerState, PlayOption, PreviewState,
+    handle_text_input, widgets,
 };
 
 /// Index of the last selectable Settings row. MUST match the item layout in
@@ -50,8 +50,34 @@ enum PathInputContext {
 impl App {
     pub(super) fn handle_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> Result<bool> {
         if self.show_help_sheet {
-            self.show_help_sheet = false;
+            let can_scroll = self.help_scroll_max.get() > 0;
+            match code {
+                KeyCode::Down | KeyCode::Char('j') if can_scroll => {
+                    self.help_scroll = (self.help_scroll + 1).min(self.help_scroll_max.get());
+                }
+                KeyCode::Up | KeyCode::Char('k') if can_scroll => {
+                    self.help_scroll = self.help_scroll.saturating_sub(1);
+                }
+                KeyCode::PageDown if can_scroll => {
+                    self.help_scroll = (self.help_scroll + 5).min(self.help_scroll_max.get());
+                }
+                KeyCode::PageUp if can_scroll => {
+                    self.help_scroll = self.help_scroll.saturating_sub(5);
+                }
+                KeyCode::Home if can_scroll => self.help_scroll = 0,
+                KeyCode::End if can_scroll => self.help_scroll = self.help_scroll_max.get(),
+                _ => {
+                    self.show_help_sheet = false;
+                    self.help_scroll = 0;
+                }
+            }
             return Ok(false);
+        }
+
+        // A pending play/goto response is only allowed to open its modal while
+        // the user has not performed another action in the meantime.
+        if !matches!(&self.input, InputMode::InfoLoading) {
+            self.invalidate_modal_request();
         }
 
         if code == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL) {
@@ -205,10 +231,13 @@ impl App {
                         let q = query.trim().to_string();
                         if !q.is_empty() {
                             self.loading = true;
+                            let request =
+                                self.begin_modal_request(AsyncRequestKind::GotoPath, q.clone());
                             let client = Arc::clone(&self.client);
                             let tx = self.result_tx.clone();
                             std::thread::spawn(move || {
-                                let _ = tx.send(OpResult::GotoPath(client.resolve_path_nav(&q)));
+                                let _ = tx
+                                    .send(OpResult::GotoPath(request, client.resolve_path_nav(&q)));
                             });
                         }
                     }
@@ -478,6 +507,7 @@ impl App {
             }
             InputMode::InfoLoading => {
                 if code == KeyCode::Esc {
+                    self.invalidate_modal_request();
                     if !self.trash_entries.is_empty() {
                         self.input = InputMode::TrashView {
                             entries: std::mem::take(&mut self.trash_entries),
@@ -688,17 +718,15 @@ impl App {
                         self.clear_preview();
 
                         if let Some(children) = cached_children {
+                            self.invalidate_main_listing();
+                            self.finish_loading();
                             self.entries = children;
                             self.push_log(format!("Refreshed {}", self.current_path_display()));
                             self.on_cursor_move();
                         } else {
                             self.loading = true;
-                            let client = Arc::clone(&self.client);
-                            let tx = self.result_tx.clone();
                             let fid = self.current_folder_id.clone();
-                            std::thread::spawn(move || {
-                                let _ = tx.send(OpResult::Ls(client.ls(&fid)));
-                            });
+                            self.request_main_listing(fid);
                         }
                     } else if entry.kind == EntryKind::File
                         && theme::categorize(&entry) == theme::FileCategory::Video
@@ -707,8 +735,9 @@ impl App {
                         let client = Arc::clone(&self.client);
                         let tx = self.result_tx.clone();
                         let eid = entry.id.clone();
+                        let request = self.begin_modal_request(AsyncRequestKind::Play, eid.clone());
                         std::thread::spawn(move || {
-                            let _ = tx.send(OpResult::PlayInfo(client.file_info(&eid)));
+                            let _ = tx.send(OpResult::PlayInfo(request, client.file_info(&eid)));
                         });
                     }
                 }
@@ -716,6 +745,8 @@ impl App {
             KeyCode::Backspace => {
                 if let Some((parent_id, _)) = self.breadcrumb.pop() {
                     let leaving_id = std::mem::replace(&mut self.current_folder_id, parent_id);
+                    self.invalidate_main_listing();
+                    self.finish_loading();
                     let old_entries = std::mem::replace(
                         &mut self.entries,
                         std::mem::take(&mut self.parent_entries),
@@ -784,6 +815,7 @@ impl App {
             }
             KeyCode::Char('h') => {
                 self.show_help_sheet = true;
+                self.help_scroll = 0;
             }
             KeyCode::Char('a') => {
                 if let Some(entry) = self.current_entry().cloned() {
@@ -874,6 +906,8 @@ impl App {
                     let client = Arc::clone(&self.client);
                     let tx = self.result_tx.clone();
                     let eid = entry.id.clone();
+                    let request =
+                        self.begin_modal_request(AsyncRequestKind::PlayPicker, eid.clone());
                     std::thread::spawn(move || {
                         let result = client.file_info(&eid);
                         let _ = tx.send(match result {
@@ -921,9 +955,9 @@ impl App {
                                         });
                                     }
                                 }
-                                OpResult::PlayPickerInfo(Ok((info, options)))
+                                OpResult::PlayPickerInfo(request, Ok((info, options)))
                             }
-                            Err(e) => OpResult::PlayPickerInfo(Err(e)),
+                            Err(e) => OpResult::PlayPickerInfo(request, Err(e)),
                         });
                     });
                 }
@@ -939,10 +973,12 @@ impl App {
                         let client = Arc::clone(&self.client);
                         let tx = self.result_tx.clone();
                         let eid = entry.id.clone();
+                        let request =
+                            self.begin_modal_request(AsyncRequestKind::FilePreview, eid.clone());
                         let max_bytes = self.config.preview_max_size;
                         std::thread::spawn(move || {
                             let _ = tx.send(OpResult::PreviewText(
-                                eid.clone(),
+                                request,
                                 client.fetch_text_preview(&eid, max_bytes),
                             ));
                         });
@@ -1011,11 +1047,12 @@ impl App {
         match code {
             KeyCode::Esc => {
                 if !input.candidates.is_empty() {
-                    input.candidates.clear();
-                    input.candidate_idx = None;
-                    input.completion_base.clear();
+                    input.clear_completion();
                     PathInputKeyResult::Updated
                 } else {
+                    // Closing the dialog also invalidates any in-flight
+                    // completion result without requiring a second Esc.
+                    input.pending_request_id = None;
                     PathInputKeyResult::Cancelled
                 }
             }
@@ -1039,16 +1076,12 @@ impl App {
             }
             KeyCode::Backspace => {
                 input.value.pop();
-                input.candidates.clear();
-                input.candidate_idx = None;
-                input.completion_base.clear();
+                input.clear_completion();
                 PathInputKeyResult::Updated
             }
             KeyCode::Char(c) => {
                 input.value.push(c);
-                input.candidates.clear();
-                input.candidate_idx = None;
-                input.completion_base.clear();
+                input.clear_completion();
                 PathInputKeyResult::Updated
             }
             _ => PathInputKeyResult::Updated,
@@ -1129,9 +1162,10 @@ impl App {
     fn build_picker_state(&mut self) -> Option<PickerState> {
         let folder_id = self.current_folder_id.clone();
         let breadcrumb = self.breadcrumb.clone();
-        self.spawn_picker_ls(folder_id.clone());
+        let listing_request_id = self.spawn_picker_ls(folder_id.clone());
         Some(PickerState {
             folder_id,
+            listing_request_id,
             breadcrumb,
             entries: Vec::new(),
             selected: 0,
@@ -1139,12 +1173,18 @@ impl App {
         })
     }
 
-    fn spawn_picker_ls(&self, folder_id: String) {
+    fn spawn_picker_ls(&mut self, folder_id: String) -> u64 {
+        let request_id = self.next_async_request_id();
         let client = Arc::clone(&self.client);
         let tx = self.result_tx.clone();
         std::thread::spawn(move || {
-            let _ = tx.send(OpResult::PickerLs(folder_id.clone(), client.ls(&folder_id)));
+            let _ = tx.send(OpResult::PickerLs(
+                request_id,
+                folder_id.clone(),
+                client.ls(&folder_id),
+            ));
         });
+        request_id
     }
 
     fn init_picker(&mut self, source: Entry, is_move: bool) {
@@ -1191,7 +1231,7 @@ impl App {
                     picker.selected = 0;
                     picker.loading = true;
                     picker.entries.clear();
-                    self.spawn_picker_ls(picker.folder_id.clone());
+                    picker.listing_request_id = self.spawn_picker_ls(picker.folder_id.clone());
                 }
                 PickerKeyResult::Navigated
             }
@@ -1201,7 +1241,7 @@ impl App {
                     picker.selected = 0;
                     picker.loading = true;
                     picker.entries.clear();
-                    self.spawn_picker_ls(picker.folder_id.clone());
+                    picker.listing_request_id = self.spawn_picker_ls(picker.folder_id.clone());
                 }
                 PickerKeyResult::Navigated
             }
@@ -1262,6 +1302,7 @@ impl App {
             }
             PickerKeyResult::ShowHelp => {
                 self.show_help_sheet = true;
+                self.help_scroll = 0;
                 match &context {
                     PathInputContext::SingleItem { source } => {
                         self.restore_picker(source.clone(), picker, is_move)
@@ -1983,21 +2024,7 @@ impl App {
         // (different folders, or duplicates within one), and concurrent
         // workers writing one path interleave chunks into a corrupt file.
         // Names already queued for this directory count as taken too.
-        let mut taken: std::collections::HashSet<String> = self
-            .download_state
-            .tasks
-            .iter()
-            .filter(|t| t.dest_path.parent() == Some(dest.as_path()))
-            .filter_map(|t| {
-                t.dest_path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-            })
-            .flat_map(|n| {
-                let sidecar = format!("{n}.part");
-                [n, sidecar]
-            })
-            .collect();
+        let mut taken = self.download_state.reserved_names_in(dest.as_path());
         for item in cart_items {
             // Sanitized: the name is server data and must not escape dest.
             let local_name = crate::pikpak::unique_local_name(
@@ -2115,25 +2142,10 @@ impl App {
             }
             KeyCode::Char('x') => {
                 let sel = self.download_state.selected;
-                let cancel_info = self.download_state.tasks.get(sel).and_then(|t| {
-                    matches!(
-                        t.status,
-                        TaskStatus::Downloading | TaskStatus::Paused | TaskStatus::Pending
-                    )
-                    .then(|| (t.id, t.name.clone(), Arc::clone(&t.cancel_flag)))
-                });
-                if let Some((id, name, cancel_flag)) = cancel_info {
-                    // Worker stops on cancel_flag without a Done/Failed message,
-                    // so drop its active_ids entry here.
-                    cancel_flag.store(true, Ordering::Relaxed);
-                    self.download_state.active_ids.remove(&id);
-                    self.download_state.tasks.remove(sel);
-                    if self.download_state.selected >= self.download_state.tasks.len()
-                        && self.download_state.selected > 0
-                    {
-                        self.download_state.selected -= 1;
-                    }
+                if let Some(name) = self.download_state.cancel_task(sel) {
                     self.push_log(format!("Cancelled '{}'", name));
+                    // If it had no worker (plain Pending), a slot is available
+                    // now. Otherwise active_ids retains the slot until Stopped.
                     self.download_state.start_next(&self.client);
                 }
                 self.input = InputMode::DownloadView;
@@ -2250,6 +2262,7 @@ impl App {
         self.input = InputMode::InfoLoading;
         self.loading = true;
         self.loading_label = Some("Loading offline tasks...".into());
+        let request = self.begin_modal_request(AsyncRequestKind::OfflineTasks, "offline-tasks");
         let client = Arc::clone(&self.client);
         let tx = self.result_tx.clone();
         std::thread::spawn(move || {
@@ -2260,7 +2273,7 @@ impl App {
                 "PHASE_TYPE_ERROR",
             ];
             let result = client.offline_list(50, phases).map(|r| r.tasks);
-            let _ = tx.send(OpResult::OfflineTasks(result));
+            let _ = tx.send(OpResult::OfflineTasks(request, result));
         });
     }
 
@@ -2530,13 +2543,22 @@ impl App {
                     };
                     let thumb_url = info.thumbnail_link.clone().filter(|u| !u.is_empty());
                     let has_thumbnail = thumb_url.is_some();
+                    let target_id = info.id.clone().unwrap_or_default();
+                    let request =
+                        self.begin_modal_request(AsyncRequestKind::Info, target_id.clone());
                     self.input = InputMode::InfoView {
+                        request_id: request.id,
+                        target_id,
                         info,
                         image: None,
                         has_thumbnail,
                     };
                     if let Some(url) = thumb_url {
-                        self.spawn_thumbnail_fetch(url, super::OpResult::InfoThumbnail);
+                        self.spawn_thumbnail_fetch(url, move |result| {
+                            super::OpResult::InfoThumbnail(request, result)
+                        });
+                    } else {
+                        self.modal_request = None;
                     }
                 } else {
                     self.input = InputMode::TrashView {
@@ -2579,12 +2601,17 @@ impl App {
         self.input = InputMode::InfoLoading;
         self.loading = true;
         self.loading_label = Some("Loading file info...".into());
+        let request = self.begin_modal_request(AsyncRequestKind::Info, entry.id.clone());
         let client = Arc::clone(&self.client);
         let tx = self.result_tx.clone();
         let eid = entry.id.clone();
         let thumb_fallback = entry.thumbnail_link.clone();
         std::thread::spawn(move || {
-            let _ = tx.send(OpResult::Info(client.file_info(&eid), thumb_fallback));
+            let _ = tx.send(OpResult::Info(
+                request,
+                client.file_info(&eid),
+                thumb_fallback,
+            ));
         });
     }
 
@@ -2594,11 +2621,12 @@ impl App {
         self.loading_label = Some("Loading folder...".into());
         self.preview_target_id = Some(entry.id.clone());
         self.preview_target_name = Some(entry.name.clone());
+        let request = self.begin_modal_request(AsyncRequestKind::FolderPreview, entry.id.clone());
         let client = Arc::clone(&self.client);
         let tx = self.result_tx.clone();
         let eid = entry.id.clone();
         std::thread::spawn(move || {
-            let _ = tx.send(OpResult::PreviewLs(eid.clone(), client.ls(&eid)));
+            let _ = tx.send(OpResult::PreviewLs(request, client.ls(&eid)));
         });
     }
 
@@ -2637,6 +2665,25 @@ impl App {
     }
 
     pub(super) fn handle_mouse(&mut self, mouse: MouseEvent) {
+        if self.show_help_sheet {
+            match mouse.kind {
+                MouseEventKind::ScrollUp => {
+                    self.help_scroll = self.help_scroll.saturating_sub(3);
+                }
+                MouseEventKind::ScrollDown => {
+                    self.help_scroll = (self.help_scroll + 3).min(self.help_scroll_max.get());
+                }
+                MouseEventKind::Down(_) => {
+                    self.show_help_sheet = false;
+                    self.help_scroll = 0;
+                }
+                _ => {}
+            }
+            return;
+        }
+        if !matches!(&self.input, InputMode::InfoLoading) {
+            self.invalidate_modal_request();
+        }
         match mouse.kind {
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
                 let up = matches!(mouse.kind, MouseEventKind::ScrollUp);
@@ -2779,6 +2826,7 @@ impl App {
         // must close it — not land on whatever pane sits underneath.
         if self.show_help_sheet {
             self.show_help_sheet = false;
+            self.help_scroll = 0;
             return;
         }
         // The logs overlay floats above a pane; don't click through it.

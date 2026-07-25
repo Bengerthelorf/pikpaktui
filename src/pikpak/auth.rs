@@ -15,5 +15,7 @@ pub(super) struct CaptchaInitResponse {
     #[serde(default)]
     pub(super) captcha_token: Option<String>,
     #[serde(default)]
+    pub(super) expires_in: u64,
+    #[serde(default)]
     pub(super) url: Option<String>,
 }

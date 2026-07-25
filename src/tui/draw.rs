@@ -484,6 +484,7 @@ impl App {
                 info,
                 image,
                 has_thumbnail,
+                ..
             } if !self.trash_entries.is_empty() => {
                 self.draw_trash_view(
                     f,
@@ -1664,6 +1665,7 @@ impl App {
                 info,
                 image,
                 has_thumbnail,
+                ..
             } => {
                 self.draw_info_overlay(f, info, image.as_ref(), *has_thumbnail);
             }
@@ -2251,7 +2253,7 @@ impl App {
     pub(super) fn draw_help_sheet(&self, f: &mut Frame) {
         let term = f.area();
 
-        let sheet_w = term.width.saturating_sub(4).clamp(44, 92);
+        let sheet_w = help_sheet_width(term.width);
         let inner_w = sheet_w.saturating_sub(2) as usize;
         let show_art = inner_w >= 70;
 
@@ -2345,26 +2347,26 @@ impl App {
 
         type HelpGroupRef<'a> = (&'a str, &'a Vec<(&'a str, &'a str)>);
 
-        // <=3 sections: one column each. >3: first two share column 0.
-        let columns: Vec<Vec<HelpGroupRef<'_>>> = if sections.len() <= 3 {
-            sections
-                .iter()
-                .map(|(name, items)| vec![(*name, items)])
-                .collect()
-        } else {
-            let mut cols: Vec<Vec<HelpGroupRef<'_>>> = Vec::new();
-            cols.push(vec![
-                (sections[0].0, &sections[0].1),
-                (sections[1].0, &sections[1].1),
-            ]);
-            for s in &sections[2..] {
-                cols.push(vec![(s.0, &s.1)]);
-            }
-            cols
-        };
-
-        let col_count = columns.len();
-        let col_w = inner_w / col_count;
+        // Keep enough room for both the key and a useful description. On
+        // narrow terminals, stack sections instead of squeezing three
+        // columns until their contents overlap or collapse to ellipses.
+        let section_heights: Vec<usize> =
+            sections.iter().map(|(_, items)| 1 + items.len()).collect();
+        let col_count = help_column_count(inner_w, sections.len(), key_w);
+        let assignments = balanced_help_columns(&section_heights, col_count);
+        let columns: Vec<Vec<HelpGroupRef<'_>>> = assignments
+            .iter()
+            .map(|column| {
+                column
+                    .iter()
+                    .map(|&section_idx| {
+                        let (name, items) = &sections[section_idx];
+                        (*name, items)
+                    })
+                    .collect()
+            })
+            .collect();
+        let col_widths = help_column_widths(inner_w, col_count);
 
         let col_heights: Vec<usize> = columns
             .iter()
@@ -2458,52 +2460,69 @@ impl App {
         for row in 0..max_rows {
             let mut spans = Vec::new();
             for (ci, rows) in col_rows.iter().enumerate() {
+                let col_w = col_widths[ci];
                 let prefix = if ci == 0 { " " } else { "" };
                 if row < rows.len() {
                     match &rows[row] {
                         RowKind::Title(name) => {
-                            let w = col_w.saturating_sub(prefix.len());
+                            let prefix_w = unicode_width::UnicodeWidthStr::width(prefix).min(col_w);
+                            let w = col_w.saturating_sub(prefix_w);
                             spans.push(Span::styled(
-                                format!("{}{}", prefix, pad_to_width(name, w)),
+                                format!(
+                                    "{}{}",
+                                    pad_to_width(prefix, prefix_w),
+                                    pad_to_width(name, w)
+                                ),
                                 title_style,
                             ));
                         }
                         RowKind::Item(key, desc) => {
-                            let dw = col_w.saturating_sub(key_w + 1 + prefix.len());
-                            spans.push(Span::styled(
-                                format!("{}{} ", prefix, pad_to_width(key, key_w)),
-                                key_style,
-                            ));
-                            // Keep one gutter column so a truncated description
-                            // never touches the next column's key.
-                            spans.push(Span::styled(
-                                format!("{} ", pad_to_width(desc, dw.saturating_sub(1))),
-                                desc_style,
-                            ));
+                            let (key_part, desc_part) =
+                                help_item_parts(prefix, key, desc, key_w, col_w);
+                            spans.push(Span::styled(key_part, key_style));
+                            spans.push(Span::styled(desc_part, desc_style));
                         }
                         RowKind::Blank => {
-                            spans.push(Span::raw(format!("{:<width$}", "", width = col_w)));
+                            spans.push(Span::raw(" ".repeat(col_w)));
                         }
                     }
                 } else {
-                    spans.push(Span::raw(format!("{:<width$}", "", width = col_w)));
+                    spans.push(Span::raw(" ".repeat(col_w)));
                 }
             }
             lines.push(Line::from(spans));
         }
 
         lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            " Press any key to close",
-            Style::default().fg(Color::DarkGray),
-        )));
+
+        // The close hint owns the final interior row. The help body scrolls
+        // independently above it, so a short terminal never clips the only
+        // instruction that tells the user how to leave the overlay.
+        let interior_height = sheet_h.saturating_sub(2) as usize;
+        let body_height = interior_height.saturating_sub(1);
+        let max_scroll = lines.len().saturating_sub(body_height);
+        self.help_scroll_max.set(max_scroll);
+        let scroll = self.help_scroll.min(max_scroll);
+        let mut visible_lines: Vec<Line> =
+            lines.into_iter().skip(scroll).take(body_height).collect();
+        if interior_height > 0 {
+            let hint = if max_scroll > 0 {
+                " ↑/↓  Esc closes"
+            } else {
+                " Press any key to close"
+            };
+            visible_lines.push(Line::from(Span::styled(
+                hint,
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
 
         let (hp_bc, hp_tc) = if self.is_vibrant() {
             (Color::LightMagenta, Color::LightMagenta)
         } else {
             (Color::Cyan, Color::Cyan)
         };
-        let p = Paragraph::new(Text::from(lines)).block(
+        let p = Paragraph::new(Text::from(visible_lines)).block(
             self.styled_block()
                 .title(" Help ")
                 .title_style(Style::default().fg(hp_tc).add_modifier(Modifier::BOLD))
@@ -4125,6 +4144,98 @@ fn share_detail_lines(share: &crate::pikpak::MyShare, width: u16) -> Vec<Line<'s
     lines
 }
 
+/// Width of the help overlay, capped by the actual terminal. The previous
+/// minimum of 44 columns could produce a rectangle wider than a small terminal.
+fn help_sheet_width(terminal_width: u16) -> u16 {
+    terminal_width
+        .saturating_sub(4)
+        .clamp(44, 92)
+        .min(terminal_width)
+}
+
+/// Number of help columns that can preserve the key plus at least four
+/// display cells of description text. Keeping this floor modest also avoids
+/// turning a short, narrow terminal into one very tall clipped column.
+fn help_column_count(inner_width: usize, section_count: usize, key_width: usize) -> usize {
+    if section_count == 0 {
+        return 0;
+    }
+    let min_column_width = key_width + 2 + 4;
+    (inner_width / min_column_width).max(1).min(section_count)
+}
+
+fn help_column_widths(inner_width: usize, column_count: usize) -> Vec<usize> {
+    if column_count == 0 {
+        return Vec::new();
+    }
+    let base = inner_width / column_count;
+    let remainder = inner_width % column_count;
+    (0..column_count)
+        .map(|idx| base + usize::from(idx < remainder))
+        .collect()
+}
+
+/// Greedily put each section into the currently shortest column. Sections
+/// remain ordered within each column, while stacked layouts stay compact.
+fn balanced_help_columns(section_heights: &[usize], column_count: usize) -> Vec<Vec<usize>> {
+    if section_heights.is_empty() || column_count == 0 {
+        return Vec::new();
+    }
+    let column_count = column_count.min(section_heights.len());
+    let mut columns = vec![Vec::new(); column_count];
+    let mut heights = vec![0usize; column_count];
+
+    for (section_idx, &height) in section_heights.iter().enumerate() {
+        let column_idx = heights
+            .iter()
+            .enumerate()
+            .min_by_key(|(idx, height)| (**height, *idx))
+            .map(|(idx, _)| idx)
+            .unwrap_or(0);
+        if !columns[column_idx].is_empty() {
+            heights[column_idx] += 1;
+        }
+        columns[column_idx].push(section_idx);
+        heights[column_idx] += height;
+    }
+    columns
+}
+
+/// Format one help item as two styled parts whose concatenation occupies
+/// exactly `column_width` display cells, including Unicode-wide text and very
+/// narrow fallback layouts.
+fn help_item_parts(
+    prefix: &str,
+    key: &str,
+    description: &str,
+    key_width: usize,
+    column_width: usize,
+) -> (String, String) {
+    use unicode_width::UnicodeWidthStr;
+
+    let prefix_width = UnicodeWidthStr::width(prefix).min(column_width);
+    let mut key_part = pad_to_width(prefix, prefix_width);
+    let remaining = column_width.saturating_sub(prefix_width);
+    let key_area_width = (key_width + 1).min(remaining);
+    if key_area_width > 0 {
+        key_part.push_str(&pad_to_width(key, key_area_width.saturating_sub(1)));
+        key_part.push(' ');
+    }
+
+    let used = UnicodeWidthStr::width(key_part.as_str()).min(column_width);
+    let description_area_width = column_width.saturating_sub(used);
+    let description_part = if description_area_width == 0 {
+        String::new()
+    } else {
+        format!(
+            "{} ",
+            pad_to_width(description, description_area_width.saturating_sub(1))
+        )
+    };
+
+    (key_part, description_part)
+}
+
 pub(super) fn clear_overlay_area(f: &mut Frame, area: ratatui::layout::Rect) {
     let full = f.area();
     let extended = ratatui::layout::Rect {
@@ -4315,5 +4426,126 @@ fn vibrant(c: Color) -> Color {
         Color::Cyan => Color::LightCyan,
         Color::Magenta => Color::LightMagenta,
         other => other,
+    }
+}
+
+#[cfg(test)]
+mod help_layout_tests {
+    use super::{
+        App, balanced_help_columns, help_column_count, help_column_widths, help_item_parts,
+        help_sheet_width,
+    };
+    use crate::{config::TuiConfig, pikpak::PikPak};
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use ratatui::{Terminal, backend::TestBackend};
+    use unicode_width::UnicodeWidthStr;
+
+    fn rendered_help(width: u16, height: u16) -> String {
+        let mut app = App::new_login(PikPak::new().unwrap(), None, TuiConfig::default());
+        app.show_help_sheet = true;
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| app.draw_help_sheet(frame)).unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect()
+    }
+
+    #[test]
+    fn help_sheet_never_exceeds_a_narrow_terminal() {
+        for terminal_width in [0, 1, 20, 40, 44, 100] {
+            assert!(help_sheet_width(terminal_width) <= terminal_width);
+        }
+        assert_eq!(help_sheet_width(40), 40);
+        assert_eq!(help_sheet_width(100), 92);
+    }
+
+    #[test]
+    fn narrow_help_uses_fewer_columns_before_descriptions_collapse() {
+        assert_eq!(help_column_count(90, 3, 8), 3);
+        assert_eq!(help_column_count(38, 3, 8), 2);
+        assert_eq!(help_column_count(30, 3, 8), 2);
+        assert_eq!(help_column_count(17, 3, 8), 1);
+    }
+
+    #[test]
+    fn help_columns_use_every_available_display_cell() {
+        let widths = help_column_widths(89, 3);
+        assert_eq!(widths.iter().sum::<usize>(), 89);
+        assert!(widths.iter().max().unwrap() - widths.iter().min().unwrap() <= 1);
+    }
+
+    #[test]
+    fn unicode_help_item_is_exactly_one_column_wide() {
+        let (key, desc) = help_item_parts(" ", "快捷键", "移动到父目录", 8, 20);
+        assert_eq!(UnicodeWidthStr::width(format!("{key}{desc}").as_str()), 20);
+
+        let (key, desc) = help_item_parts(" ", "快捷键", "移动", 8, 6);
+        assert_eq!(UnicodeWidthStr::width(format!("{key}{desc}").as_str()), 6);
+    }
+
+    #[test]
+    fn stacked_sections_are_assigned_to_the_shortest_column() {
+        assert_eq!(
+            balanced_help_columns(&[15, 9, 11], 2),
+            vec![vec![0], vec![1, 2]]
+        );
+    }
+
+    #[test]
+    fn short_narrow_help_keeps_the_close_hint_visible() {
+        let rendered = rendered_help(20, 8);
+
+        assert!(
+            rendered.contains("close"),
+            "close hint was clipped:\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn short_help_can_scroll_to_the_last_action() {
+        let mut app = App::new_login(PikPak::new().unwrap(), None, TuiConfig::default());
+        app.show_help_sheet = true;
+        let backend = TestBackend::new(20, 8);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal.draw(|frame| app.draw_help_sheet(frame)).unwrap();
+        assert!(app.help_scroll_max.get() > 0);
+        app.handle_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+        terminal.draw(|frame| app.draw_help_sheet(frame)).unwrap();
+        let rendered: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+
+        assert!(
+            rendered.contains("Quit"),
+            "last action was unreachable:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("close"),
+            "close hint disappeared:\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn scroll_key_closes_help_when_the_sheet_does_not_need_scrolling() {
+        let mut app = App::new_login(PikPak::new().unwrap(), None, TuiConfig::default());
+        app.show_help_sheet = true;
+        let backend = TestBackend::new(100, 40);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| app.draw_help_sheet(frame)).unwrap();
+        assert_eq!(app.help_scroll_max.get(), 0);
+
+        app.handle_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+
+        assert!(!app.show_help_sheet);
     }
 }

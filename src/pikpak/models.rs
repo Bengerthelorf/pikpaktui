@@ -31,6 +31,10 @@ pub struct SessionToken {
     pub device_id: String,
     #[serde(default)]
     pub captcha_token: String,
+    /// Expiry of the action captcha token. Older session files omit this and
+    /// deserialize to zero, which intentionally forces a refresh before reuse.
+    #[serde(default)]
+    pub captcha_expires_at_unix: i64,
     #[serde(default)]
     pub user_id: String,
 }

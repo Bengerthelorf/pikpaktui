@@ -38,6 +38,30 @@ pikpaktui completions zsh > \
 Cloud path completions work beautifully with [fzf-tab](https://github.com/Aloxaf/fzf-tab) — you get a fuzzy-searchable popup of your remote files as you type.
 :::
 
+## Bash
+
+```bash
+mkdir -p ~/.local/share/bash-completion/completions
+pikpaktui completions bash > ~/.local/share/bash-completion/completions/pikpaktui
+# Or load for this shell only:
+eval "$(pikpaktui completions bash)"
+```
+
+## Fish
+
+```fish
+mkdir -p ~/.config/fish/completions
+pikpaktui completions fish > ~/.config/fish/completions/pikpaktui.fish
+# Or load for this shell only:
+eval (pikpaktui completions fish | string collect)
+```
+
+## PowerShell
+
+```powershell
+pikpaktui completions powershell | Out-String | Invoke-Expression
+```
+
 ## What Gets Completed
 
 | Context | Completions |
@@ -56,16 +80,16 @@ Cloud path completions work beautifully with [fzf-tab](https://github.com/Aloxaf
 | `pikpaktui share /path<Tab>` | Cloud path completion |
 | `pikpaktui offline --to /dst<Tab>` | Cloud path for `--to` |
 | `pikpaktui offline --name <Tab>` | (free text) |
-| `pikpaktui tasks <Tab>` | `list`, `ls`, `retry`, `delete`, `rm` |
-| `pikpaktui rm -<Tab>` | `-r`, `-f`, `-rf`, `-fr` |
-| `pikpaktui mkdir -<Tab>` | `-p` |
+| `pikpaktui tasks <Tab>` | `list`, `ls`, `show`, `retry`, `delete`, `rm` |
+| `pikpaktui rm -<Tab>` | recursive, force, and dry-run flags |
+| `pikpaktui mkdir -<Tab>` | `-p`, `-n`, `--dry-run` |
 | `pikpaktui info /path<Tab>` | Cloud path |
 | `pikpaktui cat /path<Tab>` | Cloud path |
 | `pikpaktui play /path<Tab>` | Cloud path |
 | `pikpaktui rename /path<Tab>` | Cloud path |
 | `pikpaktui star /path<Tab>` | Cloud path |
 | `pikpaktui unstar /path<Tab>` | Cloud path |
-| `pikpaktui completions <Tab>` | `zsh` |
+| `pikpaktui completions <Tab>` | `bash`, `zsh`, `fish`, `powershell` |
 
 ## How Cloud Path Completion Works
 
@@ -83,4 +107,4 @@ There may be a brief delay on first completion while the API is queried. Subsequ
 
 ## Currently Supported Shells
 
-Only **Zsh** is supported at this time. Fish and Bash completions are not yet available.
+**Bash, Zsh, Fish, and PowerShell** are supported.

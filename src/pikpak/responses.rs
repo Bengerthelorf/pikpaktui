@@ -72,8 +72,6 @@ pub struct ShareInfoResponse {
     pub share_status: String,
     #[serde(default)]
     pub pass_code_token: String,
-    #[serde(default)]
-    pub files: Vec<ShareEntry>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -262,7 +260,7 @@ mod tests {
     }
 
     #[test]
-    fn share_info_parses_files_and_status() {
+    fn share_info_parses_status_and_ignores_embedded_files() {
         let json = r#"{
             "share_status": "OK",
             "pass_code_token": "PCT123",
@@ -274,18 +272,15 @@ mod tests {
         let resp: ShareInfoResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.share_status, "OK");
         assert_eq!(resp.pass_code_token, "PCT123");
-        assert_eq!(resp.files.len(), 2);
-        assert_eq!(resp.files[1].name, "b.txt");
     }
 
     #[test]
     fn share_info_tolerates_missing_optional_fields() {
-        // A restricted share may omit pass_code_token and files.
+        // A restricted share may omit pass_code_token.
         let resp: ShareInfoResponse =
             serde_json::from_str(r#"{"share_status":"SENSITIVE_RESOURCE"}"#).unwrap();
         assert_eq!(resp.share_status, "SENSITIVE_RESOURCE");
         assert!(resp.pass_code_token.is_empty());
-        assert!(resp.files.is_empty());
     }
 
     #[test]

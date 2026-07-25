@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Result, anyhow};
 
 use super::{
     OfflineListResponse, OfflineTask, OfflineTaskResponse, PikPak, ensure_success,
@@ -30,10 +30,8 @@ impl PikPak {
             payload["name"] = serde_json::json!(n);
         }
 
-        let mut rb = self.http.post(&url).bearer_auth(&token).json(&payload);
-        rb = self.authed_headers(rb);
-
-        let response = rb.send().context("offline download request failed")?;
+        let rb = self.http.post(&url).bearer_auth(&token).json(&payload);
+        let response = self.send_authed("offline download", rb)?;
         json_or_api_error(response, "offline download")
     }
 
@@ -45,16 +43,14 @@ impl PikPak {
             "phase": { "in": phases.join(",") }
         });
 
-        let mut rb = self.http.get(&url).bearer_auth(&token).query(&[
+        let rb = self.http.get(&url).bearer_auth(&token).query(&[
             ("type", "offline"),
             ("thumbnail_size", "SIZE_SMALL"),
             ("limit", &limit.to_string()),
             ("filters", &filters.to_string()),
             ("with", "reference_resource"),
         ]);
-        rb = self.authed_headers(rb);
-
-        let response = rb.send().context("offline list request failed")?;
+        let response = self.send_authed("offline list", rb)?;
         json_or_api_error(response, "offline list")
     }
 
@@ -70,10 +66,8 @@ impl PikPak {
             "thumbnail_type": "FROM_HASH",
         });
 
-        let mut rb = self.http.post(&url).bearer_auth(&token).json(&payload);
-        rb = self.authed_headers(rb);
-
-        let response = rb.send().context("resource parse request failed")?;
+        let rb = self.http.post(&url).bearer_auth(&token).json(&payload);
+        let response = self.send_authed("resource parse", rb)?;
         json_or_api_error(response, "resource parse")
     }
 
@@ -82,14 +76,12 @@ impl PikPak {
         let token = self.access_token()?;
         let url = format!("{}/{}", self.drive_url("drive/v1/tasks"), task_id);
 
-        let mut rb = self
+        let rb = self
             .http
             .get(&url)
             .bearer_auth(&token)
             .query(&[("type", "offline"), ("checkPhase", "true")]);
-        rb = self.authed_headers(rb);
-
-        let response = rb.send().context("task poll request failed")?;
+        let response = self.send_authed("task poll", rb)?;
         let value: serde_json::Value = json_or_api_error(response, "task poll")?;
         // Some deployments wrap the task, some return it bare.
         let task = if value.get("task").is_some() {
@@ -110,10 +102,8 @@ impl PikPak {
             "id": task_id,
         });
 
-        let mut rb = self.http.post(&url).bearer_auth(&token).json(&payload);
-        rb = self.authed_headers(rb);
-
-        let response = rb.send().context("offline task retry request failed")?;
+        let rb = self.http.post(&url).bearer_auth(&token).json(&payload);
+        let response = self.send_authed("offline task retry", rb)?;
         ensure_success(response, "offline task retry")
     }
 
@@ -131,9 +121,7 @@ impl PikPak {
         for (k, v) in &pairs {
             rb = rb.query(&[(k, v)]);
         }
-        rb = self.authed_headers(rb);
-
-        let response = rb.send().context("delete tasks request failed")?;
+        let response = self.send_authed("delete tasks", rb)?;
         ensure_success(response, "delete tasks")
     }
 }

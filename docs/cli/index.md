@@ -5,7 +5,7 @@ order: 1
 ---
 
 
-pikpaktui provides 27 CLI subcommands for scripting, automation, and power-user workflows. All commands require a valid session — run `pikpaktui` (TUI) first to log in, or use `pikpaktui login`.
+pikpaktui provides 28 CLI subcommands for scripting, automation, and power-user workflows. All commands require a valid session — run `pikpaktui` (TUI) first to log in, or use `pikpaktui login`.
 
 ## Command Groups
 
@@ -35,7 +35,7 @@ pikpaktui provides 27 CLI subcommands for scripting, automation, and power-user 
 |---------|-------------|
 | [`download`](/cli/commands#download) | Download files or folders |
 | [`upload`](/cli/commands#upload) | Upload files to PikPak |
-| [`share`](/cli/commands#share) | Create, list, save, or delete share links |
+| [`share`](/cli/commands#share) | Create, browse, list, save, or delete share links |
 
 ### Cloud Download
 
@@ -50,6 +50,7 @@ pikpaktui provides 27 CLI subcommands for scripting, automation, and power-user 
 |---------|-------------|
 | [`trash`](/cli/commands#trash) | List trashed files |
 | [`untrash`](/cli/commands#untrash) | Restore files from trash by name |
+| [`empty`](/cli/commands#empty) | Permanently delete selected or all trash items |
 
 ### Starred & Activity
 
@@ -72,6 +73,7 @@ pikpaktui provides 27 CLI subcommands for scripting, automation, and power-user 
 |---------|-------------|
 | [`quota`](/cli/commands#quota) | Storage and bandwidth quota |
 | [`vip`](/cli/commands#vip) | VIP status and account info |
+| [`whoami`](/cli/commands#whoami) | Show the logged-in account identity |
 
 ### Utility
 
@@ -94,7 +96,7 @@ pikpaktui quota --json
 
 ### Dry run
 
-All commands that modify data accept `-n` / `--dry-run`. This resolves paths and prints a detailed plan without making any changes:
+Commands that document `-n` / `--dry-run` resolve paths and print a detailed plan without making changes:
 
 ```bash
 pikpaktui rm -n "/My Pack/file.txt"

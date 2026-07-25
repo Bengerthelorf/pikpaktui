@@ -36,6 +36,77 @@ fn extract_share_id(share_url: &str) -> &str {
     }
 }
 
+fn load_share_path(
+    inner_path: &str,
+    mut load_folder: impl FnMut(&str) -> Result<Vec<crate::pikpak::ShareEntry>>,
+) -> Result<Vec<crate::pikpak::ShareEntry>> {
+    // `/share` establishes status and pass_code_token, but its `files` field is
+    // only one page. Always enter through the paginated `/share/detail` loader,
+    // including for the root folder.
+    let mut entries = load_folder("")?;
+    let mut walked = String::new();
+    for seg in inner_path
+        .trim_matches('/')
+        .split('/')
+        .filter(|s| !s.is_empty())
+    {
+        let matches: Vec<_> = entries
+            .iter()
+            .filter(|entry| entry.name == seg && entry.is_folder())
+            .collect();
+        let folder_id = match matches.as_slice() {
+            [] => {
+                return Err(anyhow!(
+                    "folder not found in share: '{}{}'",
+                    terminal_safe_text(&walked),
+                    terminal_safe_text(seg)
+                ));
+            }
+            [folder] => folder.id.clone(),
+            duplicates => {
+                let ids = duplicates
+                    .iter()
+                    .map(|entry| format!("  id: {}", terminal_safe_text(&entry.id)))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                return Err(anyhow!(
+                    "folder '{}' in share path '{}{}' is ambiguous: {} folders share this name:\n{}",
+                    terminal_safe_text(seg),
+                    terminal_safe_text(&walked),
+                    terminal_safe_text(seg),
+                    duplicates.len(),
+                    ids
+                ));
+            }
+        };
+        entries = load_folder(&folder_id)?;
+        walked.push_str(seg);
+        walked.push('/');
+    }
+    Ok(entries)
+}
+
+fn terminal_safe_text(text: &str) -> String {
+    text.chars()
+        .map(|ch| {
+            if ch.is_control()
+                || matches!(
+                    ch,
+                    '\u{061c}'
+                        | '\u{200e}'
+                        | '\u{200f}'
+                        | '\u{202a}'..='\u{202e}'
+                        | '\u{2066}'..='\u{2069}'
+                )
+            {
+                '\u{fffd}'
+            } else {
+                ch
+            }
+        })
+        .collect()
+}
+
 fn run_browse(args: &[String]) -> Result<()> {
     let mut share_url: Option<&str> = None;
     let mut inner_path: Option<&str> = None;
@@ -75,24 +146,9 @@ fn run_browse(args: &[String]) -> Result<()> {
     let spinner = super::Spinner::new("Fetching share...");
     let info = client.share_info(share_id, pass_code)?;
 
-    // Walk the requested path folder by folder: share_info only exposes the
-    // top level, everything deeper comes from share/detail.
-    let mut entries = info.files;
-    let mut walked = String::new();
-    for seg in inner_path
-        .unwrap_or("")
-        .trim_matches('/')
-        .split('/')
-        .filter(|s| !s.is_empty())
-    {
-        let folder = entries
-            .iter()
-            .find(|e| e.name == seg && e.is_folder())
-            .ok_or_else(|| anyhow!("folder not found in share: '{}{}'", walked, seg))?;
-        entries = client.share_detail(share_id, &folder.id, &info.pass_code_token)?;
-        walked.push_str(seg);
-        walked.push('/');
-    }
+    let entries = load_share_path(inner_path.unwrap_or(""), |parent_id| {
+        client.share_detail(share_id, parent_id, &info.pass_code_token)
+    })?;
     drop(spinner);
 
     if json {
@@ -116,8 +172,9 @@ fn run_browse(args: &[String]) -> Result<()> {
         return Ok(());
     }
     for e in &entries {
+        let name = terminal_safe_text(&e.name);
         if e.is_folder() {
-            println!("  \x1b[1;34m{}/\x1b[0m", e.name);
+            println!("  \x1b[1;34m{}/\x1b[0m", name);
         } else {
             let size = e
                 .size
@@ -125,7 +182,7 @@ fn run_browse(args: &[String]) -> Result<()> {
                 .and_then(|s| s.parse::<u64>().ok())
                 .map(super::format_size)
                 .unwrap_or_default();
-            println!("  {}  \x1b[2m{}\x1b[0m", e.name, size);
+            println!("  {}  \x1b[2m{}\x1b[0m", name, size);
         }
     }
     Ok(())
@@ -258,48 +315,58 @@ fn run_save(args: &[String]) -> Result<()> {
     let dest_display = to_path.unwrap_or("/");
 
     if !json {
-        println!("Fetching share info for '{}'...", share_id);
+        println!(
+            "Fetching share info for '{}'...",
+            terminal_safe_text(share_id)
+        );
     }
     let info = client.share_info(share_id, pass_code)?;
+    let entries = load_share_path("", |parent_id| {
+        client.share_detail(share_id, parent_id, &info.pass_code_token)
+    })?;
 
-    if info.files.is_empty() {
+    if entries.is_empty() {
         return Err(anyhow!("share contains no files"));
     }
 
     if dry_run || !json {
-        println!("Found {} item(s):", info.files.len());
-        for f in &info.files {
-            println!("  {}", f.name);
+        println!("Found {} item(s):", entries.len());
+        for f in &entries {
+            println!("  {}", terminal_safe_text(&f.name));
         }
     }
 
     if dry_run {
         println!(
             "[dry-run] Would save {} item(s) to '{}'",
-            info.files.len(),
-            dest_display
+            entries.len(),
+            terminal_safe_text(dest_display)
         );
         return Ok(());
     }
 
-    let file_ids: Vec<&str> = info.files.iter().map(|f| f.id.as_str()).collect();
+    let file_ids: Vec<&str> = entries.iter().map(|f| f.id.as_str()).collect();
     if !json {
-        println!("Saving to '{}'...", dest_display);
+        println!("Saving to '{}'...", terminal_safe_text(dest_display));
     }
     client.save_share(share_id, &info.pass_code_token, &file_ids, &to_parent_id)?;
 
     if json {
         let out = serde_json::json!({
-            "saved": info.files.len(),
+            "saved": entries.len(),
             "to": dest_display,
-            "files": info.files.iter().map(|f| serde_json::json!({
+            "files": entries.iter().map(|f| serde_json::json!({
                 "id": f.id,
                 "name": f.name,
             })).collect::<Vec<_>>(),
         });
         println!("{}", serde_json::to_string_pretty(&out)?);
     } else {
-        println!("Saved {} item(s) to '{}'", info.files.len(), dest_display);
+        println!(
+            "Saved {} item(s) to '{}'",
+            entries.len(),
+            terminal_safe_text(dest_display)
+        );
     }
 
     Ok(())
@@ -380,13 +447,13 @@ fn run_list(args: &[String]) -> Result<()> {
             Row {
                 type_str,
                 type_color,
-                title: s.title.clone(),
-                expiry,
-                files,
-                views,
-                saves,
-                date,
-                url: s.share_url.clone(),
+                title: terminal_safe_text(&s.title),
+                expiry: terminal_safe_text(&expiry),
+                files: terminal_safe_text(&files),
+                views: terminal_safe_text(&views),
+                saves: terminal_safe_text(&saves),
+                date: terminal_safe_text(&date),
+                url: terminal_safe_text(&s.share_url),
             }
         })
         .collect();
@@ -461,4 +528,73 @@ fn run_delete(args: &[String]) -> Result<()> {
     client.delete_shares(&ids)?;
     println!("Deleted {} share(s).", ids.len());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pikpak::ShareEntry;
+
+    fn folder(id: &str, name: &str) -> ShareEntry {
+        ShareEntry {
+            id: id.to_string(),
+            name: name.to_string(),
+            kind: "drive#folder".to_string(),
+            size: None,
+        }
+    }
+
+    fn file(id: &str, name: &str) -> ShareEntry {
+        ShareEntry {
+            id: id.to_string(),
+            name: name.to_string(),
+            kind: "drive#file".to_string(),
+            size: Some("7".to_string()),
+        }
+    }
+
+    #[test]
+    fn browse_empty_path_loads_the_paginated_root() {
+        let mut requested = Vec::new();
+        let entries = load_share_path("", |parent_id| {
+            requested.push(parent_id.to_string());
+            Ok(vec![file("second-page", "visible.txt")])
+        })
+        .unwrap();
+
+        assert_eq!(requested, vec![""]);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].id, "second-page");
+    }
+
+    #[test]
+    fn browse_rejects_duplicate_folder_names() {
+        let err = load_share_path("docs", |_| {
+            Ok(vec![folder("first", "docs"), folder("second", "docs")])
+        })
+        .unwrap_err();
+
+        assert!(format!("{err:#}").contains("ambiguous"));
+    }
+
+    #[test]
+    fn terminal_text_contains_no_untrusted_control_characters() {
+        let safe = terminal_safe_text("report\u{1b}]52;c;Zm9v\u{7}\rforged\n.txt");
+
+        assert!(!safe.chars().any(char::is_control), "{safe:?}");
+        assert!(safe.contains("report"));
+        assert!(safe.contains("forged"));
+    }
+
+    #[test]
+    fn terminal_text_replaces_bidi_formatting_controls() {
+        let safe = terminal_safe_text(
+            "left\u{061c}\u{200e}\u{200f}\u{202a}\u{202b}\u{202c}\u{202d}\u{202e}\u{2066}\u{2067}\u{2068}\u{2069}right",
+        );
+
+        assert_eq!(
+            safe,
+            "left\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}right"
+        );
+    }
 }

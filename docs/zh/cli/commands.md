@@ -271,7 +271,7 @@ pikpaktui download [选项] -t <本地目录> <路径...>
 |------|------|
 | `-o`, `--output <文件>` | 自定义输出文件名（仅单文件） |
 | `-t <本地目录>` | 批量模式——将多个文件下载到指定目录 |
-| `-j`, `--jobs <n>` | 并发下载线程数（默认 1） |
+| `-j`, `--jobs <n>` | 递归下载文件夹时的文件并发数（1–16，默认 1） |
 | `-n`, `--dry-run` | 预览，不下载 |
 
 **示例：**
@@ -281,7 +281,7 @@ pikpaktui download "/My Pack/file.txt"                  # 下载到当前目录
 pikpaktui download "/My Pack/file.txt" /tmp/file.txt    # 下载到指定路径
 pikpaktui download -o output.mp4 "/My Pack/video.mp4"   # 自定义文件名
 pikpaktui download "/My Pack/folder"                    # 递归下载文件夹
-pikpaktui download -j4 -t ./videos/ /a.mp4 /b.mp4      # 4 并发，批量
+pikpaktui download -j 4 "/My Pack/folder"              # 文件夹内最多 4 个文件并发
 pikpaktui download -n "/My Pack/folder"                 # 预览
 ```
 
@@ -319,10 +319,11 @@ pikpaktui upload -n ./file.txt "/My Pack"          # 预览
 
 ## share
 
-创建、列出、保存和删除分享链接。
+创建、浏览、列出、保存和删除分享链接。
 
 ```
 pikpaktui share [选项] <路径...>      # 创建
+pikpaktui share -b <URL> [路径]       # 浏览分享
 pikpaktui share -l                    # 列出我的分享
 pikpaktui share -S <URL>              # 保存他人分享到网盘
 pikpaktui share -D <ID...>            # 删除分享
@@ -345,6 +346,13 @@ pikpaktui share -D <ID...>            # 删除分享
 | `-t <路径>` | 保存目标文件夹 |
 | `-n`, `--dry-run` | 预览，不保存 |
 
+**浏览选项（与 `-b` / `--browse` 配合）：**
+
+| 参数 | 说明 |
+|------|------|
+| `-p`, `--pass-code <密码>` | 加密分享的访问码 |
+| `-J`, `--json` | JSON 输出 |
+
 **示例：**
 
 ```bash
@@ -355,6 +363,9 @@ pikpaktui share -p -d 7 /a.txt /b.txt            # 多文件+加密+7天
 
 pikpaktui share -l                               # 列出我的分享
 pikpaktui share -l -J                            # JSON 格式
+
+pikpaktui share -b "https://mypikpak.com/s/XXXX"             # 浏览分享根目录
+pikpaktui share -b -p PO "https://mypikpak.com/s/XXXX" Movies # 浏览子目录
 
 pikpaktui share -D abc123                        # 删除指定分享
 pikpaktui share -D abc123 def456                 # 删除多个
@@ -377,8 +388,9 @@ pikpaktui offline [选项] <URL>
 | 参数 | 说明 |
 |------|------|
 | `--to`, `-t <路径>` | PikPak 中的目标文件夹 |
-| `--name`, `-n <名称>` | 覆盖任务/文件名 |
-| `--dry-run` | 预览，不创建任务 |
+| `--name <名称>` | 覆盖任务/文件名 |
+| `-p`, `--preview` | 显示 URL/磁力链接内容，不创建任务 |
+| `-n`, `--dry-run` | 预览，不创建任务 |
 
 **示例：**
 
@@ -386,6 +398,7 @@ pikpaktui offline [选项] <URL>
 pikpaktui offline "magnet:?xt=urn:btih:abc123..."
 pikpaktui offline --to "/Downloads" "https://example.com/file.zip"
 pikpaktui offline --to "/Downloads" --name "myvideo.mp4" "https://..."
+pikpaktui offline -p "magnet:?xt=..."              # 查看内容
 pikpaktui offline --dry-run "magnet:?xt=..."
 ```
 
@@ -404,6 +417,7 @@ pikpaktui tasks [子命令] [选项] [数量]
 | 子命令 | 说明 |
 |--------|------|
 | `list`、`ls` | 列出任务（不指定子命令时的默认行为） |
+| `show <ID>` | 获取并显示单个任务的最新状态 |
 | `retry <ID>` | 重试失败的任务 |
 | `delete <ID...>`、`rm <ID...>` | 删除任务 |
 
@@ -421,6 +435,7 @@ pikpaktui tasks [子命令] [选项] [数量]
 pikpaktui tasks                              # 列出最多 50 条任务
 pikpaktui tasks list 10                     # 列出 10 条
 pikpaktui tasks list --json                 # JSON 输出
+pikpaktui tasks show abc12345               # 显示任务最新状态
 pikpaktui tasks retry abc12345              # 重试失败任务
 pikpaktui tasks delete abc12345             # 删除任务
 pikpaktui tasks rm abc12345 def67890        # 删除多个任务
@@ -476,6 +491,23 @@ pikpaktui untrash -n "file.txt"        # 预览
 :::callout[tip]{kind="info"}
 按精确文件名匹配，不是路径。若多个已删除文件同名，恢复第一个匹配项。
 :::
+
+---
+
+## empty
+
+永久删除指定回收站项目，或清空整个回收站。
+
+```
+pikpaktui empty [-n] [-f] <文件名...>
+pikpaktui empty [-n] [-f] --all
+```
+
+| 参数 | 说明 |
+|------|------|
+| `--all`、`-r`、`--recursive`、`/` | 清空整个回收站 |
+| `-f`, `--force` | 清空全部项目时跳过确认 |
+| `-n`, `--dry-run` | 预览，不删除 |
 
 ---
 
@@ -562,7 +594,7 @@ pikpaktui events --json
 
 ## login
 
-登录 PikPak 并将凭据保存到 `~/.config/pikpaktui/login.yaml`。
+登录 PikPak 并将凭据保存到 `~/.config/pikpaktui/login.toml`。
 
 ```
 pikpaktui login [选项]
@@ -621,6 +653,16 @@ pikpaktui vip
 
 ---
 
+## whoami
+
+显示当前会话对应的账户身份。
+
+```
+pikpaktui whoami [-J|--json]
+```
+
+---
+
 ## update
 
 检查更新并从 GitHub Releases 自动更新二进制文件。
@@ -635,7 +677,7 @@ pikpaktui update
 
 ## completions
 
-生成 Shell 补全脚本，目前仅支持 **Zsh**。
+生成 Bash、Zsh、Fish 和 PowerShell 的 Shell 补全脚本。
 
 ```
 pikpaktui completions <shell>
@@ -647,6 +689,9 @@ pikpaktui completions <shell>
 pikpaktui completions zsh                            # 输出到标准输出
 pikpaktui completions zsh > ~/.zfunc/_pikpaktui      # 保存到文件
 eval "$(pikpaktui completions zsh)"                  # 在当前 shell 中加载
+pikpaktui completions bash > ~/.local/share/bash-completion/completions/pikpaktui
+pikpaktui completions fish > ~/.config/fish/completions/pikpaktui.fish
+pikpaktui completions powershell | Out-String | Invoke-Expression
 ```
 
 详见 [Shell 补全](/zh/guide/shell-completions)。

@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{Read as _, Seek, SeekFrom, Write as _};
 use std::path::{Path, PathBuf};
@@ -70,8 +70,18 @@ pub struct DownloadState {
     /// its entry until the worker acknowledges with Stopped, so a quick
     /// pause/resume can't spawn a second worker on the same file.
     pub active_ids: HashSet<u64>,
+    /// Destinations owned by cancelled tasks whose worker has not stopped yet.
+    /// The visible task can disappear immediately, but its data/.part/.meta
+    /// name family must remain reserved until the worker acknowledges exit.
+    retired_destinations: HashMap<u64, PathBuf>,
     pub max_concurrent: usize,
     next_id: u64,
+}
+
+pub(super) fn destination_name_family(name: &str) -> [String; 3] {
+    let partial = format!("{name}.part");
+    let identity = format!("{partial}.meta");
+    [name.to_string(), partial, identity]
 }
 
 impl DownloadState {
@@ -83,6 +93,7 @@ impl DownloadState {
             msg_tx: tx,
             msg_rx: rx,
             active_ids: HashSet::new(),
+            retired_destinations: HashMap::new(),
             max_concurrent: max_concurrent.max(1),
             next_id: 0,
         }
@@ -100,6 +111,8 @@ impl DownloadState {
             t.id = i as u64;
         }
         self.next_id = tasks.len() as u64;
+        self.active_ids.clear();
+        self.retired_destinations.clear();
         self.tasks = tasks;
     }
 
@@ -116,14 +129,53 @@ impl DownloadState {
             .any(|t| matches!(t.status, TaskStatus::Downloading | TaskStatus::Pending))
     }
 
+    /// Remove a cancellable task without freeing a live worker's slot. The
+    /// worker may still be blocked in a network read; its eventual `Stopped`
+    /// message is the only safe point at which to remove the active id.
+    pub fn cancel_task(&mut self, index: usize) -> Option<String> {
+        let cancellable = self.tasks.get(index).is_some_and(|task| {
+            matches!(
+                task.status,
+                TaskStatus::Downloading | TaskStatus::Paused | TaskStatus::Pending
+            )
+        });
+        if !cancellable {
+            return None;
+        }
+
+        let task = self.tasks.remove(index);
+        task.cancel_flag.store(true, Ordering::Relaxed);
+        if self.active_ids.contains(&task.id) {
+            self.retired_destinations
+                .insert(task.id, task.dest_path.clone());
+        }
+        if self.selected >= self.tasks.len() && self.selected > 0 {
+            self.selected -= 1;
+        }
+        Some(task.name)
+    }
+
+    /// Reserve every path family still owned by a visible or detached worker.
+    /// A cancelled task is detached from `tasks` immediately for the UI, but
+    /// its worker may still be returning from a blocking network call.
+    pub(super) fn reserved_names_in(&self, directory: &Path) -> HashSet<String> {
+        self.tasks
+            .iter()
+            .map(|task| &task.dest_path)
+            .chain(self.retired_destinations.values())
+            .filter(|path| path.parent() == Some(directory))
+            .filter_map(|path| {
+                path.file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+            })
+            .flat_map(|name| destination_name_family(&name))
+            .collect()
+    }
+
     /// Start pending tasks up to max_concurrent slots.
     pub fn start_next(&mut self, client: &Arc<PikPak>) {
         loop {
-            let active = self
-                .tasks
-                .iter()
-                .filter(|t| t.status == TaskStatus::Downloading)
-                .count();
+            let active = self.active_ids.len();
             if active >= self.max_concurrent {
                 break;
             }
@@ -184,6 +236,7 @@ impl DownloadState {
                         logs.push(format!("Downloaded '{}'", task.name));
                     }
                     self.active_ids.remove(&id);
+                    self.retired_destinations.remove(&id);
                     self.start_next(client);
                 }
                 DownloadMsg::Failed { id, error } => {
@@ -192,10 +245,12 @@ impl DownloadState {
                         logs.push(format!("Download failed '{}': {}", task.name, error));
                     }
                     self.active_ids.remove(&id);
+                    self.retired_destinations.remove(&id);
                     self.start_next(client);
                 }
                 DownloadMsg::Stopped { id } => {
                     self.active_ids.remove(&id);
+                    self.retired_destinations.remove(&id);
                     self.start_next(client);
                 }
             }
@@ -226,26 +281,37 @@ fn download_worker(
     client: &PikPak,
     id: u64,
     file_id: &str,
-    dest: &PathBuf,
+    dest: &Path,
     msg_tx: &Sender<DownloadMsg>,
     cancel_flag: &Arc<AtomicBool>,
 ) -> anyhow::Result<()> {
+    if cancel_flag.load(Ordering::Relaxed) {
+        let _ = msg_tx.send(DownloadMsg::Stopped { id });
+        return Ok(());
+    }
     let (mut url, total_size) = client.download_url(file_id)?;
 
     let _ = msg_tx.send(DownloadMsg::Started { id, total_size });
 
+    if cancel_flag.load(Ordering::Relaxed) {
+        let _ = msg_tx.send(DownloadMsg::Stopped { id });
+        return Ok(());
+    }
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent)?;
     }
 
-    // The finished name is only ever a verified complete file; partial data
-    // lives in a .part sidecar (shared scheme with the CLI download).
-    let existing_size = dest.metadata().map(|m| m.len()).unwrap_or(0);
-    if total_size > 0 && existing_size == total_size {
+    let (part, initial_part_size) =
+        crate::pikpak::prepare_partial_download(dest, file_id, total_size)?;
+    if cancel_flag.load(Ordering::Relaxed) {
+        let _ = msg_tx.send(DownloadMsg::Stopped { id });
+        return Ok(());
+    }
+    if total_size > 0 && initial_part_size == total_size {
+        crate::pikpak::finish_partial_download(dest, &part)?;
         let _ = msg_tx.send(DownloadMsg::Done { id });
         return Ok(());
     }
-    let part = crate::pikpak::part_path(dest);
 
     let mut renewed = false;
     let downloaded = loop {
@@ -275,7 +341,11 @@ fn download_worker(
         }
     };
 
-    fs::rename(&part, dest)?;
+    if cancel_flag.load(Ordering::Relaxed) {
+        let _ = msg_tx.send(DownloadMsg::Stopped { id });
+        return Ok(());
+    }
+    crate::pikpak::finish_partial_download(dest, &part)?;
     let _ = msg_tx.send(DownloadMsg::Progress {
         id,
         downloaded,
@@ -296,9 +366,15 @@ fn stream_attempt(
     msg_tx: &Sender<DownloadMsg>,
     cancel_flag: &Arc<AtomicBool>,
 ) -> anyhow::Result<Option<u64>> {
+    if cancel_flag.load(Ordering::Relaxed) {
+        return Ok(None);
+    }
     // Shared range/resume contract with the CLI download (see download_stream).
     let (response, start_offset) = client.download_stream(url, part_size)?;
 
+    if cancel_flag.load(Ordering::Relaxed) {
+        return Ok(None);
+    }
     let mut file = if start_offset > 0 {
         let mut f = fs::OpenOptions::new()
             .write(true)
@@ -507,5 +583,82 @@ mod tests {
 
         // No second worker: the task is left Pending, unspawned.
         assert_eq!(state.tasks[0].status, TaskStatus::Pending);
+    }
+
+    #[test]
+    fn live_paused_worker_still_consumes_concurrency_slot() {
+        let client = Arc::new(PikPak::new().unwrap());
+        let mut state = DownloadState::new(1);
+
+        let paused_id = state.alloc_id();
+        let mut paused = downloading_task(paused_id, "paused");
+        paused.status = TaskStatus::Paused;
+        state.tasks.push(paused);
+        state.active_ids.insert(paused_id);
+
+        let pending_id = state.alloc_id();
+        let mut pending = downloading_task(pending_id, "pending");
+        pending.status = TaskStatus::Pending;
+        state.tasks.push(pending);
+
+        state.start_next(&client);
+
+        assert_eq!(state.tasks[1].status, TaskStatus::Pending);
+        assert!(!state.active_ids.contains(&pending_id));
+    }
+
+    #[test]
+    fn cancelling_task_keeps_slot_until_live_worker_stops() {
+        let mut state = DownloadState::new(1);
+        let active_id = state.alloc_id();
+        state.tasks.push(downloading_task(active_id, "active"));
+        state.active_ids.insert(active_id);
+
+        assert_eq!(state.cancel_task(0).as_deref(), Some("active"));
+        assert!(state.tasks.is_empty());
+        assert!(
+            state.active_ids.contains(&active_id),
+            "a blocking worker must retain its concurrency slot until Stopped"
+        );
+    }
+
+    #[test]
+    fn cancelling_task_reserves_destination_until_worker_stops() {
+        let client = Arc::new(PikPak::new().unwrap());
+        let mut state = DownloadState::new(2);
+        let active_id = state.alloc_id();
+        let mut active = downloading_task(active_id, "movie.mkv");
+        active.dest_path = PathBuf::from("/downloads/movie.mkv");
+        state.tasks.push(active);
+        state.active_ids.insert(active_id);
+
+        assert_eq!(state.cancel_task(0).as_deref(), Some("movie.mkv"));
+        assert_eq!(
+            state.reserved_names_in(Path::new("/downloads")),
+            destination_name_family("movie.mkv").into_iter().collect(),
+            "a detached worker still owns its data, partial and identity names"
+        );
+
+        state
+            .msg_tx
+            .send(DownloadMsg::Stopped { id: active_id })
+            .unwrap();
+        state.poll(&client);
+        assert!(
+            state.reserved_names_in(Path::new("/downloads")).is_empty(),
+            "the reservation is released only after the worker acknowledges exit"
+        );
+    }
+
+    #[test]
+    fn existing_destination_reserves_data_partial_and_identity_names() {
+        assert_eq!(
+            destination_name_family("movie.mkv"),
+            [
+                "movie.mkv".to_string(),
+                "movie.mkv.part".to_string(),
+                "movie.mkv.part.meta".to_string(),
+            ]
+        );
     }
 }

@@ -2,3 +2,11 @@
 
 .DS_Store
 TODO.md
+
+# Machine-local assistant settings
+.claude/settings.local.json
+
+# Local VitePress dependencies and generated output
+docs/vitepress/node_modules/
+docs/vitepress/.vitepress/cache/
+docs/vitepress/.vitepress/dist/

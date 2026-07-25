@@ -22,9 +22,7 @@ impl PikPak {
             if let Some(ref pt) = page_token {
                 rb = rb.query(&[("page_token", pt.as_str())]);
             }
-            rb = self.authed_headers(rb);
-
-            let response = rb.send().context("ls request failed")?;
+            let response = self.send_authed("ls", rb)?;
             let payload: DriveListResponse = json_or_api_error(response, "ls")?;
             let next = payload.next_page_token.filter(|t| !t.is_empty());
 
@@ -49,20 +47,21 @@ impl PikPak {
     /// folder appearing in every argument of a batch command) only hit the API once.
     /// TUI code that needs a fresh listing should call `ls()` directly.
     pub fn ls_cached(&self, parent_id: &str) -> Result<Vec<Entry>> {
-        if let Some(cached) = self
-            .ls_cache
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(parent_id)
-        {
-            return Ok(cached.clone());
-        }
+        let generation = {
+            let cache = self.ls_cache.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(cached) = cache.entries.get(parent_id) {
+                return Ok(cached.clone());
+            }
+            cache.generation
+        };
         let entries = self.ls(parent_id)?;
         let result = entries.clone();
-        self.ls_cache
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(parent_id.to_string(), entries);
+        let mut cache = self.ls_cache.lock().unwrap_or_else(|e| e.into_inner());
+        // A mutation may have invalidated the cache while the network request
+        // was in flight. Never publish that pre-mutation snapshot afterward.
+        if cache.generation == generation {
+            cache.entries.insert(parent_id.to_string(), entries);
+        }
         Ok(result)
     }
 
@@ -112,9 +111,7 @@ impl PikPak {
             if let Some(ref pt) = page_token {
                 rb = rb.query(&[("page_token", pt.as_str())]);
             }
-            rb = self.authed_headers(rb);
-
-            let response = rb.send().context("ls_trash request failed")?;
+            let response = self.send_authed("ls_trash", rb)?;
             let payload: DriveListResponse = json_or_api_error(response, "ls_trash")?;
             let next = payload.next_page_token.filter(|t| !t.is_empty());
 
@@ -147,10 +144,8 @@ impl PikPak {
             "to": { "parent_id": to_parent_id },
         });
 
-        let mut rb = self.http.post(&url).bearer_auth(&token).json(&payload);
-        rb = self.authed_headers(rb);
-
-        let response = rb.send().context("move request failed")?;
+        let rb = self.http.post(&url).bearer_auth(&token).json(&payload);
+        let response = self.send_authed("move", rb)?;
         ensure_success(response, "move")?;
         self.clear_ls_cache();
         Ok(())
@@ -165,10 +160,8 @@ impl PikPak {
             "to": { "parent_id": to_parent_id },
         });
 
-        let mut rb = self.http.post(&url).bearer_auth(&token).json(&payload);
-        rb = self.authed_headers(rb);
-
-        let response = rb.send().context("copy request failed")?;
+        let rb = self.http.post(&url).bearer_auth(&token).json(&payload);
+        let response = self.send_authed("copy", rb)?;
         ensure_success(response, "copy")?;
         self.clear_ls_cache();
         Ok(())
@@ -179,10 +172,8 @@ impl PikPak {
         let url = format!("{}/{}", self.drive_url("drive/v1/files"), file_id);
 
         let payload = serde_json::json!({ "name": new_name });
-        let mut rb = self.http.patch(&url).bearer_auth(&token).json(&payload);
-        rb = self.authed_headers(rb);
-
-        let response = rb.send().context("rename request failed")?;
+        let rb = self.http.patch(&url).bearer_auth(&token).json(&payload);
+        let response = self.send_authed("rename", rb)?;
         ensure_success(response, "rename")?;
         self.clear_ls_cache();
         Ok(())
@@ -193,10 +184,8 @@ impl PikPak {
         let url = self.drive_url("drive/v1/files:batchTrash");
 
         let payload = serde_json::json!({ "ids": ids });
-        let mut rb = self.http.post(&url).bearer_auth(&token).json(&payload);
-        rb = self.authed_headers(rb);
-
-        let response = rb.send().context("remove request failed")?;
+        let rb = self.http.post(&url).bearer_auth(&token).json(&payload);
+        let response = self.send_authed("remove", rb)?;
         ensure_success(response, "remove")?;
         self.clear_ls_cache();
         Ok(())
@@ -207,10 +196,8 @@ impl PikPak {
         let url = self.drive_url("drive/v1/files:batchDelete");
 
         let payload = serde_json::json!({ "ids": ids });
-        let mut rb = self.http.post(&url).bearer_auth(&token).json(&payload);
-        rb = self.authed_headers(rb);
-
-        let response = rb.send().context("permanent delete request failed")?;
+        let rb = self.http.post(&url).bearer_auth(&token).json(&payload);
+        let response = self.send_authed("permanent delete", rb)?;
         ensure_success(response, "permanent delete")?;
         self.clear_ls_cache();
         Ok(())
@@ -222,10 +209,8 @@ impl PikPak {
         let token = self.access_token()?;
         let url = self.drive_url("drive/v1/files/trash:empty");
 
-        let mut rb = self.http.patch(&url).bearer_auth(&token);
-        rb = self.authed_headers(rb);
-
-        let response = rb.send().context("empty trash request failed")?;
+        let rb = self.http.patch(&url).bearer_auth(&token);
+        let response = self.send_authed("empty trash", rb)?;
         ensure_success(response, "empty trash")?;
         self.clear_ls_cache();
         Ok(())
@@ -236,10 +221,8 @@ impl PikPak {
         let url = self.drive_url("drive/v1/files:batchUntrash");
 
         let payload = serde_json::json!({ "ids": ids });
-        let mut rb = self.http.post(&url).bearer_auth(&token).json(&payload);
-        rb = self.authed_headers(rb);
-
-        let response = rb.send().context("untrash request failed")?;
+        let rb = self.http.post(&url).bearer_auth(&token).json(&payload);
+        let response = self.send_authed("untrash", rb)?;
         ensure_success(response, "untrash")?;
         self.clear_ls_cache();
         Ok(())
@@ -255,10 +238,8 @@ impl PikPak {
             "name": name,
         });
 
-        let mut rb = self.http.post(&url).bearer_auth(&token).json(&payload);
-        rb = self.authed_headers(rb);
-
-        let response = rb.send().context("mkdir request failed")?;
+        let rb = self.http.post(&url).bearer_auth(&token).json(&payload);
+        let response = self.send_authed("mkdir", rb)?;
         let resp: DriveFileResponse = json_or_api_error(response, "mkdir")?;
         self.clear_ls_cache();
         Ok(resp.file.into_folder_entry())
@@ -268,35 +249,9 @@ impl PikPak {
         let token = self.access_token()?;
         let url = format!("{}/{}", self.drive_url("drive/v1/files"), file_id);
 
-        // Download-link fetches are the endpoint PikPak rate-guards with
-        // error_code 9 (riskLimited / captcha token expired). Reference
-        // clients refresh the captcha token for this exact action and retry
-        // once; do the same instead of surfacing an opaque 403.
-        for attempt in 0..2 {
-            let mut rb = self.http.get(&url).bearer_auth(&token);
-            rb = self.authed_headers(rb);
-
-            let response = rb.send().context("file_info request failed")?;
-            let status = response.status();
-            if status.is_success() {
-                return response.json().context("invalid file_info json");
-            }
-            let body = response.text().unwrap_or_default();
-            if attempt == 0
-                && super::api_error_code(&body) == Some(9)
-                && self
-                    .refresh_captcha_for_action(&format!("GET:/drive/v1/files/{file_id}"))
-                    .is_ok()
-            {
-                continue;
-            }
-            return Err(anyhow!(
-                "file_info failed ({}): {}",
-                status,
-                super::sanitize(&body)
-            ));
-        }
-        unreachable!("both file_info attempts returned early");
+        let rb = self.http.get(&url).bearer_auth(&token);
+        let response = self.send_authed("file_info", rb)?;
+        response.json().context("invalid file_info json")
     }
 
     pub fn star(&self, ids: &[&str]) -> Result<()> {
@@ -304,10 +259,8 @@ impl PikPak {
         let url = self.drive_url("drive/v1/files:star");
 
         let payload = serde_json::json!({ "ids": ids });
-        let mut rb = self.http.post(&url).bearer_auth(&token).json(&payload);
-        rb = self.authed_headers(rb);
-
-        let response = rb.send().context("star request failed")?;
+        let rb = self.http.post(&url).bearer_auth(&token).json(&payload);
+        let response = self.send_authed("star", rb)?;
         ensure_success(response, "star")?;
         self.clear_ls_cache();
         Ok(())
@@ -318,10 +271,8 @@ impl PikPak {
         let url = self.drive_url("drive/v1/files:unstar");
 
         let payload = serde_json::json!({ "ids": ids });
-        let mut rb = self.http.post(&url).bearer_auth(&token).json(&payload);
-        rb = self.authed_headers(rb);
-
-        let response = rb.send().context("unstar request failed")?;
+        let rb = self.http.post(&url).bearer_auth(&token).json(&payload);
+        let response = self.send_authed("unstar", rb)?;
         ensure_success(response, "unstar")?;
         self.clear_ls_cache();
         Ok(())
@@ -332,15 +283,13 @@ impl PikPak {
         let url = self.drive_url("drive/v1/files");
 
         let filters = r#"{"trashed":{"eq":false},"system_tag":{"in":"STAR"}}"#;
-        let mut rb = self.http.get(&url).bearer_auth(&token).query(&[
+        let rb = self.http.get(&url).bearer_auth(&token).query(&[
             ("parent_id", "*"),
             ("limit", &limit.to_string()),
             ("filters", filters),
             ("thumbnail_size", self.thumbnail_size.as_str()),
         ]);
-        rb = self.authed_headers(rb);
-
-        let response = rb.send().context("starred list request failed")?;
+        let response = self.send_authed("starred list", rb)?;
         let payload: DriveListResponse = json_or_api_error(response, "starred list")?;
         let entries = payload
             .files

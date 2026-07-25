@@ -6,7 +6,7 @@ locale: zh
 ---
 
 
-pikpaktui 提供 27 条 CLI 子命令，适合脚本、自动化和进阶用户。所有命令均需有效会话——先运行 `pikpaktui`（TUI）登录，或使用 `pikpaktui login`。
+pikpaktui 提供 28 条 CLI 子命令，适合脚本、自动化和进阶用户。所有命令均需有效会话——先运行 `pikpaktui`（TUI）登录，或使用 `pikpaktui login`。
 
 ## 命令分组
 
@@ -36,7 +36,7 @@ pikpaktui 提供 27 条 CLI 子命令，适合脚本、自动化和进阶用户�
 |------|------|
 | [`download`](/zh/cli/commands#download) | 下载文件或文件夹 |
 | [`upload`](/zh/cli/commands#upload) | 上传文件到 PikPak |
-| [`share`](/zh/cli/commands#share) | 创建、列出、保存或删除分享链接 |
+| [`share`](/zh/cli/commands#share) | 创建、浏览、列出、保存或删除分享链接 |
 
 ### 离线下载
 
@@ -51,6 +51,7 @@ pikpaktui 提供 27 条 CLI 子命令，适合脚本、自动化和进阶用户�
 |------|------|
 | [`trash`](/zh/cli/commands#trash) | 列出回收站中的文件 |
 | [`untrash`](/zh/cli/commands#untrash) | 按文件名从回收站恢复文件 |
+| [`empty`](/zh/cli/commands#empty) | 永久删除指定或全部回收站项目 |
 
 ### 收藏与动态
 
@@ -73,6 +74,7 @@ pikpaktui 提供 27 条 CLI 子命令，适合脚本、自动化和进阶用户�
 |------|------|
 | [`quota`](/zh/cli/commands#quota) | 存储空间和带宽配额 |
 | [`vip`](/zh/cli/commands#vip) | VIP 状态和账户信息 |
+| [`whoami`](/zh/cli/commands#whoami) | 显示当前登录账户身份 |
 
 ### 工具
 
@@ -95,7 +97,7 @@ pikpaktui quota --json
 
 ### Dry run 预览
 
-所有修改数据的命令均支持 `-n` / `--dry-run`，解析路径后打印操作计划，不做实际修改：
+参数说明中列出 `-n` / `--dry-run` 的命令会解析路径并打印操作计划，不做实际修改：
 
 ```bash
 pikpaktui rm -n "/My Pack/file.txt"

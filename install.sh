@@ -78,17 +78,27 @@ fi
 
 echo -e "${BLUE}>>> Verifying checksum...${NC}"
 if curl -L --fail --silent --show-error -o "${TMP_DIR}/sha256sums.txt" "$CHECKSUM_URL"; then
+    CHECKSUM_LINE=$(
+        awk -v asset="$ASSET_NAME" \
+            '$2 == asset { print; found = 1 } END { if (!found) exit 1 }' \
+            "${TMP_DIR}/sha256sums.txt"
+    ) || {
+        echo -e "${RED}No checksum found for ${ASSET_NAME}; refusing to install an unverified binary.${NC}"
+        exit 1
+    }
+
     if command -v sha256sum >/dev/null 2>&1; then
-        (cd "$TMP_DIR" && grep "  ${ASSET_NAME}$" sha256sums.txt | sha256sum -c -)
+        (cd "$TMP_DIR" && printf '%s\n' "$CHECKSUM_LINE" | sha256sum -c -)
     elif command -v shasum >/dev/null 2>&1; then
-        (cd "$TMP_DIR" && grep "  ${ASSET_NAME}$" sha256sums.txt | shasum -a 256 -c -)
+        (cd "$TMP_DIR" && printf '%s\n' "$CHECKSUM_LINE" | shasum -a 256 -c -)
     else
         echo -e "${RED}No sha256 tool found; install sha256sum or shasum to verify downloads.${NC}"
         exit 1
     fi
     echo -e "${GREEN}Checksum verified.${NC}"
 else
-    echo -e "${RED}Checksum file not found; skipping verification for this release.${NC}"
+    echo -e "${RED}Checksum file could not be downloaded; refusing to install an unverified binary.${NC}"
+    exit 1
 fi
 
 echo -e "${BLUE}>>> Extracting...${NC}"

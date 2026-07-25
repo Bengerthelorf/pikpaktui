@@ -1,6 +1,21 @@
 use crate::pikpak::EntryKind;
 use anyhow::{Result, anyhow};
 
+fn destination_path(
+    output: Option<&str>,
+    positional_output: Option<&str>,
+    remote_name: &str,
+) -> std::path::PathBuf {
+    match output.or(positional_output) {
+        Some(explicit) => std::path::PathBuf::from(explicit),
+        None => std::path::PathBuf::from(crate::pikpak::sanitize_filename(remote_name)),
+    }
+}
+
+fn target_destination(target_dir: &std::path::Path, remote_name: &str) -> std::path::PathBuf {
+    target_dir.join(crate::pikpak::sanitize_filename(remote_name))
+}
+
 pub fn run(args: &[String]) -> Result<()> {
     if args.is_empty() {
         return Err(anyhow!(
@@ -25,6 +40,9 @@ pub fn run(args: &[String]) -> Result<()> {
                     .map_err(|_| anyhow!("-j requires a positive integer"))?;
                 if jobs == 0 {
                     return Err(anyhow!("-j must be at least 1"));
+                }
+                if jobs > 16 {
+                    return Err(anyhow!("-j must be at most 16"));
                 }
             }
             "-o" | "--output" => {
@@ -83,7 +101,7 @@ pub fn run(args: &[String]) -> Result<()> {
                     "[dry-run] Would download '{}' ({}) -> '{}'",
                     name,
                     kind_tag,
-                    dir.join(&name).display()
+                    target_destination(dir, &name).display()
                 );
                 continue;
             }
@@ -108,7 +126,7 @@ pub fn run(args: &[String]) -> Result<()> {
                     return Err(anyhow!("{} file(s) failed in '{}'", failed, name));
                 }
             } else {
-                let dest = dir.join(&name);
+                let dest = target_destination(dir, &name);
                 if let Some(parent) = dest.parent()
                     && !parent.as_os_str().is_empty()
                 {
@@ -133,9 +151,7 @@ pub fn run(args: &[String]) -> Result<()> {
         let parent_id = client.resolve_path(&parent)?;
         let entry = super::find_entry(&client, &parent_id, &name)?;
 
-        let dest = std::path::PathBuf::from(
-            output.unwrap_or_else(|| paths.get(1).map(|s| s.as_ref()).unwrap_or(&name)),
-        );
+        let dest = destination_path(output, paths.get(1).map(|s| s.as_ref()), &name);
 
         if dry_run {
             let kind_tag = if entry.kind == EntryKind::Folder {
@@ -201,4 +217,42 @@ pub fn run(args: &[String]) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn jobs_above_sixteen_are_rejected_before_client_setup() {
+        let err = run(&["-j".into(), "17".into()]).unwrap_err();
+        assert!(
+            err.to_string().contains("at most 16"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    #[test]
+    fn implicit_destination_sanitizes_remote_path_components() {
+        assert_eq!(
+            destination_path(None, None, r"..\outside/file.txt"),
+            std::path::PathBuf::from("__outside_file.txt")
+        );
+        assert_eq!(
+            target_destination(std::path::Path::new("/safe"), r"..\outside/file.txt"),
+            std::path::PathBuf::from("/safe/__outside_file.txt")
+        );
+    }
+
+    #[test]
+    fn explicit_destination_is_preserved_verbatim() {
+        assert_eq!(
+            destination_path(Some("../chosen/name"), None, "remote.txt"),
+            std::path::PathBuf::from("../chosen/name")
+        );
+        assert_eq!(
+            destination_path(None, Some("../positional/name"), "remote.txt"),
+            std::path::PathBuf::from("../positional/name")
+        );
+    }
 }

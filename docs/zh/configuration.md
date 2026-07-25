@@ -8,13 +8,13 @@ locale: zh
 
 所有配置文件位于 `~/.config/pikpaktui/` 目录下。
 
-## 账号凭据——`login.yaml`
+## 账号凭据——`login.toml`
 
 存储 PikPak 账号信息，首次登录（TUI 或 `pikpaktui login`）时自动创建。
 
-```yaml
-username: "you@example.com"
-password: "your-password"
+```toml
+username = "you@example.com"
+password = "your-password"
 ```
 
 也可通过环境变量传入（用于 `login` 命令）：
@@ -30,9 +30,9 @@ PIKPAK_USER=you@example.com PIKPAK_PASS=yourpassword pikpaktui login
 ## TUI 与 CLI 设置——`config.toml`
 
 主配置文件，可手动编辑，也可在 TUI 设置面板（`,`）中修改后按 `s` 保存。
+这些标量设置是 TOML 顶层字段，请勿放进 `[tui]` 表。
 
 ```toml
-[tui]
 # 界面
 nerd_font = false           # TUI 中使用 Nerd Font 图标（需要 Nerd Font 终端字体）
 border_style = "thick"      # "rounded" | "thick" | "thick-rounded" | "double"
@@ -59,7 +59,7 @@ cli_nerd_font = false       # CLI 输出中使用 Nerd Font 图标
 player = "mpv"              # 外部视频播放器命令；首次播放视频时在 TUI 设置
 
 # 下载
-download_jobs = 1           # 并发下载线程数（1–16）
+download_jobs = 1           # TUI 下载工作线程数（设置界面范围 1–16）
 update_check = "notify"     # "notify" | "quiet" | "off"
 ```
 
@@ -68,7 +68,7 @@ update_check = "notify"     # "notify" | "quiet" | "off"
 按终端模拟器配置图片渲染协议，键名为 `$TERM_PROGRAM` 环境变量的值。首次使用该终端时自动添加条目。
 
 ```toml
-[tui.image_protocols]
+[image_protocols]
 ghostty = "kitty"
 "iTerm.app" = "iterm2"
 WezTerm = "auto"
@@ -81,7 +81,7 @@ WezTerm = "auto"
 当 `color_scheme = "custom"` 时生效，每个值为 `[R, G, B]` 数组（0–255）。
 
 ```toml
-[tui.custom_colors]
+[custom_colors]
 folder   = [92, 176, 255]   # 浅蓝
 archive  = [255, 102, 102]  # 浅红
 image    = [255, 102, 255]  # 浅品红
@@ -130,5 +130,5 @@ update_check = "notify"
 ```
 
 :::callout[并发下载]{kind="info"}
-将 `download_jobs` 设为 2–4 通常可以显著提升大批量下载速度，最大值为 16。
+`download_jobs` 仅控制 TUI 下载队列；CLI 递归下载文件夹请使用 `download -j <n>`。通常建议设为 2–4，TUI 设置界面可选 1–16。
 :::
