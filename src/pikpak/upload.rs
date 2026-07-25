@@ -648,17 +648,16 @@ mod tests {
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
             let mut request_index = 0usize;
             while std::time::Instant::now() < deadline {
-                let (mut stream, _) = match listener.accept() {
-                    Ok(pair) => pair,
+                let mut stream = match crate::pikpak::accept_test_connection(&listener) {
+                    Ok(stream) => stream,
                     Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                         std::thread::sleep(std::time::Duration::from_millis(5));
                         continue;
                     }
                     Err(e) => panic!("accept failed: {e}"),
                 };
-                let mut buf = [0u8; 8192];
-                let n = stream.read(&mut buf).unwrap();
-                let request = String::from_utf8_lossy(&buf[..n]);
+                let request =
+                    crate::pikpak::read_test_http_request(&mut stream).unwrap_or_default();
                 request_index += 1;
 
                 match request_index {
