@@ -1100,6 +1100,107 @@ mod tests {
         write_response_with_headers(stream, code, reason, body, "");
     }
 
+    fn read_http_request(reader: &mut impl std::io::Read) -> std::io::Result<String> {
+        const MAX_REQUEST_SIZE: usize = 64 * 1024;
+
+        let mut request = Vec::new();
+        let expected_len = loop {
+            if let Some(header_end) = request
+                .windows(4)
+                .position(|window| window == b"\r\n\r\n")
+                .map(|position| position + 4)
+            {
+                let headers = std::str::from_utf8(&request[..header_end])
+                    .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+                let content_length = headers
+                    .lines()
+                    .filter_map(|line| line.split_once(':'))
+                    .find_map(|(name, value)| {
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>())
+                    })
+                    .transpose()
+                    .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?
+                    .unwrap_or(0);
+                break header_end.checked_add(content_length).ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "HTTP request length overflow",
+                    )
+                })?;
+            }
+
+            if request.len() >= MAX_REQUEST_SIZE {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "HTTP test request headers are too large",
+                ));
+            }
+            let mut buf = [0u8; 8192];
+            let n = reader.read(&mut buf)?;
+            if n == 0 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "HTTP test request ended before its headers",
+                ));
+            }
+            request.extend_from_slice(&buf[..n]);
+        };
+
+        if expected_len > MAX_REQUEST_SIZE {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "HTTP test request is too large",
+            ));
+        }
+        while request.len() < expected_len {
+            let mut buf = [0u8; 8192];
+            let remaining = expected_len - request.len();
+            let read_len = remaining.min(buf.len());
+            let n = reader.read(&mut buf[..read_len])?;
+            if n == 0 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "HTTP test request ended before its declared body",
+                ));
+            }
+            request.extend_from_slice(&buf[..n]);
+        }
+        request.truncate(expected_len);
+        Ok(String::from_utf8_lossy(&request).into_owned())
+    }
+
+    #[test]
+    fn mock_http_reader_waits_for_the_declared_request_body() {
+        struct ChunkedReader<R> {
+            inner: R,
+            max_chunk: usize,
+        }
+
+        impl<R: std::io::Read> std::io::Read for ChunkedReader<R> {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                let limit = buf.len().min(self.max_chunk);
+                self.inner.read(&mut buf[..limit])
+            }
+        }
+
+        let raw = concat!(
+            "POST /v1/shield/captcha/init HTTP/1.1\r\n",
+            "Host: 127.0.0.1\r\n",
+            "Content-Length: 11\r\n",
+            "\r\n",
+            "hello-world"
+        );
+        let mut reader = ChunkedReader {
+            inner: std::io::Cursor::new(raw.as_bytes()),
+            max_chunk: 7,
+        };
+
+        let request = read_http_request(&mut reader).unwrap();
+
+        assert_eq!(request, raw);
+    }
+
     fn write_response_with_headers(
         stream: &mut std::net::TcpStream,
         code: u16,
@@ -1189,9 +1290,7 @@ mod tests {
             while std::time::Instant::now() < deadline {
                 match listener.accept() {
                     Ok((mut stream, _)) => {
-                        let mut buf = [0u8; 8192];
-                        let n = std::io::Read::read(&mut stream, &mut buf).unwrap_or(0);
-                        let request = String::from_utf8_lossy(&buf[..n]).into_owned();
+                        let request = read_http_request(&mut stream).unwrap_or_default();
                         let first_line = request.lines().next().unwrap_or_default().to_string();
                         captured
                             .lock()
@@ -1257,9 +1356,7 @@ mod tests {
                     }
                     Err(e) => panic!("reactive captcha server accept failed: {e}"),
                 };
-                let mut buf = [0u8; 8192];
-                let n = std::io::Read::read(&mut stream, &mut buf).unwrap_or(0);
-                let request = String::from_utf8_lossy(&buf[..n]).into_owned();
+                let request = read_http_request(&mut stream).unwrap_or_default();
                 let first_line = request.lines().next().unwrap_or_default().to_string();
                 captured
                     .lock()
@@ -1344,9 +1441,7 @@ mod tests {
             while std::time::Instant::now() < deadline {
                 match listener.accept() {
                     Ok((mut stream, _)) => {
-                        let mut buf = [0u8; 8192];
-                        let n = std::io::Read::read(&mut stream, &mut buf).unwrap_or(0);
-                        let request = String::from_utf8_lossy(&buf[..n]);
+                        let request = read_http_request(&mut stream).unwrap_or_default();
                         let first_line = request.lines().next().unwrap_or_default();
                         if first_line.starts_with("POST /v1/shield/captcha/init") {
                             refreshes.fetch_add(1, Ordering::SeqCst);
