@@ -9,6 +9,9 @@ use serde::{Deserialize, Serialize};
 
 use super::{Entry, EntryKind, PikPak, sanitize_filename};
 
+const DEFAULT_DOWNLOAD_CONNECTIONS: usize = 4;
+const DEFAULT_DOWNLOAD_CHUNK_SIZE: u64 = 8 * 1024 * 1024;
+
 /// Sidecar path for in-progress data: "name.ext" downloads as "name.ext.part"
 /// and is renamed only after the byte count checks out.
 pub(crate) fn part_path(dest: &Path) -> std::path::PathBuf {
@@ -51,6 +54,29 @@ fn parse_content_range(value: &str) -> Result<(u64, u64)> {
         ));
     }
     Ok((start, end))
+}
+
+fn plan_parallel_ranges(
+    existing_size: u64,
+    total_size: u64,
+    chunk_size: u64,
+    connections: usize,
+) -> Vec<(u64, u64)> {
+    if existing_size >= total_size || chunk_size == 0 || connections == 0 {
+        return Vec::new();
+    }
+
+    (0..connections)
+        .scan(existing_size, |start, _| {
+            if *start >= total_size {
+                return None;
+            }
+            let end = start.saturating_add(chunk_size - 1).min(total_size - 1);
+            let range = (*start, end);
+            *start = end + 1;
+            Some(range)
+        })
+        .collect()
 }
 
 /// Prepare a resumable sidecar that is owned by exactly one remote file.
@@ -284,6 +310,138 @@ impl PikPak {
     }
 
     pub fn download_to(&self, file_id: &str, dest: &std::path::Path) -> Result<u64> {
+        self.download_to_with_connections_and_chunk_size(
+            file_id,
+            dest,
+            DEFAULT_DOWNLOAD_CONNECTIONS,
+            DEFAULT_DOWNLOAD_CHUNK_SIZE,
+        )
+    }
+
+    fn download_bounded_range(
+        &self,
+        url: &str,
+        start: u64,
+        end: u64,
+        total_size: u64,
+    ) -> Result<Option<Vec<u8>>> {
+        let response = self
+            .http
+            .get(url)
+            .header("Range", format!("bytes={start}-{end}"))
+            .send()
+            .context("download range request failed")?;
+
+        if response.status() == reqwest::StatusCode::OK {
+            return Ok(None);
+        }
+        if response.status() != reqwest::StatusCode::PARTIAL_CONTENT {
+            return Err(anyhow!("download range failed ({})", response.status()));
+        }
+
+        let value = response
+            .headers()
+            .get(reqwest::header::CONTENT_RANGE)
+            .ok_or_else(|| anyhow!("partial download response is missing Content-Range"))?
+            .to_str()
+            .context("partial download Content-Range is not valid text")?;
+        let (actual_start, actual_end) = parse_content_range(value)?;
+        let actual_total = value
+            .split_once('/')
+            .and_then(|(_, total)| total.parse::<u64>().ok())
+            .ok_or_else(|| anyhow!("invalid Content-Range total: '{value}'"))?;
+        if (actual_start, actual_end, actual_total) != (start, end, total_size) {
+            return Err(anyhow!(
+                "partial download returned bytes {actual_start}-{actual_end}/{actual_total}, expected {start}-{end}/{total_size}"
+            ));
+        }
+
+        let expected_len = end - start + 1;
+        let mut bytes = Vec::with_capacity(expected_len as usize);
+        response
+            .take(expected_len + 1)
+            .read_to_end(&mut bytes)
+            .context("download range body failed")?;
+        if bytes.len() as u64 != expected_len {
+            return Err(anyhow!(
+                "download range {start}-{end} returned {} bytes, expected {expected_len}",
+                bytes.len()
+            ));
+        }
+        Ok(Some(bytes))
+    }
+
+    fn download_parallel_attempt(
+        &self,
+        url: &str,
+        part: &Path,
+        existing_size: u64,
+        total_size: u64,
+        connections: usize,
+        chunk_size: u64,
+    ) -> Result<Option<u64>> {
+        let mut committed = existing_size;
+        while committed < total_size {
+            let ranges =
+                plan_parallel_ranges(committed, total_size, chunk_size, connections.max(1));
+            let results = std::thread::scope(|scope| {
+                ranges
+                    .iter()
+                    .map(|&(start, end)| {
+                        scope
+                            .spawn(move || self.download_bounded_range(url, start, end, total_size))
+                    })
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .map(|handle| {
+                        handle
+                            .join()
+                            .map_err(|_| anyhow!("download range worker panicked"))?
+                    })
+                    .collect::<Result<Vec<_>>>()
+            })?;
+
+            if results.iter().any(Option::is_none) {
+                return Ok(None);
+            }
+
+            let mut file = if committed > 0 {
+                fs::OpenOptions::new().append(true).open(part)?
+            } else {
+                fs::File::create(part)?
+            };
+            for bytes in results.into_iter().flatten() {
+                file.write_all(&bytes).context("download write failed")?;
+                committed += bytes.len() as u64;
+            }
+        }
+        Ok(Some(committed))
+    }
+
+    fn download_sequential_attempt(
+        &self,
+        url: &str,
+        part: &Path,
+        existing_size: u64,
+    ) -> Result<u64> {
+        let (response, start_offset) = self.download_stream(url, existing_size)?;
+        let mut file = if start_offset > 0 {
+            fs::OpenOptions::new().append(true).open(part)?
+        } else {
+            fs::File::create(part)?
+        };
+        let mut reader: Box<dyn io::Read> = Box::new(response);
+        let bytes = io::copy(&mut reader, &mut file).context("download write failed")?;
+        Ok(start_offset + bytes)
+    }
+
+    pub(crate) fn download_to_with_connections_and_chunk_size(
+        &self,
+        file_id: &str,
+        dest: &std::path::Path,
+        connections: usize,
+        chunk_size: u64,
+    ) -> Result<u64> {
         let info = self.file_info(file_id)?;
         let mut download_url = info
             .download_url()
@@ -304,17 +462,22 @@ impl PikPak {
                 part_size = 0;
             }
 
-            let attempt = (|| -> Result<u64> {
-                let (response, start_offset) = self.download_stream(&download_url, part_size)?;
-                let mut file = if start_offset > 0 {
-                    fs::OpenOptions::new().append(true).open(&part)?
-                } else {
-                    fs::File::create(&part)?
-                };
-                let mut reader: Box<dyn io::Read> = Box::new(response);
-                let bytes = io::copy(&mut reader, &mut file).context("download write failed")?;
-                Ok(start_offset + bytes)
-            })();
+            let attempt = if total_size > 0 && connections > 1 && chunk_size > 0 {
+                match self.download_parallel_attempt(
+                    &download_url,
+                    &part,
+                    part_size,
+                    total_size,
+                    connections,
+                    chunk_size,
+                ) {
+                    Ok(Some(written)) => Ok(written),
+                    Ok(None) => self.download_sequential_attempt(&download_url, &part, part_size),
+                    Err(e) => Err(e),
+                }
+            } else {
+                self.download_sequential_attempt(&download_url, &part, part_size)
+            };
 
             match attempt {
                 Ok(w) if total_size == 0 || w == total_size => break w,
@@ -405,6 +568,11 @@ impl PikPak {
         };
 
         let workers = workers.max(1);
+        let connections_per_file = if workers < DEFAULT_DOWNLOAD_CONNECTIONS {
+            DEFAULT_DOWNLOAD_CONNECTIONS / workers
+        } else {
+            1
+        };
 
         let entries = match self.ls(folder_id) {
             Ok(e) => e,
@@ -469,7 +637,12 @@ impl PikPak {
                         let msg = rx.lock().unwrap_or_else(|e| e.into_inner()).recv();
                         let Ok((entry, dest)) = msg else { break };
                         println!("  {}", dest.display());
-                        match self.download_to(&entry.id, &dest) {
+                        match self.download_to_with_connections_and_chunk_size(
+                            &entry.id,
+                            &dest,
+                            connections_per_file,
+                            DEFAULT_DOWNLOAD_CHUNK_SIZE,
+                        ) {
                             Ok(_) => {
                                 ok.fetch_add(1, Ordering::Relaxed);
                             }
@@ -557,6 +730,15 @@ mod tests {
         assert!(parse_content_range("items 42-99/100").is_err());
         assert!(parse_content_range("bytes 100-42/101").is_err());
         assert!(parse_content_range("bytes nope-99/100").is_err());
+    }
+
+    #[test]
+    fn parallel_range_plan_is_bounded_contiguous_and_resumable() {
+        assert_eq!(
+            plan_parallel_ranges(5, 14, 4, 4),
+            vec![(5, 8), (9, 12), (13, 13)]
+        );
+        assert!(plan_parallel_ranges(14, 14, 4, 4).is_empty());
     }
 
     #[test]

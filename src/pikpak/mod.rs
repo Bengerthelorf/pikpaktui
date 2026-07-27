@@ -1140,22 +1140,31 @@ mod tests {
                     write_response(&mut stream, 200, "OK", body.as_bytes());
                 } else if first_line.starts_with("GET /download") {
                     hits.fetch_add(1, Ordering::SeqCst);
-                    let range_start = request.lines().find_map(|line| {
+                    let range_bounds = request.lines().find_map(|line| {
                         line.to_ascii_lowercase()
                             .strip_prefix("range: bytes=")
-                            .and_then(|range| range.strip_suffix('-'))
-                            .and_then(|start| start.parse::<usize>().ok())
+                            .and_then(|range| range.split_once('-'))
+                            .and_then(|(start, end)| {
+                                Some((
+                                    start.parse::<usize>().ok()?,
+                                    (!end.is_empty())
+                                        .then(|| end.parse::<usize>().ok())
+                                        .flatten(),
+                                ))
+                            })
                     });
 
-                    if !ignore_range && let Some(start) = range_start {
-                        let end = content.len().saturating_sub(1);
+                    if !ignore_range && let Some((start, requested_end)) = range_bounds {
+                        let end = requested_end
+                            .unwrap_or_else(|| content.len().saturating_sub(1))
+                            .min(content.len().saturating_sub(1));
                         let content_range =
                             format!("Content-Range: bytes {start}-{end}/{}\r\n", content.len());
                         write_response_with_headers(
                             &mut stream,
                             206,
                             "Partial Content",
-                            &content[start..],
+                            &content[start..=end],
                             &content_range,
                         );
                     } else {
@@ -1858,7 +1867,7 @@ mod tests {
 
     #[test]
     fn download_to_reports_size_when_server_ignores_range() {
-        let server = start_mock_download_server(b"hello", true, 2);
+        let server = start_mock_download_server(b"hello", true, 3);
         let dir = temp_test_dir("download-range-ignored");
         let dest = dir.join("file.bin");
         std::fs::write(&dest, b"he").unwrap();
@@ -1868,7 +1877,7 @@ mod tests {
 
         assert_eq!(total, 5);
         assert_eq!(std::fs::read(&dest).unwrap(), b"hello");
-        assert_eq!(server.download_hits.load(Ordering::SeqCst), 1);
+        assert_eq!(server.download_hits.load(Ordering::SeqCst), 2);
         server.handle.join().unwrap();
         std::fs::remove_dir_all(dir).unwrap();
     }
@@ -1895,6 +1904,30 @@ mod tests {
             !identity_path.exists(),
             "completed download must remove partial identity"
         );
+        server.handle.join().unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn download_to_fetches_bounded_ranges_and_commits_them_in_order() {
+        let content: &'static [u8] = Box::leak(
+            (0..3500)
+                .map(|i| (i % 251) as u8)
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
+        );
+        let server = start_mock_download_server(content, false, 5);
+        let dir = temp_test_dir("download-parallel-ranges");
+        let dest = dir.join("file.bin");
+        let client = test_client(server.base_url, dir.join("session.json"));
+
+        let total = client
+            .download_to_with_connections_and_chunk_size("file", &dest, 4, 1024)
+            .unwrap();
+
+        assert_eq!(total, content.len() as u64);
+        assert_eq!(std::fs::read(&dest).unwrap(), content);
+        assert_eq!(server.download_hits.load(Ordering::SeqCst), 4);
         server.handle.join().unwrap();
         std::fs::remove_dir_all(dir).unwrap();
     }
