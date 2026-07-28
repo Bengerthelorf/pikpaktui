@@ -44,6 +44,25 @@ enum LocalPathInputResult {
     Cancelled,
 }
 
+fn mouse_list_index(
+    col: u16,
+    row: u16,
+    area: ratatui::layout::Rect,
+    first_row: u16,
+    offset: usize,
+    visible: usize,
+) -> Option<usize> {
+    let inside = col > area.x
+        && col < area.x.saturating_add(area.width).saturating_sub(1)
+        && row >= area.y
+        && row < area.y.saturating_add(area.height);
+    if inside && row >= first_row && (row - first_row) < visible as u16 {
+        Some(offset + (row - first_row) as usize)
+    } else {
+        None
+    }
+}
+
 enum PathInputContext {
     SingleItem { source: Entry },
     Cart,
@@ -2809,6 +2828,41 @@ impl App {
             } else if *selected < SETTINGS_LAST_INDEX {
                 *selected += 1;
             }
+        } else if let InputMode::MySharesView {
+            shares, selected, ..
+        } = &mut self.input
+        {
+            if up {
+                *selected = selected.saturating_sub(1);
+            } else if !shares.is_empty() {
+                *selected = (*selected + 1).min(shares.len() - 1);
+            }
+        } else if let InputMode::PlayPicker {
+            medias, selected, ..
+        } = &mut self.input
+        {
+            if up {
+                *selected = selected.saturating_sub(1);
+            } else if !medias.is_empty() {
+                *selected = (*selected + 1).min(medias.len() - 1);
+            }
+        } else if let InputMode::CustomColorSettings { selected, .. } = &mut self.input {
+            if up {
+                *selected = selected.saturating_sub(1);
+            } else {
+                *selected = (*selected + 1).min(7);
+            }
+        } else if let InputMode::ImageProtocolSettings {
+            selected,
+            terminals,
+            ..
+        } = &mut self.input
+        {
+            if up {
+                *selected = selected.saturating_sub(1);
+            } else if !terminals.is_empty() {
+                *selected = (*selected + 1).min(terminals.len() - 1);
+            }
         }
     }
 
@@ -2823,6 +2877,74 @@ impl App {
         // The logs overlay floats above a pane; don't click through it.
         if self.show_logs_overlay && self.is_in_rect(col, row, self.logs_overlay_area.get()) {
             return;
+        }
+
+        let mouse_list_area = self.mouse_list_area.get();
+        let first_row = self.mouse_list_first_row.get();
+        let visible = self.mouse_list_visible.get();
+        let clicked_list_index = mouse_list_index(
+            col,
+            row,
+            mouse_list_area,
+            first_row,
+            self.mouse_list_offset.get(),
+            visible,
+        );
+        if let Some(clicked_idx) = clicked_list_index {
+            let mut handled = true;
+            let mut activate = false;
+            match &mut self.input {
+                InputMode::CartView if clicked_idx < self.cart.len() => {
+                    self.cart_selected = clicked_idx;
+                    activate = double;
+                }
+                InputMode::DownloadView
+                    if self.download_view_mode == crate::tui::DownloadViewMode::Expanded
+                        && clicked_idx < self.download_state.tasks.len() =>
+                {
+                    self.download_state.selected = clicked_idx;
+                }
+                InputMode::OfflineTasksView {
+                    tasks, selected, ..
+                } if clicked_idx < tasks.len() => {
+                    *selected = clicked_idx;
+                }
+                InputMode::TrashView {
+                    entries, selected, ..
+                } if clicked_idx < entries.len() => {
+                    *selected = clicked_idx;
+                    self.trash_selected = clicked_idx;
+                    activate = double;
+                }
+                InputMode::MySharesView {
+                    shares, selected, ..
+                } if clicked_idx < shares.len() => {
+                    *selected = clicked_idx;
+                }
+                InputMode::PlayPicker {
+                    medias, selected, ..
+                } if clicked_idx < medias.len() => {
+                    *selected = clicked_idx;
+                    activate = double;
+                }
+                InputMode::CustomColorSettings { selected, .. } if clicked_idx < 8 => {
+                    *selected = clicked_idx;
+                }
+                InputMode::ImageProtocolSettings {
+                    terminals,
+                    selected,
+                    ..
+                } if clicked_idx < terminals.len() => {
+                    *selected = clicked_idx;
+                }
+                _ => handled = false,
+            }
+            if handled {
+                if activate {
+                    let _ = self.handle_key(KeyCode::Enter, KeyModifiers::NONE);
+                }
+                return;
+            }
         }
 
         if matches!(self.input, InputMode::Settings { .. }) {
@@ -3610,6 +3732,28 @@ impl App {
                 _ => None,
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod mouse_list_tests {
+    use super::mouse_list_index;
+    use ratatui::layout::Rect;
+
+    #[test]
+    fn list_hit_testing_maps_visible_rows_through_scroll_offset() {
+        let area = Rect::new(10, 5, 30, 12);
+        assert_eq!(mouse_list_index(12, 7, area, 7, 4, 6), Some(4));
+        assert_eq!(mouse_list_index(12, 10, area, 7, 4, 6), Some(7));
+    }
+
+    #[test]
+    fn list_hit_testing_rejects_borders_and_rows_beyond_items() {
+        let area = Rect::new(10, 5, 30, 12);
+        assert_eq!(mouse_list_index(10, 7, area, 7, 0, 3), None);
+        assert_eq!(mouse_list_index(9, 7, area, 7, 0, 3), None);
+        assert_eq!(mouse_list_index(12, 6, area, 7, 0, 3), None);
+        assert_eq!(mouse_list_index(12, 10, area, 7, 0, 3), None);
     }
 }
 

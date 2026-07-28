@@ -50,6 +50,19 @@ impl App {
         text_input_view(value, self.text_cursor, max_width, self.cursor_visible)
     }
 
+    pub(super) fn set_mouse_list_rows(
+        &self,
+        area: Rect,
+        first_row: u16,
+        offset: usize,
+        visible: usize,
+    ) {
+        self.mouse_list_area.set(area);
+        self.mouse_list_first_row.set(first_row);
+        self.mouse_list_offset.set(offset);
+        self.mouse_list_visible.set(visible);
+    }
+
     /// Returns `true` when a popup overlay is active that may cover the preview pane.
     /// Used to suppress terminal-image-protocol rendering so that iTerm2 / Kitty
     /// don't leave stale image data under the overlay.
@@ -93,6 +106,12 @@ impl App {
                 let mut lines = vec![Line::from("")];
                 let max_visible = list_area.height.saturating_sub(4) as usize;
                 let scroll_offset = widgets::scroll_offset(selected, max_visible);
+                self.set_mouse_list_rows(
+                    list_area,
+                    list_area.y.saturating_add(2),
+                    scroll_offset,
+                    entries.len().saturating_sub(scroll_offset).min(max_visible),
+                );
                 let name_max = list_area.width.saturating_sub(20) as usize;
 
                 for (i, entry) in entries
@@ -179,6 +198,12 @@ impl App {
                 let mut lines = vec![Line::from("")];
                 let max_visible = 15;
                 let scroll_offset = widgets::scroll_offset(selected, max_visible);
+                self.set_mouse_list_rows(
+                    area,
+                    area.y.saturating_add(2),
+                    scroll_offset,
+                    entries.len().saturating_sub(scroll_offset).min(max_visible),
+                );
 
                 for (i, entry) in entries
                     .iter()
@@ -298,6 +323,12 @@ impl App {
         let height = std::cmp::min(50, 20 + medias.len() as u16 * 2);
         let area = centered_rect(60, height, f.area());
         clear_overlay_area(f, area);
+        self.set_mouse_list_rows(
+            area,
+            area.y.saturating_add(4),
+            0,
+            medias.len().min(area.height.saturating_sub(6) as usize),
+        );
 
         let truncated_name = truncate_name(name, 40);
 
@@ -456,6 +487,8 @@ impl App {
     }
 
     pub(super) fn draw(&self, f: &mut Frame) {
+        self.mouse_list_area.set(Rect::default());
+        self.mouse_list_visible.set(0);
         match &self.input {
             InputMode::Login { .. } => self.draw_login_screen(f),
             InputMode::MovePicker { .. } | InputMode::CopyPicker { .. } => self.draw_picker(f),
@@ -2653,6 +2686,12 @@ impl App {
             ));
         } else {
             let cart_offset = widgets::scroll_offset(self.cart_selected, max_items);
+            self.set_mouse_list_rows(
+                area,
+                area.y.saturating_add(2),
+                cart_offset,
+                self.cart.len().saturating_sub(cart_offset).min(max_items),
+            );
             for (i, entry) in self
                 .cart
                 .iter()
@@ -2918,6 +2957,12 @@ impl App {
 
             let max_visible = 15;
             let task_offset = widgets::scroll_offset(selected, max_visible);
+            self.set_mouse_list_rows(
+                area,
+                area.y.saturating_add(2),
+                task_offset,
+                tasks.len().saturating_sub(task_offset).min(max_visible),
+            );
             for (i, task) in tasks.iter().enumerate().skip(task_offset).take(max_visible) {
                 let is_sel = i == selected;
                 let prefix = if is_sel { " \u{203a} " } else { "   " };
@@ -3699,6 +3744,12 @@ impl App {
         let area = centered_rect(70, 60, f.area());
         self.settings_area.set(area);
         clear_overlay_area(f, area);
+        self.set_mouse_list_rows(
+            area,
+            area.y.saturating_add(4),
+            0,
+            terminals.len().min(area.height.saturating_sub(6) as usize),
+        );
 
         let mut lines = vec![
             Line::from(""),
@@ -3797,6 +3848,12 @@ impl App {
         let area = centered_rect(70, 70, f.area());
         self.settings_area.set(area);
         clear_overlay_area(f, area);
+        self.set_mouse_list_rows(
+            area,
+            area.y.saturating_add(2),
+            0,
+            8usize.min(area.height.saturating_sub(4) as usize),
+        );
 
         let colors = [
             ("Folder", draft.custom_colors.folder),
@@ -4032,6 +4089,12 @@ impl App {
             let name_col = list_area.width.saturating_sub(PREFIX_W + BADGE_W + 2) as usize;
             let usable = list_area.height.saturating_sub(3) as usize;
             let scroll_offset = widgets::scroll_offset(selected, usable);
+            self.set_mouse_list_rows(
+                list_area,
+                list_area.y.saturating_add(2),
+                scroll_offset,
+                shares.len().saturating_sub(scroll_offset).min(usable),
+            );
 
             let mut list_lines = vec![Line::from("")];
             for (i, share) in shares.iter().enumerate().skip(scroll_offset).take(usable) {

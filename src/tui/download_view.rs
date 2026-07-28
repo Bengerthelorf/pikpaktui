@@ -249,6 +249,14 @@ impl App {
     /// Draw download list (left top)
     fn draw_download_list(&self, f: &mut Frame, area: ratatui::layout::Rect) {
         let ds = &self.download_state;
+        let visible = area.height.saturating_sub(2) as usize;
+        let offset = super::widgets::scroll_offset(ds.selected, visible);
+        self.set_mouse_list_rows(
+            area,
+            area.y.saturating_add(1),
+            offset,
+            ds.tasks.len().saturating_sub(offset).min(visible),
+        );
         let done = ds.done_count();
         let total = ds.tasks.len();
         let title = if self.loading {
