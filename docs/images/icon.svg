@@ -1,39 +1,39 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#0f172a"/>
-      <stop offset="100%" stop-color="#1e293b"/>
-    </linearGradient>
-    <linearGradient id="g" x1="80" y1="80" x2="440" y2="400" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#38bdf8"/>
-      <stop offset="60%" stop-color="#818cf8"/>
-      <stop offset="100%" stop-color="#c084fc"/>
-    </linearGradient>
-  </defs>
+  <rect width="512" height="512" rx="96" fill="#3478F6"/>
 
-  <rect width="512" height="512" rx="96" fill="url(#bg)"/>
+  <!-- Open storage box -->
+  <path
+    d="M96 208H416V376C416 394 402 408 384 408H128C110 408 96 394 96 376V208Z"
+    fill="#FCFCFA"
+  />
+  <path
+    d="M96 208L119 157C123 148 131 143 141 142L239 130C247 129 252 137 249 145L232 187C229 194 222 198 215 199L96 208Z"
+    fill="#FCFCFA"
+  />
+  <path
+    d="M416 208L393 157C389 148 381 143 371 142L273 130C265 129 260 137 263 145L280 187C283 194 290 198 297 199L416 208Z"
+    fill="#FCFCFA"
+  />
 
-  <!-- Cloud -->
-  <path d="
-    M 130 330
-    Q  90 330  90 290
-    Q  90 255 120 245
-    Q 110 200 150 175
-    Q 190 150 235 165
-    Q 260 125 310 130
-    Q 360 135 375 175
-    Q 420 180 425 220
-    Q 430 260 400 280
-    Q 425 290 425 320
-    Q 425 355 390 360
-    L 130 360
-    Q  95 360  95 330
-    Z
-  " fill="url(#g)"/>
-
-  <!-- ">_" prompt inside the cloud -->
-  <!-- ">" chevron -->
-  <path d="M 165 225 L 255 275 L 165 325" stroke="#0f172a" stroke-width="28" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-  <!-- "_" underscore -->
-  <line x1="280" y1="325" x2="365" y2="325" stroke="#0f172a" stroke-width="28" stroke-linecap="round"/>
+  <!-- >_< -->
+  <path
+    d="M158 270L211 306L158 342"
+    stroke="#3478F6"
+    stroke-width="24"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <path
+    d="M354 270L301 306L354 342"
+    stroke="#3478F6"
+    stroke-width="24"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <path
+    d="M226 342H286"
+    stroke="#3478F6"
+    stroke-width="24"
+    stroke-linecap="round"
+  />
 </svg>
