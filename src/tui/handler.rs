@@ -12,8 +12,8 @@ use super::completion::PathInput;
 use super::download::{DownloadTask, TaskStatus};
 use super::local_completion::LocalPathInput;
 use super::{
-    App, AsyncRequestKind, InputMode, LoginField, OpResult, PickerState, PlayOption, PreviewState,
-    handle_text_input, widgets,
+    App, AsyncRequestKind, InputMode, LoginField, NORMAL_ACTIONS, OpResult, PickerState,
+    PlayOption, PreviewState, handle_text_input, widgets,
 };
 
 /// Index of the last selectable Settings row. MUST match the item layout in
@@ -186,6 +186,36 @@ impl App {
             InputMode::Normal => {
                 self.text_cursor = usize::MAX;
                 self.handle_normal_key(code, modifiers)
+            }
+            InputMode::ActionMenu { mut selected } => {
+                match code {
+                    KeyCode::Esc | KeyCode::Char('?') => {}
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        selected = (selected + 1).min(NORMAL_ACTIONS.len().saturating_sub(1));
+                        self.input = InputMode::ActionMenu { selected };
+                    }
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        selected = selected.saturating_sub(1);
+                        self.input = InputMode::ActionMenu { selected };
+                    }
+                    KeyCode::Home => {
+                        self.input = InputMode::ActionMenu { selected: 0 };
+                    }
+                    KeyCode::End => {
+                        self.input = InputMode::ActionMenu {
+                            selected: NORMAL_ACTIONS.len().saturating_sub(1),
+                        };
+                    }
+                    KeyCode::Enter => {
+                        if let Some(action) = NORMAL_ACTIONS.get(selected) {
+                            return self.handle_normal_key(action.key, KeyModifiers::NONE);
+                        }
+                    }
+                    _ => {
+                        self.input = InputMode::ActionMenu { selected };
+                    }
+                }
+                Ok(false)
             }
             InputMode::Rename { mut value } => {
                 if let Some(done) =
@@ -1005,6 +1035,9 @@ impl App {
                     draft: self.config.clone(),
                     modified: false,
                 };
+            }
+            KeyCode::Char('?') => {
+                self.input = InputMode::ActionMenu { selected: 0 };
             }
             KeyCode::Char(' ') => {
                 if let Some(entry) = self.current_entry().cloned() {
@@ -2863,6 +2896,12 @@ impl App {
             } else if !terminals.is_empty() {
                 *selected = (*selected + 1).min(terminals.len() - 1);
             }
+        } else if let InputMode::ActionMenu { selected } = &mut self.input {
+            if up {
+                *selected = selected.saturating_sub(1);
+            } else {
+                *selected = (*selected + 1).min(NORMAL_ACTIONS.len().saturating_sub(1));
+            }
         }
     }
 
@@ -2936,6 +2975,10 @@ impl App {
                     ..
                 } if clicked_idx < terminals.len() => {
                     *selected = clicked_idx;
+                }
+                InputMode::ActionMenu { selected } if clicked_idx < NORMAL_ACTIONS.len() => {
+                    *selected = clicked_idx;
+                    activate = double;
                 }
                 _ => handled = false,
             }

@@ -100,6 +100,126 @@ pub(crate) struct PlayOption {
     pub available: bool,
 }
 
+#[derive(Clone, Copy)]
+struct ActionItem {
+    key: KeyCode,
+    shortcut: &'static str,
+    label: &'static str,
+}
+
+const NORMAL_ACTIONS: &[ActionItem] = &[
+    ActionItem {
+        key: KeyCode::Enter,
+        shortcut: "Enter",
+        label: "Open folder / play video",
+    },
+    ActionItem {
+        key: KeyCode::Char(' '),
+        shortcut: "Space",
+        label: "Show file or folder information",
+    },
+    ActionItem {
+        key: KeyCode::Char('p'),
+        shortcut: "p",
+        label: "Preview selected file",
+    },
+    ActionItem {
+        key: KeyCode::Char('w'),
+        shortcut: "w",
+        label: "Choose playback stream",
+    },
+    ActionItem {
+        key: KeyCode::Char('a'),
+        shortcut: "a",
+        label: "Add or remove selected item from cart",
+    },
+    ActionItem {
+        key: KeyCode::Char('A'),
+        shortcut: "A",
+        label: "Open cart",
+    },
+    ActionItem {
+        key: KeyCode::Char('D'),
+        shortcut: "D",
+        label: "Open downloads",
+    },
+    ActionItem {
+        key: KeyCode::Char('M'),
+        shortcut: "M",
+        label: "Open my shares",
+    },
+    ActionItem {
+        key: KeyCode::Char('m'),
+        shortcut: "m",
+        label: "Move selected item",
+    },
+    ActionItem {
+        key: KeyCode::Char('c'),
+        shortcut: "c",
+        label: "Copy selected item",
+    },
+    ActionItem {
+        key: KeyCode::Char('n'),
+        shortcut: "n",
+        label: "Rename selected item",
+    },
+    ActionItem {
+        key: KeyCode::Char('d'),
+        shortcut: "d",
+        label: "Delete selected item",
+    },
+    ActionItem {
+        key: KeyCode::Char('f'),
+        shortcut: "f",
+        label: "Create folder",
+    },
+    ActionItem {
+        key: KeyCode::Char('s'),
+        shortcut: "s",
+        label: "Star or unstar selected item",
+    },
+    ActionItem {
+        key: KeyCode::Char('y'),
+        shortcut: "y",
+        label: "Copy download link",
+    },
+    ActionItem {
+        key: KeyCode::Char('u'),
+        shortcut: "u",
+        label: "Upload file or folder",
+    },
+    ActionItem {
+        key: KeyCode::Char('o'),
+        shortcut: "o",
+        label: "Create cloud download",
+    },
+    ActionItem {
+        key: KeyCode::Char('O'),
+        shortcut: "O",
+        label: "Open offline tasks",
+    },
+    ActionItem {
+        key: KeyCode::Char('t'),
+        shortcut: "t",
+        label: "Open trash",
+    },
+    ActionItem {
+        key: KeyCode::Char(','),
+        shortcut: ",",
+        label: "Open settings",
+    },
+    ActionItem {
+        key: KeyCode::Char('l'),
+        shortcut: "l",
+        label: "Toggle logs",
+    },
+    ActionItem {
+        key: KeyCode::Char('r'),
+        shortcut: "r",
+        label: "Refresh current folder",
+    },
+];
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AsyncRequestKind {
     Info,
@@ -199,6 +319,9 @@ enum InputMode {
         logging_in: bool,
     },
     Normal,
+    ActionMenu {
+        selected: usize,
+    },
     Rename {
         value: String,
     },
@@ -1697,8 +1820,8 @@ fn folder_listing_matches(
 #[cfg(test)]
 mod folder_listing_result_tests {
     use super::{
-        App, AsyncRequest, AsyncRequestKind, InputMode, OpResult, PreviewState, StatusKind,
-        folder_listing_matches,
+        App, AsyncRequest, AsyncRequestKind, InputMode, NORMAL_ACTIONS, OpResult, PreviewState,
+        StatusKind, folder_listing_matches,
     };
     use crate::config::TuiConfig;
     use crate::pikpak::{Entry, EntryKind, FileInfoResponse, PikPak};
@@ -2085,6 +2208,25 @@ mod folder_listing_result_tests {
 
         app.push_log("Uploaded file".to_string());
         assert_eq!(app.status_message.as_ref().unwrap().kind, StatusKind::Info);
+    }
+
+    #[test]
+    fn action_menu_runs_the_selected_normal_mode_action() {
+        let mut app = test_app();
+        app.input = InputMode::Normal;
+        app.handle_key(KeyCode::Char('?'), KeyModifiers::NONE)
+            .unwrap();
+        assert!(matches!(app.input, InputMode::ActionMenu { selected: 0 }));
+
+        let settings_index = NORMAL_ACTIONS
+            .iter()
+            .position(|action| action.key == KeyCode::Char(','))
+            .unwrap();
+        app.input = InputMode::ActionMenu {
+            selected: settings_index,
+        };
+        app.handle_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+        assert!(matches!(app.input, InputMode::Settings { .. }));
     }
 }
 

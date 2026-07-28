@@ -18,8 +18,8 @@ use super::image_render::{
 use super::local_completion::LocalPathInput;
 use super::widgets;
 use super::{
-    App, InputMode, LoginField, PickerState, PreviewState, SPINNER_FRAMES, StatusKind,
-    centered_rect, format_size, pad_to_width, text_input_view, truncate_name,
+    App, InputMode, LoginField, NORMAL_ACTIONS, PickerState, PreviewState, SPINNER_FRAMES,
+    StatusKind, centered_rect, format_size, pad_to_width, text_input_view, truncate_name,
 };
 
 /// One Settings row: (label, description, current-value string).
@@ -1467,6 +1467,7 @@ impl App {
                     (":", "goto"),
                     ("u", "upload"),
                     ("r", "refresh"),
+                    ("?", "actions"),
                     ("h", "help"),
                     ("q", "quit"),
                 ]
@@ -1591,6 +1592,9 @@ impl App {
             }
             InputMode::ConfirmDiscardSettings { .. } => {
                 vec![("y/Enter", "discard"), ("n/Esc", "keep editing")]
+            }
+            InputMode::ActionMenu { .. } => {
+                vec![("j/k", "nav"), ("Enter", "run"), ("Esc/?", "close")]
             }
             InputMode::CustomColorSettings { editing_rgb, .. } => {
                 if *editing_rgb {
@@ -1727,6 +1731,9 @@ impl App {
                     input,
                     cur,
                 );
+            }
+            InputMode::ActionMenu { selected } => {
+                self.draw_action_menu(f, *selected);
             }
             InputMode::Rename { value } => {
                 self.draw_rename_overlay(f, value, cur);
@@ -2461,6 +2468,7 @@ impl App {
                             ("l", "Toggle logs"),
                             (",", "Settings"),
                             ("h", "Toggle help"),
+                            ("?", "Actions menu"),
                             ("q", "Quit"),
                         ],
                     ),
@@ -2662,6 +2670,50 @@ impl App {
                 .border_style(Style::default().fg(hp_bc)),
         );
         f.render_widget(p, sheet_area);
+    }
+
+    fn draw_action_menu(&self, f: &mut Frame, selected: usize) {
+        let area = centered_rect(68, 76, f.area());
+        clear_overlay_area(f, area);
+        let max_visible = area.height.saturating_sub(5).max(1) as usize;
+        let offset = widgets::scroll_offset(selected, max_visible);
+        let visible = NORMAL_ACTIONS.len().saturating_sub(offset).min(max_visible);
+        self.set_mouse_list_rows(area, area.y.saturating_add(2), offset, visible);
+
+        let mut lines = vec![Line::from("")];
+        for (idx, action) in NORMAL_ACTIONS
+            .iter()
+            .enumerate()
+            .skip(offset)
+            .take(max_visible)
+        {
+            let is_selected = idx == selected;
+            let style = if is_selected {
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::Reset)
+            };
+            lines.push(Line::from(vec![
+                Span::styled(if is_selected { " \u{203a} " } else { "   " }, style),
+                Span::styled(pad_to_width(action.shortcut, 8), style),
+                Span::styled(action.label, style),
+            ]));
+        }
+        widgets::push_remaining_indicator(&mut lines, NORMAL_ACTIONS.len(), offset, max_visible);
+        lines.push(Line::from(""));
+        lines.push(Self::hint_line(&[
+            ("j/k", "navigate"),
+            ("Enter", "run"),
+            ("Esc/?", "close"),
+        ]));
+
+        let (bc, tc) = self.themed_colors(Color::Cyan);
+        f.render_widget(
+            Paragraph::new(Text::from(lines)).block(self.overlay_block("Actions", bc, tc)),
+            area,
+        );
     }
 
     fn draw_cart_overlay(&self, f: &mut Frame) {
@@ -4590,8 +4642,8 @@ fn vibrant(c: Color) -> Color {
 #[cfg(test)]
 mod help_layout_tests {
     use super::{
-        App, MainLayoutMode, balanced_help_columns, help_column_count, help_column_widths,
-        help_item_parts, help_sheet_width, main_layout_mode,
+        App, InputMode, MainLayoutMode, balanced_help_columns, help_column_count,
+        help_column_widths, help_item_parts, help_sheet_width, main_layout_mode,
     };
     use crate::{config::TuiConfig, pikpak::PikPak};
     use crossterm::event::{KeyCode, KeyModifiers};
@@ -4666,6 +4718,27 @@ mod help_layout_tests {
 
         assert!(rendered.contains("Upload failed: timeout"), "{rendered}");
         assert!(rendered.contains("Error"), "{rendered}");
+    }
+
+    #[test]
+    fn action_menu_renders_discoverable_labels_and_shortcuts() {
+        let mut app = App::new_login(PikPak::new().unwrap(), None, TuiConfig::default());
+        app.input = InputMode::ActionMenu { selected: 0 };
+        let backend = TestBackend::new(80, 28);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        let rendered: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+
+        assert!(rendered.contains("Actions"), "{rendered}");
+        assert!(rendered.contains("Open folder / play video"), "{rendered}");
+        assert!(rendered.contains("Enter"), "{rendered}");
     }
 
     #[test]
