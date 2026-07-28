@@ -1475,6 +1475,9 @@ impl App {
                     ]
                 }
             }
+            InputMode::ConfirmDiscardSettings { .. } => {
+                vec![("y/Enter", "discard"), ("n/Esc", "keep editing")]
+            }
             InputMode::CustomColorSettings { editing_rgb, .. } => {
                 if *editing_rgb {
                     vec![("0-9", "input"), ("Enter", "confirm"), ("Esc", "cancel")]
@@ -1687,6 +1690,10 @@ impl App {
             } => {
                 self.draw_settings_overlay(f, *selected, *editing, draft, *modified);
             }
+            InputMode::ConfirmDiscardSettings { selected, draft } => {
+                self.draw_settings_overlay(f, *selected, false, draft, true);
+                self.draw_discard_settings_overlay(f);
+            }
             InputMode::CustomColorSettings {
                 selected,
                 draft,
@@ -1766,6 +1773,24 @@ impl App {
                 Self::hint_line(&[("Enter", "confirm"), ("Esc", "cancel")]),
             ])
             .block(self.overlay_block("Rename", bc, tc)),
+            area,
+        );
+    }
+
+    fn draw_discard_settings_overlay(&self, f: &mut Frame) {
+        let area = self.prepare_overlay(f, 52, 22);
+        let (bc, tc) = self.themed_colors_pair(Color::Red, Color::Yellow);
+        f.render_widget(
+            Paragraph::new(vec![
+                Line::from(""),
+                Line::from(Span::styled(
+                    "  Discard unsaved settings?",
+                    Style::default().fg(Color::Yellow),
+                )),
+                Line::from(""),
+                Self::hint_line(&[("y/Enter", "discard"), ("n/Esc", "keep editing")]),
+            ])
+            .block(self.overlay_block("Unsaved Settings", bc, tc)),
             area,
         );
     }

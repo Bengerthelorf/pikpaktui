@@ -294,6 +294,10 @@ enum InputMode {
         draft: TuiConfig,
         modified: bool,
     },
+    ConfirmDiscardSettings {
+        selected: usize,
+        draft: TuiConfig,
+    },
     CustomColorSettings {
         selected: usize,
         draft: TuiConfig,
@@ -1951,6 +1955,58 @@ mod folder_listing_result_tests {
 
         assert_eq!(app.current_folder_id, "before");
         assert!(matches!(app.input, InputMode::Settings { .. }));
+    }
+
+    #[test]
+    fn unsaved_settings_require_explicit_discard_confirmation() {
+        let mut app = test_app();
+        app.input = InputMode::Settings {
+            selected: 4,
+            editing: false,
+            draft: TuiConfig::default(),
+            modified: true,
+        };
+
+        app.handle_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+        assert!(matches!(
+            app.input,
+            InputMode::ConfirmDiscardSettings { selected: 4, .. }
+        ));
+
+        app.handle_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+        assert!(matches!(
+            app.input,
+            InputMode::Settings {
+                selected: 4,
+                modified: true,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn settings_subpages_return_focus_to_their_origin_rows() {
+        let mut app = test_app();
+        app.input = InputMode::CustomColorSettings {
+            selected: 0,
+            draft: TuiConfig::default(),
+            modified: false,
+            editing_rgb: false,
+            rgb_input: String::new(),
+            rgb_component: 0,
+        };
+        app.handle_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+        assert!(matches!(app.input, InputMode::Settings { selected: 2, .. }));
+
+        app.input = InputMode::ImageProtocolSettings {
+            selected: 0,
+            draft: TuiConfig::default(),
+            modified: false,
+            current_terminal: "test".to_string(),
+            terminals: vec!["test".to_string()],
+        };
+        app.handle_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+        assert!(matches!(app.input, InputMode::Settings { selected: 9, .. }));
     }
 }
 

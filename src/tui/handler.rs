@@ -20,6 +20,8 @@ use super::{
 /// `draw::draw_settings_overlay`, the index match in `handle_settings_key`, and
 /// the click map / `bool_items` in `handle_mouse_click` — keep all four in sync.
 const SETTINGS_LAST_INDEX: usize = 16;
+const SETTINGS_COLOR_SCHEME_INDEX: usize = 2;
+const SETTINGS_IMAGE_PROTOCOL_INDEX: usize = 9;
 
 enum PickerKeyResult {
     Navigated,
@@ -542,6 +544,10 @@ impl App {
                 mut draft,
                 mut modified,
             } => {
+                if code == KeyCode::Esc && !editing && modified {
+                    self.input = InputMode::ConfirmDiscardSettings { selected, draft };
+                    return Ok(false);
+                }
                 let result = self.handle_settings_key(
                     code,
                     &mut selected,
@@ -591,6 +597,25 @@ impl App {
                         } else {
                             self.input = InputMode::Normal;
                         }
+                    }
+                }
+                Ok(false)
+            }
+            InputMode::ConfirmDiscardSettings { selected, draft } => {
+                match code {
+                    KeyCode::Char('y') | KeyCode::Enter => {
+                        self.input = InputMode::Normal;
+                    }
+                    KeyCode::Char('n') | KeyCode::Esc => {
+                        self.input = InputMode::Settings {
+                            selected,
+                            editing: false,
+                            draft,
+                            modified: true,
+                        };
+                    }
+                    _ => {
+                        self.input = InputMode::ConfirmDiscardSettings { selected, draft };
                     }
                 }
                 Ok(false)
@@ -3065,7 +3090,7 @@ impl App {
                             self.config = draft.clone();
                             self.push_log("Image protocol settings saved to config.toml".into());
                             self.input = InputMode::Settings {
-                                selected: 8,
+                                selected: SETTINGS_IMAGE_PROTOCOL_INDEX,
                                 editing: false,
                                 draft: draft.clone(),
                                 modified: false,
@@ -3094,7 +3119,7 @@ impl App {
             }
             KeyCode::Esc | KeyCode::Backspace => {
                 self.input = InputMode::Settings {
-                    selected: 8,
+                    selected: SETTINGS_IMAGE_PROTOCOL_INDEX,
                     editing: false,
                     draft: draft.clone(),
                     modified: *modified,
@@ -3241,7 +3266,7 @@ impl App {
                                 self.config = draft.clone();
                                 self.push_log("Custom colors saved to config.toml".into());
                                 self.input = InputMode::Settings {
-                                    selected: 5, // Return to Color Scheme item
+                                    selected: SETTINGS_COLOR_SCHEME_INDEX,
                                     editing: false,
                                     draft: draft.clone(),
                                     modified: false,
@@ -3272,7 +3297,7 @@ impl App {
                 }
                 KeyCode::Esc | KeyCode::Backspace => {
                     self.input = InputMode::Settings {
-                        selected: 5,
+                        selected: SETTINGS_COLOR_SCHEME_INDEX,
                         editing: false,
                         draft: draft.clone(),
                         modified: *modified,
