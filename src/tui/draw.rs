@@ -27,6 +27,24 @@ type SettingItem = (String, String, String);
 /// One Settings category: (name, rows).
 type SettingsCategory = (&'static str, Vec<SettingItem>);
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MainLayoutMode {
+    ThreePane,
+    CurrentPreview,
+    ParentCurrent,
+    CurrentOnly,
+}
+
+fn main_layout_mode(width: u16, show_preview: bool) -> MainLayoutMode {
+    match (show_preview, width) {
+        (true, 96..) => MainLayoutMode::ThreePane,
+        (true, 64..) => MainLayoutMode::CurrentPreview,
+        (true, _) => MainLayoutMode::CurrentOnly,
+        (false, 60..) => MainLayoutMode::ParentCurrent,
+        (false, _) => MainLayoutMode::CurrentOnly,
+    }
+}
+
 impl App {
     fn text_input_display(&self, value: &str, max_width: usize) -> String {
         text_input_view(value, self.text_cursor, max_width, self.cursor_visible)
@@ -671,46 +689,66 @@ impl App {
     fn draw_main(&self, f: &mut Frame) {
         let (main_area, help_bar_area) = self.layout_with_help_bar(f.area());
 
-        if self.config.show_preview {
-            let chunks = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([
-                    Constraint::Percentage(20),
-                    Constraint::Percentage(40),
-                    Constraint::Percentage(40),
-                ])
-                .split(main_area);
-
-            self.parent_pane_area.set(chunks[0]);
-            self.current_pane_area.set(chunks[1]);
-            self.preview_pane_area.set(chunks[2]);
-
-            self.draw_parent_pane(f, chunks[0]);
-            self.draw_current_pane(f, chunks[1]);
-            self.draw_preview_pane(f, chunks[2]);
-
-            if self.show_logs_overlay {
-                self.draw_log_overlay(f, chunks[2]);
-            }
-        } else {
-            let chunks = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([Constraint::Percentage(25), Constraint::Percentage(75)])
-                .split(main_area);
-
-            self.parent_pane_area.set(chunks[0]);
-            self.current_pane_area.set(chunks[1]);
-            self.preview_pane_area.set(ratatui::layout::Rect::default());
-
-            self.draw_parent_pane(f, chunks[0]);
-            self.draw_current_pane(f, chunks[1]);
-
-            if self.show_logs_overlay {
-                let log_area = Layout::default()
+        match main_layout_mode(main_area.width, self.config.show_preview) {
+            MainLayoutMode::ThreePane => {
+                let chunks = Layout::default()
                     .direction(Direction::Horizontal)
-                    .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
-                    .split(main_area)[1];
-                self.draw_log_overlay(f, log_area);
+                    .constraints([
+                        Constraint::Percentage(20),
+                        Constraint::Percentage(40),
+                        Constraint::Percentage(40),
+                    ])
+                    .split(main_area);
+                self.parent_pane_area.set(chunks[0]);
+                self.current_pane_area.set(chunks[1]);
+                self.preview_pane_area.set(chunks[2]);
+                self.draw_parent_pane(f, chunks[0]);
+                self.draw_current_pane(f, chunks[1]);
+                self.draw_preview_pane(f, chunks[2]);
+                if self.show_logs_overlay {
+                    self.draw_log_overlay(f, chunks[2]);
+                }
+            }
+            MainLayoutMode::CurrentPreview => {
+                let chunks = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([Constraint::Percentage(58), Constraint::Percentage(42)])
+                    .split(main_area);
+                self.parent_pane_area.set(Rect::default());
+                self.current_pane_area.set(chunks[0]);
+                self.preview_pane_area.set(chunks[1]);
+                self.draw_current_pane(f, chunks[0]);
+                self.draw_preview_pane(f, chunks[1]);
+                if self.show_logs_overlay {
+                    self.draw_log_overlay(f, chunks[1]);
+                }
+            }
+            MainLayoutMode::ParentCurrent => {
+                let chunks = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([Constraint::Percentage(25), Constraint::Percentage(75)])
+                    .split(main_area);
+                self.parent_pane_area.set(chunks[0]);
+                self.current_pane_area.set(chunks[1]);
+                self.preview_pane_area.set(Rect::default());
+                self.draw_parent_pane(f, chunks[0]);
+                self.draw_current_pane(f, chunks[1]);
+                if self.show_logs_overlay {
+                    self.draw_log_overlay(f, chunks[1]);
+                }
+            }
+            MainLayoutMode::CurrentOnly => {
+                self.parent_pane_area.set(Rect::default());
+                self.current_pane_area.set(main_area);
+                self.preview_pane_area.set(Rect::default());
+                self.draw_current_pane(f, main_area);
+                if self.show_logs_overlay {
+                    let log_area = Layout::default()
+                        .direction(Direction::Horizontal)
+                        .constraints([Constraint::Percentage(48), Constraint::Percentage(52)])
+                        .split(main_area)[1];
+                    self.draw_log_overlay(f, log_area);
+                }
             }
         }
 
@@ -4173,14 +4211,14 @@ fn help_sheet_width(terminal_width: u16) -> u16 {
         .min(terminal_width)
 }
 
-/// Number of help columns that can preserve the key plus at least four
-/// display cells of description text. Keeping this floor modest also avoids
-/// turning a short, narrow terminal into one very tall clipped column.
+/// Number of help columns that can preserve the key plus a readable
+/// description. Short terminals can scroll, so readability wins over forcing
+/// more columns into the viewport.
 fn help_column_count(inner_width: usize, section_count: usize, key_width: usize) -> usize {
     if section_count == 0 {
         return 0;
     }
-    let min_column_width = key_width + 2 + 4;
+    let min_column_width = key_width + 2 + 10;
     (inner_width / min_column_width).max(1).min(section_count)
 }
 
@@ -4452,8 +4490,8 @@ fn vibrant(c: Color) -> Color {
 #[cfg(test)]
 mod help_layout_tests {
     use super::{
-        App, balanced_help_columns, help_column_count, help_column_widths, help_item_parts,
-        help_sheet_width,
+        App, MainLayoutMode, balanced_help_columns, help_column_count, help_column_widths,
+        help_item_parts, help_sheet_width, main_layout_mode,
     };
     use crate::{config::TuiConfig, pikpak::PikPak};
     use crossterm::event::{KeyCode, KeyModifiers};
@@ -4487,9 +4525,27 @@ mod help_layout_tests {
     #[test]
     fn narrow_help_uses_fewer_columns_before_descriptions_collapse() {
         assert_eq!(help_column_count(90, 3, 8), 3);
-        assert_eq!(help_column_count(38, 3, 8), 2);
-        assert_eq!(help_column_count(30, 3, 8), 2);
+        assert_eq!(help_column_count(44, 3, 8), 2);
+        assert_eq!(help_column_count(38, 3, 8), 1);
+        assert_eq!(help_column_count(30, 3, 8), 1);
         assert_eq!(help_column_count(17, 3, 8), 1);
+    }
+
+    #[test]
+    fn fifty_column_help_keeps_action_descriptions_readable() {
+        let rendered = rendered_help(50, 16);
+        assert!(rendered.contains("Move down"), "{rendered}");
+        assert!(rendered.contains("Copy"), "{rendered}");
+        assert!(rendered.contains("close"), "{rendered}");
+    }
+
+    #[test]
+    fn main_layout_reduces_panes_at_responsive_breakpoints() {
+        assert_eq!(main_layout_mode(120, true), MainLayoutMode::ThreePane);
+        assert_eq!(main_layout_mode(80, true), MainLayoutMode::CurrentPreview);
+        assert_eq!(main_layout_mode(50, true), MainLayoutMode::CurrentOnly);
+        assert_eq!(main_layout_mode(80, false), MainLayoutMode::ParentCurrent);
+        assert_eq!(main_layout_mode(50, false), MainLayoutMode::CurrentOnly);
     }
 
     #[test]
