@@ -117,6 +117,7 @@ impl App {
                             LoginField::Email => LoginField::Password,
                             LoginField::Password => LoginField::Email,
                         };
+                        self.text_cursor = usize::MAX;
                         self.input = InputMode::Login {
                             field,
                             email,
@@ -146,37 +147,12 @@ impl App {
                             self.attempt_login(&e, &p);
                         }
                     }
-                    KeyCode::Backspace => {
-                        match field {
-                            LoginField::Email => {
-                                email.pop();
-                            }
-                            LoginField::Password => {
-                                password.pop();
-                            }
-                        }
-                        self.input = InputMode::Login {
-                            field,
-                            email,
-                            password,
-                            error: None,
-                            logging_in: false,
-                        };
-                    }
-                    KeyCode::Char(c) => {
-                        match field {
-                            LoginField::Email => email.push(c),
-                            LoginField::Password => password.push(c),
-                        }
-                        self.input = InputMode::Login {
-                            field,
-                            email,
-                            password,
-                            error: None,
-                            logging_in: false,
-                        };
-                    }
                     _ => {
+                        let value = match field {
+                            LoginField::Email => &mut email,
+                            LoginField::Password => &mut password,
+                        };
+                        let _ = handle_text_input(value, &mut self.text_cursor, code, modifiers);
                         self.input = InputMode::Login {
                             field,
                             email,
@@ -188,9 +164,14 @@ impl App {
                 }
                 Ok(false)
             }
-            InputMode::Normal => self.handle_normal_key(code, modifiers),
+            InputMode::Normal => {
+                self.text_cursor = usize::MAX;
+                self.handle_normal_key(code, modifiers)
+            }
             InputMode::Rename { mut value } => {
-                if let Some(done) = handle_text_input(&mut value, code) {
+                if let Some(done) =
+                    handle_text_input(&mut value, &mut self.text_cursor, code, modifiers)
+                {
                     if done && let Some(entry) = self.current_entry().cloned() {
                         let new_name = value.trim().to_string();
                         if !new_name.is_empty() {
@@ -203,7 +184,9 @@ impl App {
                 Ok(false)
             }
             InputMode::Mkdir { mut value } => {
-                if let Some(done) = handle_text_input(&mut value, code) {
+                if let Some(done) =
+                    handle_text_input(&mut value, &mut self.text_cursor, code, modifiers)
+                {
                     if done {
                         let name = value.trim().to_string();
                         if !name.is_empty() {
@@ -228,7 +211,7 @@ impl App {
                 Ok(false)
             }
             InputMode::GotoPath { mut query } => {
-                match handle_text_input(&mut query, code) {
+                match handle_text_input(&mut query, &mut self.text_cursor, code, modifiers) {
                     Some(true) => {
                         let q = query.trim().to_string();
                         if !q.is_empty() {
@@ -258,6 +241,7 @@ impl App {
                         }
                     }
                     KeyCode::Char('p') => {
+                        self.text_cursor = 0;
                         self.input = InputMode::ConfirmPermanentDelete {
                             value: String::new(),
                         };
@@ -272,11 +256,11 @@ impl App {
                 Ok(false)
             }
             InputMode::ConfirmPermanentDelete { mut value } => {
-                match code {
-                    KeyCode::Esc => {
+                match handle_text_input(&mut value, &mut self.text_cursor, code, modifiers) {
+                    Some(false) => {
                         self.push_log("Permanent delete cancelled".into());
                     }
-                    KeyCode::Enter => {
+                    Some(true) => {
                         if value == "yes" {
                             if let Some(entry) = self.current_entry().cloned() {
                                 self.spawn_permanent_delete(entry);
@@ -287,15 +271,7 @@ impl App {
                             );
                         }
                     }
-                    KeyCode::Backspace => {
-                        value.pop();
-                        self.input = InputMode::ConfirmPermanentDelete { value };
-                    }
-                    KeyCode::Char(c) => {
-                        value.push(c);
-                        self.input = InputMode::ConfirmPermanentDelete { value };
-                    }
-                    _ => {
+                    None => {
                         self.input = InputMode::ConfirmPermanentDelete { value };
                     }
                 }
@@ -342,11 +318,11 @@ impl App {
                 Ok(false)
             }
             InputMode::DownloadInput { mut input } => {
-                self.handle_download_input_key(code, &mut input);
+                self.handle_download_input_key(code, modifiers, &mut input);
                 Ok(false)
             }
             InputMode::UploadInput { mut input } => {
-                self.handle_upload_input_key(code, &mut input);
+                self.handle_upload_input_key(code, modifiers, &mut input);
                 Ok(false)
             }
             InputMode::DownloadView => {
@@ -354,7 +330,7 @@ impl App {
                 Ok(false)
             }
             InputMode::OfflineInput { mut value } => {
-                self.handle_offline_input_key(code, &mut value);
+                self.handle_offline_input_key(code, modifiers, &mut value);
                 Ok(false)
             }
             InputMode::OfflineTasksView {
@@ -480,9 +456,9 @@ impl App {
                 mut value,
                 pending_url,
             } => {
-                match code {
-                    KeyCode::Esc => {}
-                    KeyCode::Enter => {
+                match handle_text_input(&mut value, &mut self.text_cursor, code, modifiers) {
+                    Some(false) => {}
+                    Some(true) => {
                         let cmd = value.trim().to_string();
                         if !cmd.is_empty() {
                             self.push_log(format!("Player set to: {}", cmd));
@@ -493,15 +469,7 @@ impl App {
                             self.input = InputMode::PlayerInput { value, pending_url };
                         }
                     }
-                    KeyCode::Backspace => {
-                        value.pop();
-                        self.input = InputMode::PlayerInput { value, pending_url };
-                    }
-                    KeyCode::Char(c) => {
-                        value.push(c);
-                        self.input = InputMode::PlayerInput { value, pending_url };
-                    }
-                    _ => {
+                    None => {
                         self.input = InputMode::PlayerInput { value, pending_url };
                     }
                 }
@@ -550,6 +518,7 @@ impl App {
                 }
                 let result = self.handle_settings_key(
                     code,
+                    modifiers,
                     &mut selected,
                     &mut editing,
                     &mut draft,
@@ -1097,19 +1066,17 @@ impl App {
             }
             KeyCode::Tab => {
                 self.tab_complete(input);
+                self.text_cursor = usize::MAX;
                 PathInputKeyResult::Updated
             }
-            KeyCode::Backspace => {
-                input.value.pop();
-                input.clear_completion();
+            _ => {
+                let old = input.value.clone();
+                let _ = handle_text_input(&mut input.value, &mut self.text_cursor, code, modifiers);
+                if input.value != old {
+                    input.clear_completion();
+                }
                 PathInputKeyResult::Updated
             }
-            KeyCode::Char(c) => {
-                input.value.push(c);
-                input.clear_completion();
-                PathInputKeyResult::Updated
-            }
-            _ => PathInputKeyResult::Updated,
         }
     }
 
@@ -1878,7 +1845,9 @@ impl App {
     /// Returns `Updated` for navigation/typing, `Confirmed(path)` on Enter with no candidate,
     /// or `Cancelled` on Esc with no candidates open.
     fn apply_local_path_input_key(
+        &mut self,
         code: KeyCode,
+        modifiers: KeyModifiers,
         input: &mut LocalPathInput,
     ) -> LocalPathInputResult {
         match code {
@@ -1916,31 +1885,30 @@ impl App {
             KeyCode::Enter => {
                 let applied = input.confirm_selected();
                 if applied {
+                    self.text_cursor = usize::MAX;
                     LocalPathInputResult::Updated
                 } else {
                     LocalPathInputResult::Confirmed(input.value.trim().to_string())
                 }
             }
-            KeyCode::Backspace => {
-                input.value.pop();
-                if !input.candidates.is_empty() {
+            _ => {
+                let old = input.value.clone();
+                let _ = handle_text_input(&mut input.value, &mut self.text_cursor, code, modifiers);
+                if input.value != old && !input.candidates.is_empty() {
                     input.open_candidates();
                 }
                 LocalPathInputResult::Updated
             }
-            KeyCode::Char(c) => {
-                input.value.push(c);
-                if !input.candidates.is_empty() {
-                    input.open_candidates();
-                }
-                LocalPathInputResult::Updated
-            }
-            _ => LocalPathInputResult::Updated,
         }
     }
 
-    fn handle_download_input_key(&mut self, code: KeyCode, input: &mut LocalPathInput) {
-        match Self::apply_local_path_input_key(code, input) {
+    fn handle_download_input_key(
+        &mut self,
+        code: KeyCode,
+        modifiers: KeyModifiers,
+        input: &mut LocalPathInput,
+    ) {
+        match self.apply_local_path_input_key(code, modifiers, input) {
             LocalPathInputResult::Updated => self.restore_download_input(input),
             LocalPathInputResult::Confirmed(dest) => {
                 if dest.is_empty() {
@@ -1967,8 +1935,13 @@ impl App {
         self.input = InputMode::UploadInput { input: owned };
     }
 
-    fn handle_upload_input_key(&mut self, code: KeyCode, input: &mut LocalPathInput) {
-        match Self::apply_local_path_input_key(code, input) {
+    fn handle_upload_input_key(
+        &mut self,
+        code: KeyCode,
+        modifiers: KeyModifiers,
+        input: &mut LocalPathInput,
+    ) {
+        match self.apply_local_path_input_key(code, modifiers, input) {
             LocalPathInputResult::Updated => self.restore_upload_input(input),
             LocalPathInputResult::Confirmed(path_str) => {
                 let local_path = std::path::PathBuf::from(&path_str);
@@ -2222,12 +2195,17 @@ impl App {
         });
     }
 
-    fn handle_offline_input_key(&mut self, code: KeyCode, value: &mut String) {
-        match code {
-            KeyCode::Esc => {
+    fn handle_offline_input_key(
+        &mut self,
+        code: KeyCode,
+        modifiers: KeyModifiers,
+        value: &mut String,
+    ) {
+        match handle_text_input(value, &mut self.text_cursor, code, modifiers) {
+            Some(false) => {
                 self.push_log("Offline download cancelled".into());
             }
-            KeyCode::Enter => {
+            Some(true) => {
                 let url = value.trim().to_string();
                 if url.is_empty() {
                     self.push_log("No URL provided".into());
@@ -2238,19 +2216,7 @@ impl App {
                     self.spawn_offline_download(url);
                 }
             }
-            KeyCode::Backspace => {
-                value.pop();
-                self.input = InputMode::OfflineInput {
-                    value: std::mem::take(value),
-                };
-            }
-            KeyCode::Char(c) => {
-                value.push(c);
-                self.input = InputMode::OfflineInput {
-                    value: std::mem::take(value),
-                };
-            }
-            _ => {
+            None => {
                 self.input = InputMode::OfflineInput {
                     value: std::mem::take(value),
                 };
@@ -3320,6 +3286,7 @@ impl App {
     fn handle_settings_key(
         &mut self,
         code: KeyCode,
+        modifiers: KeyModifiers,
         selected: &mut usize,
         editing: &mut bool,
         draft: &mut crate::config::TuiConfig,
@@ -3555,23 +3522,17 @@ impl App {
                     KeyCode::Enter => {
                         *editing = false;
                     }
-                    KeyCode::Backspace => {
-                        if let Some(ref mut p) = draft.player {
-                            p.pop();
-                            if p.is_empty() {
-                                draft.player = None;
-                            }
+                    _ => {
+                        let player = draft.player.get_or_insert_default();
+                        let old = player.clone();
+                        let _ = handle_text_input(player, &mut self.text_cursor, code, modifiers);
+                        if player != &old {
+                            *modified = true;
                         }
-                        *modified = true;
-                    }
-                    KeyCode::Char(c) => {
-                        match draft.player {
-                            Some(ref mut p) => p.push(c),
-                            None => draft.player = Some(String::from(c)),
+                        if player.is_empty() {
+                            draft.player = None;
                         }
-                        *modified = true;
                     }
-                    _ => {}
                 },
                 15 => match code {
                     KeyCode::Char('+') | KeyCode::Up | KeyCode::Right => {
@@ -3631,6 +3592,9 @@ impl App {
                             terminals,
                         };
                         return None;
+                    }
+                    if *selected == 14 {
+                        self.text_cursor = draft.player.as_ref().map_or(0, String::len);
                     }
                     *editing = true;
                     None

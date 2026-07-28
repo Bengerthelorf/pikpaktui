@@ -14,7 +14,7 @@ use crate::pikpak::{Entry, EntryKind, FileInfoResponse, PikPak};
 use crate::theme;
 use anyhow::Result;
 use crossterm::event::{
-    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind,
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
 };
 use crossterm::execute;
 use crossterm::terminal::{
@@ -331,6 +331,8 @@ struct App {
     logs: VecDeque<String>,
     input: InputMode,
     cursor_visible: bool,
+    /// UTF-8 byte offset for the active text field. `usize::MAX` means end.
+    text_cursor: usize,
     last_blink: Instant,
     loading: bool,
     spinner_idx: usize,
@@ -402,6 +404,7 @@ impl App {
             logs: VecDeque::new(),
             input: InputMode::Normal,
             cursor_visible: true,
+            text_cursor: usize::MAX,
             last_blink: Instant::now(),
             loading: false,
             spinner_idx: 0,
@@ -490,6 +493,7 @@ impl App {
             logs: VecDeque::new(),
             input,
             cursor_visible: true,
+            text_cursor: usize::MAX,
             last_blink: Instant::now(),
             loading: false,
             spinner_idx: 0,
@@ -1170,6 +1174,7 @@ impl App {
                         && !matches.is_empty()
                     {
                         completion::apply_path_candidates(inp, parent, matches);
+                        self.text_cursor = usize::MAX;
                     }
                 }
                 OpResult::LoginDone {
@@ -2104,19 +2109,226 @@ fn centered_rect(
         .split(v[1])[1]
 }
 
-fn handle_text_input(value: &mut String, code: KeyCode) -> Option<bool> {
+fn handle_text_input(
+    value: &mut String,
+    cursor: &mut usize,
+    code: KeyCode,
+    modifiers: KeyModifiers,
+) -> Option<bool> {
+    *cursor = (*cursor).min(value.len());
+    while !value.is_char_boundary(*cursor) {
+        *cursor = cursor.saturating_sub(1);
+    }
+
+    let previous_boundary = |text: &str, at: usize| {
+        text[..at]
+            .char_indices()
+            .next_back()
+            .map(|(idx, _)| idx)
+            .unwrap_or(0)
+    };
+    let next_boundary = |text: &str, at: usize| {
+        text[at..]
+            .chars()
+            .next()
+            .map(|c| at + c.len_utf8())
+            .unwrap_or(text.len())
+    };
+
     match code {
         KeyCode::Esc => Some(false),
         KeyCode::Enter => Some(true),
-        KeyCode::Backspace => {
-            value.pop();
+        KeyCode::Home | KeyCode::Char('a') if modifiers.contains(KeyModifiers::CONTROL) => {
+            *cursor = 0;
             None
         }
-        KeyCode::Char(c) => {
-            value.push(c);
+        KeyCode::End | KeyCode::Char('e') if modifiers.contains(KeyModifiers::CONTROL) => {
+            *cursor = value.len();
+            None
+        }
+        KeyCode::Left => {
+            *cursor = previous_boundary(value, *cursor);
+            None
+        }
+        KeyCode::Right => {
+            *cursor = next_boundary(value, *cursor);
+            None
+        }
+        KeyCode::Backspace => {
+            let start = previous_boundary(value, *cursor);
+            value.replace_range(start..*cursor, "");
+            *cursor = start;
+            None
+        }
+        KeyCode::Delete => {
+            let end = next_boundary(value, *cursor);
+            value.replace_range(*cursor..end, "");
+            None
+        }
+        KeyCode::Char('w') if modifiers.contains(KeyModifiers::CONTROL) => {
+            let mut start = *cursor;
+            while start > 0 {
+                let prev = previous_boundary(value, start);
+                let ch = value[prev..start].chars().next().unwrap_or(' ');
+                if !ch.is_whitespace() {
+                    break;
+                }
+                start = prev;
+            }
+            while start > 0 {
+                let prev = previous_boundary(value, start);
+                let ch = value[prev..start].chars().next().unwrap_or(' ');
+                if ch.is_whitespace() {
+                    break;
+                }
+                start = prev;
+            }
+            value.replace_range(start..*cursor, "");
+            *cursor = start;
+            None
+        }
+        KeyCode::Char(c) if !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) => {
+            value.insert(*cursor, c);
+            *cursor += c.len_utf8();
             None
         }
         _ => None,
+    }
+}
+
+fn text_input_view(value: &str, cursor: usize, max_width: usize, cursor_visible: bool) -> String {
+    use unicode_width::UnicodeWidthStr;
+
+    if max_width == 0 {
+        return String::new();
+    }
+    let mut cursor = cursor.min(value.len());
+    while !value.is_char_boundary(cursor) {
+        cursor = cursor.saturating_sub(1);
+    }
+
+    let before = &value[..cursor];
+    let after = &value[cursor..];
+    let marker = if cursor_visible { "\u{2588}" } else { " " };
+    let content_budget = max_width.saturating_sub(1);
+
+    let suffix = |text: &str, width: usize| {
+        let mut chars = Vec::new();
+        let mut used = 0;
+        for ch in text.chars().rev() {
+            let w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+            if used + w > width {
+                break;
+            }
+            used += w;
+            chars.push(ch);
+        }
+        chars.into_iter().rev().collect::<String>()
+    };
+    let prefix = |text: &str, width: usize| {
+        let mut out = String::new();
+        let mut used = 0;
+        for ch in text.chars() {
+            let w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+            if used + w > width {
+                break;
+            }
+            used += w;
+            out.push(ch);
+        }
+        out
+    };
+
+    let before_width = UnicodeWidthStr::width(before);
+    let (left_marker, before_visible, after_budget) = if before_width > content_budget {
+        let visible = suffix(before, content_budget.saturating_sub(1));
+        ("\u{2026}", visible, 0)
+    } else {
+        (
+            "",
+            before.to_string(),
+            content_budget.saturating_sub(before_width),
+        )
+    };
+
+    let after_width = UnicodeWidthStr::width(after);
+    let (after_visible, right_marker) = if after_width > after_budget {
+        (
+            prefix(after, after_budget.saturating_sub(1)),
+            if after_budget > 0 { "\u{2026}" } else { "" },
+        )
+    } else {
+        (after.to_string(), "")
+    };
+
+    format!("{left_marker}{before_visible}{marker}{after_visible}{right_marker}")
+}
+
+#[cfg(test)]
+mod text_input_tests {
+    use super::{handle_text_input, text_input_view};
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use unicode_width::UnicodeWidthStr;
+
+    #[test]
+    fn unicode_cursor_edits_at_character_boundaries() {
+        let mut value = "a界b".to_string();
+        let mut cursor = value.len();
+
+        handle_text_input(&mut value, &mut cursor, KeyCode::Left, KeyModifiers::NONE);
+        handle_text_input(
+            &mut value,
+            &mut cursor,
+            KeyCode::Backspace,
+            KeyModifiers::NONE,
+        );
+        handle_text_input(
+            &mut value,
+            &mut cursor,
+            KeyCode::Char('中'),
+            KeyModifiers::NONE,
+        );
+
+        assert_eq!(value, "a中b");
+        assert_eq!(cursor, "a中".len());
+    }
+
+    #[test]
+    fn control_word_delete_removes_the_previous_word() {
+        let mut value = "open -a IINA".to_string();
+        let mut cursor = value.len();
+
+        handle_text_input(
+            &mut value,
+            &mut cursor,
+            KeyCode::Char('w'),
+            KeyModifiers::CONTROL,
+        );
+
+        assert_eq!(value, "open -a ");
+        assert_eq!(cursor, value.len());
+    }
+
+    #[test]
+    fn long_input_view_keeps_cursor_visible_within_width() {
+        let value = "/this/is/a/very/long/path/that/keeps/growing";
+        let rendered = text_input_view(value, value.len(), 18, true);
+
+        assert!(rendered.starts_with('\u{2026}'));
+        assert!(rendered.contains('\u{2588}'));
+        assert!(rendered.contains("growing"));
+        assert!(UnicodeWidthStr::width(rendered.as_str()) <= 18);
+    }
+
+    #[test]
+    fn input_view_shows_text_after_a_midline_cursor() {
+        let value = "alpha界omega";
+        let rendered = text_input_view(value, "alpha".len(), 12, true);
+
+        assert!(rendered.contains("alpha"));
+        assert!(rendered.contains('\u{2588}'));
+        assert!(rendered.contains('\u{754c}'));
+        assert!(UnicodeWidthStr::width(rendered.as_str()) <= 12);
     }
 }
 

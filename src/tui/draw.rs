@@ -19,7 +19,7 @@ use super::local_completion::LocalPathInput;
 use super::widgets;
 use super::{
     App, InputMode, LoginField, PickerState, PreviewState, SPINNER_FRAMES, centered_rect,
-    format_size, pad_to_width, truncate_name,
+    format_size, pad_to_width, text_input_view, truncate_name,
 };
 
 /// One Settings row: (label, description, current-value string).
@@ -28,6 +28,10 @@ type SettingItem = (String, String, String);
 type SettingsCategory = (&'static str, Vec<SettingItem>);
 
 impl App {
+    fn text_input_display(&self, value: &str, max_width: usize) -> String {
+        text_input_view(value, self.text_cursor, max_width, self.cursor_visible)
+    }
+
     /// Returns `true` when a popup overlay is active that may cover the preview pane.
     /// Used to suppress terminal-image-protocol rendering so that iTerm2 / Kitty
     /// don't leave stale image data under the overlay.
@@ -329,7 +333,7 @@ impl App {
 
     fn draw_player_input_overlay(&self, f: &mut Frame, value: &str) {
         let area = self.prepare_overlay(f, 60, 20);
-        let cur = if self.cursor_visible { "\u{2588}" } else { " " };
+        let display = self.text_input_display(value, area.width.saturating_sub(7) as usize);
         let (bc, tc) = if self.is_vibrant() {
             (Color::LightYellow, Color::LightYellow)
         } else {
@@ -345,10 +349,7 @@ impl App {
                 Line::from(""),
                 Line::from(vec![
                     Span::styled("  > ", Style::default().fg(Color::Cyan)),
-                    Span::styled(
-                        format!("{}{}", value, cur),
-                        Style::default().fg(Color::Yellow),
-                    ),
+                    Span::styled(display, Style::default().fg(Color::Yellow)),
                 ]),
                 Line::from(""),
                 Self::hint_line(&[("Enter", "confirm"), ("Esc", "cancel")]),
@@ -606,28 +607,33 @@ impl App {
                 LoginField::Email => Style::default().fg(Color::Reset),
             };
             let masked: String = "*".repeat(password.chars().count());
-            let cur = if self.cursor_visible { "\u{2588}" } else { " " };
-            let ec = if matches!(field, LoginField::Email) {
-                cur
+            let input_width = area.width.saturating_sub(14) as usize;
+            let email_display = if matches!(field, LoginField::Email) {
+                self.text_input_display(email, input_width)
             } else {
-                ""
+                pad_to_width(email, input_width)
             };
-            let pc = if matches!(field, LoginField::Password) {
-                cur
+            let masked_display = if matches!(field, LoginField::Password) {
+                let mut byte_cursor = self.text_cursor.min(password.len());
+                while !password.is_char_boundary(byte_cursor) {
+                    byte_cursor = byte_cursor.saturating_sub(1);
+                }
+                let masked_cursor = password[..byte_cursor].chars().count();
+                text_input_view(&masked, masked_cursor, input_width, self.cursor_visible)
             } else {
-                ""
+                pad_to_width(&masked, input_width)
             };
 
             let mut lines = vec![
                 Line::from(""),
                 Line::from(vec![
                     Span::styled("  Email:    ", email_style),
-                    Span::styled(format!("{}{}", email, ec), email_style),
+                    Span::styled(email_display, email_style),
                 ]),
                 Line::from(""),
                 Line::from(vec![
                     Span::styled("  Password: ", pass_style),
-                    Span::styled(format!("{}{}", masked, pc), pass_style),
+                    Span::styled(masked_display, pass_style),
                 ]),
                 Line::from(""),
             ];
@@ -1752,8 +1758,9 @@ impl App {
         }
     }
 
-    fn draw_rename_overlay(&self, f: &mut Frame, value: &str, cur: &str) {
+    fn draw_rename_overlay(&self, f: &mut Frame, value: &str, _cur: &str) {
         let area = self.prepare_overlay(f, 60, 20);
+        let display = self.text_input_display(value, area.width.saturating_sub(14) as usize);
         let (bc, tc) = if self.is_vibrant() {
             (Color::LightYellow, Color::LightYellow)
         } else {
@@ -1764,10 +1771,7 @@ impl App {
                 Line::from(""),
                 Line::from(vec![
                     Span::styled("  New name: ", Style::default().fg(Color::Cyan)),
-                    Span::styled(
-                        format!("{}{}", value, cur),
-                        Style::default().fg(Color::Yellow),
-                    ),
+                    Span::styled(display, Style::default().fg(Color::Yellow)),
                 ]),
                 Line::from(""),
                 Self::hint_line(&[("Enter", "confirm"), ("Esc", "cancel")]),
@@ -1795,8 +1799,9 @@ impl App {
         );
     }
 
-    fn draw_mkdir_overlay(&self, f: &mut Frame, value: &str, cur: &str) {
+    fn draw_mkdir_overlay(&self, f: &mut Frame, value: &str, _cur: &str) {
         let area = self.prepare_overlay(f, 60, 20);
+        let display = self.text_input_display(value, area.width.saturating_sub(17) as usize);
         let (bc, tc) = if self.is_vibrant() {
             (Color::LightYellow, Color::LightYellow)
         } else {
@@ -1807,10 +1812,7 @@ impl App {
                 Line::from(""),
                 Line::from(vec![
                     Span::styled("  Folder name: ", Style::default().fg(Color::Cyan)),
-                    Span::styled(
-                        format!("{}{}", value, cur),
-                        Style::default().fg(Color::Yellow),
-                    ),
+                    Span::styled(display, Style::default().fg(Color::Yellow)),
                 ]),
                 Line::from(""),
                 Self::hint_line(&[("Enter", "confirm"), ("Esc", "cancel")]),
@@ -1820,18 +1822,16 @@ impl App {
         );
     }
 
-    fn draw_goto_overlay(&self, f: &mut Frame, query: &str, cur: &str) {
+    fn draw_goto_overlay(&self, f: &mut Frame, query: &str, _cur: &str) {
         let area = self.prepare_overlay(f, 70, 20);
+        let display = self.text_input_display(query, area.width.saturating_sub(10) as usize);
         let (bc, tc) = self.themed_colors(Color::Cyan);
         f.render_widget(
             Paragraph::new(vec![
                 Line::from(""),
                 Line::from(vec![
                     Span::styled("  Path: ", Style::default().fg(Color::Cyan)),
-                    Span::styled(
-                        format!("{}{}", query, cur),
-                        Style::default().fg(Color::Yellow),
-                    ),
+                    Span::styled(display, Style::default().fg(Color::Yellow)),
                 ]),
                 Line::from(Span::styled(
                     "  e.g. /My Files/Movies",
@@ -1925,8 +1925,9 @@ impl App {
         );
     }
 
-    fn draw_confirm_permanent_delete_overlay(&self, f: &mut Frame, value: &str, cur: &str) {
+    fn draw_confirm_permanent_delete_overlay(&self, f: &mut Frame, value: &str, _cur: &str) {
         let area = self.prepare_overlay(f, 60, 55);
+        let display = self.text_input_display(value, area.width.saturating_sub(29) as usize);
         let name = self
             .current_entry()
             .map(|e| e.name.as_str())
@@ -1957,10 +1958,7 @@ impl App {
                 "  Type 'yes' to confirm: ",
                 Style::default().fg(Color::Reset),
             ),
-            Span::styled(
-                format!("{}{}", value, cur),
-                Style::default().fg(Color::Yellow),
-            ),
+            Span::styled(display, Style::default().fg(Color::Yellow)),
         ]));
         lines.push(Line::from(""));
         lines.push(Self::hint_line(&[("Enter", "confirm"), ("Esc", "cancel")]));
@@ -2007,7 +2005,7 @@ impl App {
         title: &str,
         label: &str,
         input: &PathInput,
-        cur: &str,
+        _cur: &str,
     ) {
         let candidate_lines = input.candidates.len().min(8);
         let base_height = 6; // padding + input line + help line
@@ -2020,15 +2018,17 @@ impl App {
         let pct = ((total_lines as u16 * 100) / f.area().height.max(1)).clamp(20, 60);
         let area = centered_rect(70, pct, f.area());
         clear_overlay_area(f, area);
+        let label_width = unicode_width::UnicodeWidthStr::width(format!("  {}: ", label).as_str());
+        let display = self.text_input_display(
+            &input.value,
+            (area.width as usize).saturating_sub(label_width + 2),
+        );
 
         let mut lines = vec![
             Line::from(""),
             Line::from(vec![
                 Span::styled(format!("  {}: ", label), Style::default().fg(Color::Cyan)),
-                Span::styled(
-                    format!("{}{}", input.value, cur),
-                    Style::default().fg(Color::Yellow),
-                ),
+                Span::styled(display, Style::default().fg(Color::Yellow)),
             ]),
         ];
 
@@ -2683,7 +2683,7 @@ impl App {
         }
     }
 
-    fn draw_download_input_overlay(&self, f: &mut Frame, input: &LocalPathInput, cur: &str) {
+    fn draw_download_input_overlay(&self, f: &mut Frame, input: &LocalPathInput, _cur: &str) {
         let candidate_lines = input.candidates.len().min(8);
         let base_height = 6;
         let total_lines = base_height
@@ -2695,15 +2695,13 @@ impl App {
         let pct = ((total_lines as u16 * 100) / f.area().height.max(1)).clamp(20, 60);
         let area = centered_rect(70, pct, f.area());
         clear_overlay_area(f, area);
+        let display = self.text_input_display(&input.value, area.width.saturating_sub(13) as usize);
 
         let mut lines = vec![
             Line::from(""),
             Line::from(vec![
                 Span::styled("  Save to: ", Style::default().fg(Color::Cyan)),
-                Span::styled(
-                    format!("{}{}", input.value, cur),
-                    Style::default().fg(Color::Yellow),
-                ),
+                Span::styled(display, Style::default().fg(Color::Yellow)),
             ]),
         ];
 
@@ -2732,7 +2730,7 @@ impl App {
         );
     }
 
-    fn draw_upload_input_overlay(&self, f: &mut Frame, input: &LocalPathInput, cur: &str) {
+    fn draw_upload_input_overlay(&self, f: &mut Frame, input: &LocalPathInput, _cur: &str) {
         let candidate_lines = input.candidates.len().min(8);
         let base_height = 7;
         let total_lines = base_height
@@ -2744,6 +2742,7 @@ impl App {
         let pct = ((total_lines as u16 * 100) / f.area().height.max(1)).clamp(20, 60);
         let area = centered_rect(70, pct, f.area());
         clear_overlay_area(f, area);
+        let display = self.text_input_display(&input.value, area.width.saturating_sub(15) as usize);
 
         let dest = self.current_path_display();
         let mut lines = vec![
@@ -2754,10 +2753,7 @@ impl App {
             ]),
             Line::from(vec![
                 Span::styled("  File:      ", Style::default().fg(Color::Cyan)),
-                Span::styled(
-                    format!("{}{}", input.value, cur),
-                    Style::default().fg(Color::Yellow),
-                ),
+                Span::styled(display, Style::default().fg(Color::Yellow)),
             ]),
         ];
 
@@ -2784,8 +2780,9 @@ impl App {
         );
     }
 
-    fn draw_offline_input_overlay(&self, f: &mut Frame, value: &str, cur: &str) {
+    fn draw_offline_input_overlay(&self, f: &mut Frame, value: &str, _cur: &str) {
         let area = self.prepare_overlay(f, 70, 25);
+        let display = self.text_input_display(value, area.width.saturating_sub(9) as usize);
         let (bc, tc) = if self.is_vibrant() {
             (Color::LightCyan, Color::LightCyan)
         } else {
@@ -2801,10 +2798,7 @@ impl App {
                 Line::from(""),
                 Line::from(vec![
                     Span::styled("  URL: ", Style::default().fg(Color::Cyan)),
-                    Span::styled(
-                        format!("{}{}", value, cur),
-                        Style::default().fg(Color::Yellow),
-                    ),
+                    Span::styled(display, Style::default().fg(Color::Yellow)),
                 ]),
                 Line::from(""),
                 Self::hint_line(&[("Enter", "submit"), ("Esc", "cancel")]),
@@ -3540,7 +3534,6 @@ impl App {
                 };
 
                 let is_text_input_item = name == "Player Command";
-                let cur = if self.cursor_visible { "\u{2588}" } else { " " };
 
                 let mut name_value_spans = vec![
                     Span::styled(prefix, name_style),
@@ -3550,8 +3543,10 @@ impl App {
                 if is_text_input_item && is_selected && editing {
                     name_value_spans.push(Span::styled(": ", Style::default().fg(Color::DarkGray)));
                     let display_val = draft.player.as_deref().unwrap_or("");
+                    let max_width = (area.width as usize)
+                        .saturating_sub(unicode_width::UnicodeWidthStr::width(name.as_str()) + 9);
                     name_value_spans.push(Span::styled(
-                        format!("{}{}", display_val, cur),
+                        self.text_input_display(display_val, max_width),
                         Style::default().fg(Color::Yellow),
                     ));
                 } else {
