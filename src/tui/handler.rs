@@ -3778,28 +3778,6 @@ impl App {
     }
 }
 
-#[cfg(test)]
-mod mouse_list_tests {
-    use super::mouse_list_index;
-    use ratatui::layout::Rect;
-
-    #[test]
-    fn list_hit_testing_maps_visible_rows_through_scroll_offset() {
-        let area = Rect::new(10, 5, 30, 12);
-        assert_eq!(mouse_list_index(12, 7, area, 7, 4, 6), Some(4));
-        assert_eq!(mouse_list_index(12, 10, area, 7, 4, 6), Some(7));
-    }
-
-    #[test]
-    fn list_hit_testing_rejects_borders_and_rows_beyond_items() {
-        let area = Rect::new(10, 5, 30, 12);
-        assert_eq!(mouse_list_index(10, 7, area, 7, 0, 3), None);
-        assert_eq!(mouse_list_index(9, 7, area, 7, 0, 3), None);
-        assert_eq!(mouse_list_index(12, 6, area, 7, 0, 3), None);
-        assert_eq!(mouse_list_index(12, 10, area, 7, 0, 3), None);
-    }
-}
-
 /// Write `text` to the system clipboard using the best available tool.
 fn write_clipboard(text: &str) -> anyhow::Result<()> {
     use std::io::Write;
@@ -3828,4 +3806,26 @@ fn write_clipboard(text: &str) -> anyhow::Result<()> {
     Err(anyhow::anyhow!(
         "no clipboard tool found (pbcopy / wl-copy / xclip)"
     ))
+}
+
+#[cfg(test)]
+mod mouse_list_tests {
+    use super::mouse_list_index;
+    use ratatui::layout::Rect;
+
+    #[test]
+    fn list_hit_testing_maps_visible_rows_through_scroll_offset() {
+        let area = Rect::new(10, 5, 30, 12);
+        assert_eq!(mouse_list_index(12, 7, area, 7, 4, 6), Some(4));
+        assert_eq!(mouse_list_index(12, 10, area, 7, 4, 6), Some(7));
+    }
+
+    #[test]
+    fn list_hit_testing_rejects_borders_and_rows_beyond_items() {
+        let area = Rect::new(10, 5, 30, 12);
+        assert_eq!(mouse_list_index(10, 7, area, 7, 0, 3), None);
+        assert_eq!(mouse_list_index(9, 7, area, 7, 0, 3), None);
+        assert_eq!(mouse_list_index(12, 6, area, 7, 0, 3), None);
+        assert_eq!(mouse_list_index(12, 10, area, 7, 0, 3), None);
+    }
 }
