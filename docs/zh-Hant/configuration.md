@@ -41,7 +41,7 @@ show_help_bar = true        # 底部快捷鍵提示列
 quota_bar_style = "bar"     # "bar"（視覺化進度條）| "percent"（百分比數字）
 
 # 預覽
-show_preview = true         # 三欄佈局；false = 兩欄佈局
+show_preview = true         # 寬度允許時顯示預覽；false = 僅檔案瀏覽面板
 lazy_preview = false        # 僅在游標停止移動後載入預覽
 preview_max_size = 65536    # 文字預覽最大載入位元組數（預設 64 KB）
 thumbnail_mode = "auto"     # "auto" | "off" | "force-color" | "force-grayscale"

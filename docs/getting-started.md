@@ -28,6 +28,7 @@ to `~/.config/pikpaktui/session.json`.
 :::callout[Keys to know]{kind="info"}
 - `,` — open Settings
 - `h` — show the full help sheet
+- `?` — open the discoverable Actions menu
 - `q` — quit
 :::
 

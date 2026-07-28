@@ -5,11 +5,18 @@ order: 2
 ---
 
 
-Launch with `pikpaktui` (no arguments). On first run a login form appears. After login, you're in the three-column file browser. Press `h` for the built-in help sheet, `,` for settings.
+Launch with `pikpaktui` (no arguments). On first run a login form appears. After login, you're in the responsive file browser. Press `h` for the built-in help sheet, `?` for the discoverable Actions menu, or `,` for settings.
 
 ## File Browser
 
-The main view. Left pane = parent, center = current directory, right = preview.
+The main view adapts to the terminal width:
+
+- **96 columns or wider** — parent, current directory, and preview
+- **64–95 columns** — current directory and preview
+- **Narrower than 64 columns** — current directory only
+
+When the preview is disabled, the browser uses parent + current panes at 60
+columns or wider and a single current-directory pane below that.
 
 ![TUI main view](/images/main.jpeg)
 
@@ -46,9 +53,20 @@ The main view. Left pane = parent, center = current directory, right = preview.
 | `l` | Toggle log overlay |
 | `:` | Go to path — type a cloud path and press Enter |
 | `,` | Settings panel |
-| `h` | Help sheet (any key to close) |
+| `h` | Help sheet |
+| `?` | Actions menu |
 | `q` | Quit (confirms if downloads are active) |
 | `Ctrl+C` | Quit (confirms if downloads are active) |
+
+Recent operation results appear as a short-lived status message without
+opening the log overlay. The same messages remain available in the log.
+
+## Actions Menu
+
+Press `?` to browse the available actions with their shortcuts. Use `j` / `k`
+or the arrow keys to select an action, `Enter` to run it, and `Esc` or `?` to
+close. The menu also supports the mouse wheel, single-click selection, and
+double-click activation.
 
 ### Delete confirmation
 
@@ -73,16 +91,30 @@ Appears when `move_mode = "picker"` (default). A two-pane folder navigator.
 | `/` | Switch to text input mode |
 | `Esc` | Cancel |
 
-## Text Input (Move / Copy)
+## Text Input
 
-Active when `move_mode = "input"` or when you press `/` in the picker.
+All text fields — login, rename, new folder, paths, URLs, player command, and
+local transfer destinations — support cursor-aware editing.
+
+| Key | Action |
+|-----|--------|
+| `←` / `→` | Move by one Unicode character |
+| `Home` / `End` | Move to the start / end |
+| `Backspace` / `Delete` | Delete before / at the cursor |
+| `Ctrl+A` / `Ctrl+E` | Move to the start / end |
+| `Ctrl+W` | Delete the previous word |
+| Type | Insert at the cursor |
+| `Esc` | Cancel |
+
+Long values scroll horizontally to keep the cursor visible. Cloud path fields
+used for move/copy add these controls:
 
 | Key | Action |
 |-----|--------|
 | `Tab` | Autocomplete cloud path |
 | `Enter` | Select completion / confirm destination |
 | `Ctrl+B` | Switch back to folder picker |
-| `Esc` | Close completions / cancel |
+| `Esc` | Close completions first, then cancel |
 
 ## Cart View
 
@@ -164,7 +196,8 @@ If no player is configured, pikpaktui will prompt you to enter a player command 
 
 ## Settings
 
-Press `,` to open settings. Changes apply immediately; press `s` to persist to `config.toml`.
+Press `,` to open settings. Changes stay in a draft until you press `s`, which
+applies them and persists them to `config.toml`.
 
 ![Settings](/images/settings.png)
 
@@ -174,7 +207,10 @@ Press `,` to open settings. Changes apply immediately; press `s` to persist to `
 | `Space` / `Enter` | Edit / toggle selected item |
 | `←` / `→` | Cycle through options for multi-value settings |
 | `s` | Save changes to `config.toml` |
-| `Esc` | Discard unsaved changes and close |
+| `Esc` | Close, or ask before discarding unsaved changes |
+
+At the unsaved-changes prompt, press `y` / `Enter` to discard or `n` / `Esc`
+to return to editing.
 
 Settings include: Nerd Font, border style, color scheme (with custom RGB editor), help bar, quota bar style, show preview, lazy preview, preview max size, thumbnail mode, image protocols, sort field, reverse order, move mode, CLI Nerd Font, player command, concurrent download jobs.
 
@@ -193,12 +229,14 @@ Press `M` to open your share history.
 
 ## Help Sheet
 
-Press `h` in the file browser to open the built-in help sheet. Press any key to close it.
+Press `h` in the file browser to open the built-in help sheet. On short
+terminals, use `j` / `k`, arrows, page keys, `Home`, or `End` to scroll; press
+`Esc` (or another non-scroll key) to close it.
 
 ![Help sheet](/images/help.png)
 
 ## Mouse Support
 
-- **Click** — Select entry in parent or current pane
-- **Double-click** — Open folder (current/parent pane) or show info popup (preview pane)
-- **Scroll wheel** — Navigate entries, scroll preview, or scroll log overlay
+- **Click** — Select entries in file panes and modal lists
+- **Double-click** — Run safe primary actions in file panes, cart, trash, and the player picker; destructive actions still require confirmation
+- **Scroll wheel** — Navigate file panes, help, Actions, cart, downloads, offline tasks, trash, shares, player choices, color/protocol settings, preview, and logs

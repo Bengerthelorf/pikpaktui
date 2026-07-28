@@ -40,7 +40,7 @@ show_help_bar = true        # Bottom keybinding hint bar
 quota_bar_style = "bar"     # "bar" (visual bar) | "percent" (numeric %)
 
 # Preview
-show_preview = true         # Three-column layout; false = two-column
+show_preview = true         # Include preview when width allows; false = browser panes only
 lazy_preview = false        # Only load preview when cursor stops moving
 preview_max_size = 65536    # Max bytes loaded for text preview (default: 64 KB)
 thumbnail_mode = "auto"     # "auto" | "off" | "force-color" | "force-grayscale"
