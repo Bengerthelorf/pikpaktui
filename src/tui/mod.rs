@@ -119,6 +119,19 @@ struct AsyncRequest {
     target: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StatusKind {
+    Info,
+    Warning,
+    Error,
+}
+
+struct StatusMessage {
+    text: String,
+    kind: StatusKind,
+    expires_at: Instant,
+}
+
 enum OpResult {
     /// Main-pane folder listing. Folder and request ids prevent a delayed
     /// reply from replacing a newer listing, including A -> B -> A navigation.
@@ -329,6 +342,7 @@ struct App {
     entries: Vec<Entry>,
     selected: usize,
     logs: VecDeque<String>,
+    status_message: Option<StatusMessage>,
     input: InputMode,
     cursor_visible: bool,
     /// UTF-8 byte offset for the active text field. `usize::MAX` means end.
@@ -402,6 +416,7 @@ impl App {
             entries: Vec::new(),
             selected: 0,
             logs: VecDeque::new(),
+            status_message: None,
             input: InputMode::Normal,
             cursor_visible: true,
             text_cursor: usize::MAX,
@@ -491,6 +506,7 @@ impl App {
             entries: Vec::new(),
             selected: 0,
             logs: VecDeque::new(),
+            status_message: None,
             input,
             cursor_visible: true,
             text_cursor: usize::MAX,
@@ -1275,6 +1291,32 @@ impl App {
     }
 
     fn push_log(&mut self, msg: String) {
+        let lower = msg.to_ascii_lowercase();
+        let kind = if [
+            "failed",
+            "error",
+            "invalid",
+            "not found",
+            "cannot",
+            "unavailable",
+        ]
+        .iter()
+        .any(|needle| lower.contains(needle))
+        {
+            StatusKind::Error
+        } else if lower.contains("cancelled")
+            || lower.starts_with("no ")
+            || lower.contains("warning")
+        {
+            StatusKind::Warning
+        } else {
+            StatusKind::Info
+        };
+        self.status_message = Some(StatusMessage {
+            text: msg.clone(),
+            kind,
+            expires_at: Instant::now() + Duration::from_secs(4),
+        });
         self.logs.push_back(msg);
         if self.logs.len() > 500 {
             self.logs.pop_front();
@@ -1643,7 +1685,7 @@ fn folder_listing_matches(
 #[cfg(test)]
 mod folder_listing_result_tests {
     use super::{
-        App, AsyncRequest, AsyncRequestKind, InputMode, OpResult, PreviewState,
+        App, AsyncRequest, AsyncRequestKind, InputMode, OpResult, PreviewState, StatusKind,
         folder_listing_matches,
     };
     use crate::config::TuiConfig;
@@ -2012,6 +2054,25 @@ mod folder_listing_result_tests {
         };
         app.handle_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
         assert!(matches!(app.input, InputMode::Settings { selected: 9, .. }));
+    }
+
+    #[test]
+    fn log_messages_also_create_visible_typed_status() {
+        let mut app = test_app();
+
+        app.push_log("Upload failed: network timeout".to_string());
+        let status = app.status_message.as_ref().unwrap();
+        assert_eq!(status.kind, StatusKind::Error);
+        assert_eq!(status.text, "Upload failed: network timeout");
+
+        app.push_log("Download cancelled".to_string());
+        assert_eq!(
+            app.status_message.as_ref().unwrap().kind,
+            StatusKind::Warning
+        );
+
+        app.push_log("Uploaded file".to_string());
+        assert_eq!(app.status_message.as_ref().unwrap().kind, StatusKind::Info);
     }
 }
 

@@ -18,8 +18,8 @@ use super::image_render::{
 use super::local_completion::LocalPathInput;
 use super::widgets;
 use super::{
-    App, InputMode, LoginField, PickerState, PreviewState, SPINNER_FRAMES, centered_rect,
-    format_size, pad_to_width, text_input_view, truncate_name,
+    App, InputMode, LoginField, PickerState, PreviewState, SPINNER_FRAMES, StatusKind,
+    centered_rect, format_size, pad_to_width, text_input_view, truncate_name,
 };
 
 /// One Settings row: (label, description, current-value string).
@@ -896,6 +896,7 @@ impl App {
             }
         }
 
+        self.draw_status_toast(f, main_area);
         self.draw_overlay(f);
 
         if self.shares_pending && self.loading {
@@ -905,6 +906,42 @@ impl App {
         if self.show_help_sheet {
             self.draw_help_sheet(f);
         }
+    }
+
+    fn draw_status_toast(&self, f: &mut Frame, main_area: Rect) {
+        let Some(status) = self
+            .status_message
+            .as_ref()
+            .filter(|status| status.expires_at >= std::time::Instant::now())
+        else {
+            return;
+        };
+        if main_area.width < 16 || main_area.height < 4 {
+            return;
+        }
+
+        let max_width = main_area.width.saturating_sub(4);
+        let text_width =
+            unicode_width::UnicodeWidthStr::width(status.text.as_str()).min(max_width as usize);
+        let width = (text_width as u16 + 4).clamp(12, max_width);
+        let x = main_area.x + (main_area.width.saturating_sub(width)) / 2;
+        let y = main_area.y + main_area.height.saturating_sub(3);
+        let area = Rect::new(x, y, width, 3);
+        let (title, color) = match status.kind {
+            StatusKind::Info => ("Status", Color::Green),
+            StatusKind::Warning => ("Notice", Color::Yellow),
+            StatusKind::Error => ("Error", Color::Red),
+        };
+        clear_overlay_area(f, area);
+        let visible = pad_to_width(&status.text, width.saturating_sub(4) as usize);
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                visible,
+                Style::default().fg(color),
+            )))
+            .block(self.overlay_block(title, color, color)),
+            area,
+        );
     }
 
     fn draw_parent_pane(&self, f: &mut Frame, area: ratatui::layout::Rect) {
@@ -4546,6 +4583,26 @@ mod help_layout_tests {
         assert_eq!(main_layout_mode(50, true), MainLayoutMode::CurrentOnly);
         assert_eq!(main_layout_mode(80, false), MainLayoutMode::ParentCurrent);
         assert_eq!(main_layout_mode(50, false), MainLayoutMode::CurrentOnly);
+    }
+
+    #[test]
+    fn recent_operation_status_is_visible_without_opening_logs() {
+        let mut app = App::new_login(PikPak::new().unwrap(), None, TuiConfig::default());
+        app.push_log("Upload failed: timeout".to_string());
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal.draw(|frame| app.draw_main(frame)).unwrap();
+        let rendered: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+
+        assert!(rendered.contains("Upload failed: timeout"), "{rendered}");
+        assert!(rendered.contains("Error"), "{rendered}");
     }
 
     #[test]
