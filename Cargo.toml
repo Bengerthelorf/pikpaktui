@@ -21,6 +21,7 @@ include = [
 [dependencies]
 anyhow = "1"
 crossterm = "0.29"
+ctrlc = "3"
 ratatui = "0.30.0"
 dirs = "6"
 serde = { version = "1", features = ["derive"] }
