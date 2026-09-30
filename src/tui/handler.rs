@@ -9,7 +9,7 @@ use crate::pikpak::{Entry, EntryKind};
 use crate::theme;
 
 use super::completion::PathInput;
-use super::download::{DownloadTask, TaskStatus};
+use super::download::TaskStatus;
 use super::local_completion::LocalPathInput;
 use super::{
     App, AsyncRequestKind, InputMode, LoginField, NORMAL_ACTIONS, OpResult, PickerState,
@@ -2069,7 +2069,8 @@ impl App {
         self.cart_ids.clear();
         self.cart_selected = 0;
 
-        let count = cart_items.len();
+        let mut count = 0;
+        let mut folders = 0;
         // Reserve unique local names: two cart entries may share a name
         // (different folders, or duplicates within one), and concurrent
         // workers writing one path interleave chunks into a corrupt file.
@@ -2081,23 +2082,32 @@ impl App {
                 &mut taken,
                 &crate::pikpak::sanitize_filename(&item.name),
             );
-            let file_dest = dest.join(&local_name);
-            let id = self.download_state.alloc_id();
-            let task = DownloadTask {
-                id,
-                file_id: item.id,
-                name: item.name,
-                total_size: item.size,
-                downloaded: 0,
-                dest_path: file_dest,
-                status: TaskStatus::Pending,
-                cancel_flag: Arc::new(AtomicBool::new(false)),
-                speed: 0.0,
-            };
-            self.download_state.tasks.push(task);
+            let item_dest = dest.join(&local_name);
+            if item.kind == EntryKind::Folder {
+                // Expanded off-thread into one task per file (OpResult::FolderExpanded).
+                folders += 1;
+                let client = Arc::clone(&self.client);
+                let tx = self.result_tx.clone();
+                std::thread::spawn(move || {
+                    let result = client
+                        .list_folder_files(&item.id, &item_dest)
+                        .map(|files| (item.name, files));
+                    let _ = tx.send(OpResult::FolderExpanded(result));
+                });
+            } else {
+                count += 1;
+                self.download_state.queue(item, item_dest);
+            }
         }
 
-        self.push_log(format!("Queued {} files for download", count));
+        self.push_log(format!(
+            "Queued {count} files for download{}",
+            if folders > 0 {
+                format!(" ({folders} folders expanding)")
+            } else {
+                String::new()
+            }
+        ));
         self.download_state.start_next(&self.client);
     }
 
