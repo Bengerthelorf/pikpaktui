@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod behavior_tests;
+mod browser;
 mod completion;
 pub(crate) mod download;
 mod download_view;
@@ -5,6 +8,11 @@ mod draw;
 mod handler;
 mod image_render;
 mod local_completion;
+mod operations;
+mod playback;
+mod share_views;
+mod task_views;
+mod thumbnail_placeholder;
 mod widgets;
 
 pub use download_view::{DownloadViewMode, NetworkStats};
@@ -94,11 +102,7 @@ enum PreviewState {
     },
 }
 
-pub(crate) struct PlayOption {
-    pub label: String,
-    pub url: String,
-    pub available: bool,
-}
+pub(crate) use crate::pikpak::PlayOption;
 
 #[derive(Clone, Copy)]
 struct ActionItem {
@@ -122,6 +126,21 @@ const NORMAL_ACTIONS: &[ActionItem] = &[
         key: KeyCode::Char('p'),
         shortcut: "p",
         label: "Preview selected file",
+    },
+    ActionItem {
+        key: KeyCode::Char('v'),
+        shortcut: "v",
+        label: "Toggle inline image thumbnails",
+    },
+    ActionItem {
+        key: KeyCode::Char('['),
+        shortcut: "[",
+        label: "Smaller inline thumbnails",
+    },
+    ActionItem {
+        key: KeyCode::Char(']'),
+        shortcut: "]",
+        label: "Larger inline thumbnails",
     },
     ActionItem {
         key: KeyCode::Char('w'),
@@ -226,6 +245,11 @@ enum AsyncRequestKind {
     FolderPreview,
     FilePreview,
     OfflineTasks,
+    OfflineOp,
+    Trash,
+    TrashOp,
+    MyShares,
+    ShareCreate,
     Play,
     PlayPicker,
     GotoPath,
@@ -253,10 +277,12 @@ struct StatusMessage {
 }
 
 enum OpResult {
+    Browser(browser::BrowserRequest, Result<browser::BrowserPayload>),
     /// Main-pane folder listing. Folder and request ids prevent a delayed
     /// reply from replacing a newer listing, including A -> B -> A navigation.
     Ls(u64, String, Result<Vec<Entry>>),
     Ok(String),
+    Mutation(operations::MutationReport),
     Err(String),
     Info(AsyncRequest, Result<FileInfoResponse>, Option<String>),
     ParentLs(AsyncRequest, Result<Vec<Entry>>),
@@ -264,22 +290,22 @@ enum OpResult {
     PreviewInfo(AsyncRequest, Result<FileInfoResponse>),
     PreviewText(AsyncRequest, Result<(String, String, u64, bool)>),
     PreviewThumbnail(AsyncRequest, Result<image::DynamicImage>),
-    OfflineTasks(AsyncRequest, Result<Vec<crate::pikpak::OfflineTask>>),
+    OfflineTasks(AsyncRequest, Result<crate::pikpak::OfflineListResponse>),
     PlayInfo(AsyncRequest, Result<FileInfoResponse>),
     PlayPickerInfo(AsyncRequest, Result<(FileInfoResponse, Vec<PlayOption>)>),
-    TrashList(Result<Vec<Entry>>),
-    TrashOp(String),
-    OfflineOp(String),
+    TrashList(AsyncRequest, Result<Vec<Entry>>),
+    TrashOp(AsyncRequest, Result<String>),
+    OfflineOp(AsyncRequest, Result<String>),
     InfoThumbnail(AsyncRequest, Result<image::DynamicImage>),
     GotoPath(AsyncRequest, Result<(String, Vec<(String, String)>)>),
     Quota(Result<crate::pikpak::QuotaInfo>),
     Upload(Result<String>),
-    ShareCreated {
-        title: String,
-        url: String,
-        pass_code: String,
-    },
-    MyShares(Result<Vec<crate::pikpak::MyShare>>),
+    ShareCreated(
+        AsyncRequest,
+        String,
+        Result<crate::pikpak::CreateShareResponse>,
+    ),
+    MyShares(AsyncRequest, Result<Vec<crate::pikpak::MyShare>>),
     UpdateAvailable(Option<String>),
     /// Folder listing for the move/copy picker; request and folder ids guard
     /// against replies from both older navigation and cancelled dialogs.
@@ -394,8 +420,7 @@ enum InputMode {
         truncated: bool,
     },
     ConfirmPlay {
-        name: String,
-        url: String,
+        dialog: playback::PlaybackDialog,
     },
     PlayPicker {
         name: String,
@@ -452,12 +477,16 @@ enum InputMode {
 }
 
 struct App {
+    browser: browser::BrowserState,
+    settings_number_input: String,
     client: Arc<PikPak>,
     config: TuiConfig,
     current_folder_id: String,
     main_listing_request_id: u64,
     async_request_generation: u64,
     modal_request: Option<AsyncRequest>,
+    offline_refresh_at: Option<Instant>,
+    offline_selected_id: Option<String>,
     preview_request: Option<AsyncRequest>,
     parent_listing_request: Option<AsyncRequest>,
     path_completion_in_flight: Option<u64>,
@@ -489,6 +518,7 @@ struct App {
     pending_preview_fetch: bool,
     cart: Vec<Entry>,
     cart_ids: HashSet<String>,
+    cart_mutation_in_flight: bool,
     cart_selected: usize,
     download_state: DownloadState,
     download_view_mode: DownloadViewMode,
@@ -507,6 +537,7 @@ struct App {
     logs_scroll: Option<usize>,
     logs_overlay_area: Cell<ratatui::layout::Rect>,
     settings_area: Cell<ratatui::layout::Rect>,
+    play_quality_area: Cell<ratatui::layout::Rect>,
     mouse_list_area: Cell<ratatui::layout::Rect>,
     mouse_list_first_row: Cell<u16>,
     mouse_list_offset: Cell<usize>,
@@ -517,7 +548,7 @@ struct App {
     loading_label: Option<String>,
     quota_used: Option<u64>,
     quota_limit: Option<u64>,
-    shares_pending: bool,
+    share_creations_pending: usize,
     update_available: Option<String>,
     /// Terminal image-protocol picker, queried once at startup. Querying reads
     /// stdin, so it must NOT happen during draw — that races with key input.
@@ -530,12 +561,16 @@ impl App {
         let mut dl_state = DownloadState::new(config.download_jobs);
         dl_state.load_tasks(download::load_download_state());
         let mut app = Self {
+            browser: browser::BrowserState::default(),
+            settings_number_input: String::new(),
             client: Arc::new(client),
             config,
             current_folder_id: String::new(),
             main_listing_request_id: 0,
             async_request_generation: 0,
             modal_request: None,
+            offline_refresh_at: None,
+            offline_selected_id: None,
             preview_request: None,
             parent_listing_request: None,
             path_completion_in_flight: None,
@@ -566,6 +601,7 @@ impl App {
             pending_preview_fetch: false,
             cart: Vec::new(),
             cart_ids: HashSet::new(),
+            cart_mutation_in_flight: false,
             cart_selected: 0,
             download_state: dl_state,
             download_view_mode: DownloadViewMode::Collapsed,
@@ -583,6 +619,7 @@ impl App {
             logs_scroll: None,
             logs_overlay_area: Cell::new(ratatui::layout::Rect::default()),
             settings_area: Cell::new(ratatui::layout::Rect::default()),
+            play_quality_area: Cell::new(ratatui::layout::Rect::default()),
             mouse_list_area: Cell::new(ratatui::layout::Rect::default()),
             mouse_list_first_row: Cell::new(0),
             mouse_list_offset: Cell::new(0),
@@ -593,7 +630,7 @@ impl App {
             loading_label: None,
             quota_used: None,
             quota_limit: None,
-            shares_pending: false,
+            share_creations_pending: 0,
             update_available: None,
             image_picker: None,
         };
@@ -624,12 +661,16 @@ impl App {
         let (tx, rx) = mpsc::channel();
         let download_jobs = config.download_jobs;
         Self {
+            browser: browser::BrowserState::default(),
+            settings_number_input: String::new(),
             client: Arc::new(client),
             config,
             current_folder_id: String::new(),
             main_listing_request_id: 0,
             async_request_generation: 0,
             modal_request: None,
+            offline_refresh_at: None,
+            offline_selected_id: None,
             preview_request: None,
             parent_listing_request: None,
             path_completion_in_flight: None,
@@ -660,6 +701,7 @@ impl App {
             pending_preview_fetch: false,
             cart: Vec::new(),
             cart_ids: HashSet::new(),
+            cart_mutation_in_flight: false,
             cart_selected: 0,
             download_state: DownloadState::new(download_jobs),
             download_view_mode: DownloadViewMode::Collapsed,
@@ -677,6 +719,7 @@ impl App {
             logs_scroll: None,
             logs_overlay_area: Cell::new(ratatui::layout::Rect::default()),
             settings_area: Cell::new(ratatui::layout::Rect::default()),
+            play_quality_area: Cell::new(ratatui::layout::Rect::default()),
             mouse_list_area: Cell::new(ratatui::layout::Rect::default()),
             mouse_list_first_row: Cell::new(0),
             mouse_list_offset: Cell::new(0),
@@ -687,7 +730,7 @@ impl App {
             loading_label: None,
             quota_used: None,
             quota_limit: None,
-            shares_pending: false,
+            share_creations_pending: 0,
             update_available: None,
             image_picker: None,
         }
@@ -721,25 +764,10 @@ impl App {
                 self.last_spinner = Instant::now();
             }
             self.poll_results();
-
-            // Debounce: auto-fetch preview after 300ms if lazy_preview enabled
-            if self.config.lazy_preview
-                && self.pending_preview_fetch
-                && self.last_cursor_move.elapsed() >= Duration::from_millis(300)
-            {
-                self.pending_preview_fetch = false;
-                // Skip auto-loading for large text files
-                let skip = self.entries.get(self.selected).is_some_and(|e| {
-                    e.kind == EntryKind::File
-                        && theme::is_text_previewable(e)
-                        && e.size > self.config.preview_max_size
-                });
-                if !skip {
-                    self.fetch_preview_for_selected();
-                }
-            }
+            self.schedule_offline_refresh();
 
             terminal.draw(|f| self.draw(f))?;
+            self.schedule_browser_loads();
 
             if event::poll(Duration::from_millis(50))? {
                 match event::read()? {
@@ -767,6 +795,7 @@ impl App {
     fn poll_results(&mut self) {
         while let Ok(result) = self.result_rx.try_recv() {
             match result {
+                OpResult::Browser(request, result) => self.apply_browser_result(request, result),
                 OpResult::Ls(request_id, requested_folder_id, Ok(mut entries)) => {
                     if !folder_listing_matches(
                         &self.current_folder_id,
@@ -776,7 +805,7 @@ impl App {
                     ) {
                         continue;
                     }
-                    self.finish_loading();
+                    self.finish_background_loading();
                     crate::config::sort_entries(
                         &mut entries,
                         self.config.sort_field,
@@ -786,10 +815,15 @@ impl App {
                     // re-sort or insert/delete shifts indices, so a fixed index
                     // would jump to a different file. Fall back to a clamp.
                     let prev_id = self.entries.get(self.selected).map(|e| e.id.clone());
+                    let restored_id = self
+                        .browser
+                        .take_restored_selection(&self.current_folder_id);
+                    let prev_id = prev_id.or(restored_id);
                     self.entries = entries;
                     self.selected = prev_id
                         .and_then(|id| self.entries.iter().position(|e| e.id == id))
                         .unwrap_or_else(|| self.selected.min(self.entries.len().saturating_sub(1)));
+                    self.cache_main_directory();
                     self.push_log(format!("Refreshed {}", self.current_path_display()));
                     self.on_cursor_move();
                 }
@@ -802,8 +836,13 @@ impl App {
                     ) {
                         continue;
                     }
-                    self.finish_loading();
+                    self.finish_background_loading();
                     self.push_log(format!("Refresh failed: {e:#}"));
+                }
+                OpResult::Mutation(report) => {
+                    if self.record_mutation_result(report) {
+                        self.refresh();
+                    }
                 }
                 OpResult::Ok(msg) => {
                     self.push_log(msg);
@@ -811,7 +850,7 @@ impl App {
                 }
                 OpResult::Err(msg) => {
                     self.push_log(msg);
-                    self.finish_loading();
+                    self.finish_background_loading();
                 }
                 OpResult::Info(request, Ok(info), thumb_fallback) => {
                     if !self.modal_request_matches(&request)
@@ -872,6 +911,7 @@ impl App {
                         {
                             self.parent_selected = pos;
                         }
+                        self.cache_parent_directory();
                     }
                 }
                 OpResult::ParentLs(request, Err(e)) => {
@@ -895,6 +935,8 @@ impl App {
                         self.config.sort_field,
                         self.config.sort_reverse,
                     );
+                    self.browser
+                        .cache_directory(request.target.clone(), children.clone());
                     if is_modal {
                         self.modal_request = None;
                         self.finish_loading();
@@ -997,6 +1039,46 @@ impl App {
                         continue;
                     }
                     self.preview_request = None;
+                    self.browser
+                        .failed
+                        .remove(&browser::LoadKey::File(request.target.clone()));
+                    self.browser.file_previews.insert(
+                        request.target.clone(),
+                        browser::Cached {
+                            value: PreviewState::ThumbnailImage {
+                                image: image.thumbnail(512, 512),
+                            },
+                            touched: Instant::now(),
+                        },
+                    );
+                    self.browser
+                        .preview_protocols
+                        .borrow_mut()
+                        .remove(&request.target);
+                    if let Some(entry) = self.current_entry()
+                        && let Some(url) = browser::inline_thumbnail_url(entry).map(str::to_owned)
+                    {
+                        self.browser
+                            .failed
+                            .remove(&browser::LoadKey::InlineImage(url.clone()));
+                        self.browser.inline_protocols.borrow_mut().remove(&url);
+                        self.browser.inline_images.insert(
+                            url.clone(),
+                            browser::Cached {
+                                value: image.thumbnail(96, 96),
+                                touched: Instant::now(),
+                            },
+                        );
+                        self.browser.thumbnail_previews.insert(
+                            url,
+                            browser::Cached {
+                                value: PreviewState::ThumbnailImage {
+                                    image: image.thumbnail(512, 512),
+                                },
+                                touched: Instant::now(),
+                            },
+                        );
+                    }
                     self.preview_state = PreviewState::ThumbnailImage { image };
                 }
                 OpResult::PreviewThumbnail(request, Err(e)) => {
@@ -1007,26 +1089,8 @@ impl App {
                     self.preview_state = PreviewState::FileBasicInfo;
                     self.push_log(format!("Thumbnail preview failed: {e:#}"));
                 }
-                OpResult::OfflineTasks(request, Ok(tasks)) => {
-                    if !self.modal_request_matches(&request)
-                        || !matches!(self.input, InputMode::InfoLoading)
-                    {
-                        continue;
-                    }
-                    self.modal_request = None;
-                    self.finish_loading();
-                    self.input = InputMode::OfflineTasksView { tasks, selected: 0 };
-                }
-                OpResult::OfflineTasks(request, Err(e)) => {
-                    if !self.modal_request_matches(&request)
-                        || !matches!(self.input, InputMode::InfoLoading)
-                    {
-                        continue;
-                    }
-                    self.modal_request = None;
-                    self.finish_loading();
-                    self.input = InputMode::Normal;
-                    self.push_log(format!("Failed to load offline tasks: {e:#}"));
+                OpResult::OfflineTasks(request, result) => {
+                    self.apply_offline_tasks(request, result)
                 }
                 OpResult::PlayInfo(request, Ok(info)) => {
                     if !self.modal_request_matches(&request)
@@ -1036,21 +1100,18 @@ impl App {
                     }
                     self.modal_request = None;
                     self.finish_loading();
-                    let url = info
-                        .web_content_link
-                        .as_deref()
-                        .or(info.links.as_ref().and_then(|l| {
-                            l.get("application/octet-stream")
-                                .and_then(|v| v.url.as_deref())
-                        }))
-                        .unwrap_or("")
-                        .to_string();
-                    if url.is_empty() {
-                        self.push_log("No playback URL available".into());
+                    let medias = info.play_options();
+                    if medias.is_empty() {
+                        self.push_log(
+                            "No playback streams available; refresh file details to retry".into(),
+                        );
                     } else {
                         self.input = InputMode::ConfirmPlay {
-                            name: info.name.clone(),
-                            url,
+                            dialog: playback::PlaybackDialog::new(
+                                info.name,
+                                medias,
+                                self.config.playback_quality,
+                            ),
                         };
                     }
                 }
@@ -1075,7 +1136,11 @@ impl App {
                     if medias.is_empty() {
                         self.push_log("No playback streams available".into());
                     } else {
-                        let first_avail = medias.iter().position(|m| m.available).unwrap_or(0);
+                        let first_avail = PlayOption::preferred_index(
+                            &medias,
+                            self.config.playback_quality.height(),
+                        )
+                        .unwrap_or(0);
                         self.input = InputMode::PlayPicker {
                             name: info.name.clone(),
                             medias,
@@ -1093,41 +1158,12 @@ impl App {
                     self.finish_loading();
                     self.push_log(format!("Play picker info failed: {e:#}"));
                 }
-                OpResult::TrashList(Ok(entries)) => {
-                    self.finish_loading();
-                    let expanded = if let InputMode::TrashView { expanded, .. } = &self.input {
-                        *expanded
-                    } else {
-                        self.trash_expanded
-                    };
-                    // Keep the cursor near where it was: after restoring or
-                    // deleting item #12, jumping back to the top loses the
-                    // user's place. Clamp because the list just shrank.
-                    let selected = self.trash_selected.min(entries.len().saturating_sub(1));
-                    self.trash_entries = entries.clone();
-                    self.trash_selected = selected;
-                    self.trash_expanded = expanded;
-                    self.input = InputMode::TrashView {
-                        entries,
-                        selected,
-                        expanded,
-                    };
+                OpResult::TrashList(request, result) => self.apply_trash_list(request, result),
+                OpResult::TrashOp(request, result) => {
+                    self.apply_task_operation(request, result, true)
                 }
-                OpResult::TrashList(Err(e)) => {
-                    self.finish_loading();
-                    if matches!(self.input, InputMode::TrashView { .. }) {
-                        self.input = InputMode::Normal;
-                    }
-                    self.push_log(format!("Failed to load trash: {e:#}"));
-                }
-                OpResult::TrashOp(msg) => {
-                    self.finish_loading();
-                    self.push_log(msg);
-                    self.open_trash_view_preserve();
-                }
-                OpResult::OfflineOp(msg) => {
-                    self.push_log(msg);
-                    self.open_offline_tasks_view();
+                OpResult::OfflineOp(request, result) => {
+                    self.apply_task_operation(request, result, false)
                 }
                 OpResult::InfoThumbnail(request, Ok(img)) => {
                     if !self.modal_request_matches(&request) {
@@ -1174,9 +1210,12 @@ impl App {
                     }
                     self.modal_request = None;
                     self.finish_loading();
+                    self.cache_current_directory();
                     self.breadcrumb = new_breadcrumb;
                     self.current_folder_id = folder_id.clone();
                     self.selected = 0;
+                    self.entries.clear();
+                    self.scroll_offset.set(0);
                     self.parent_entries.clear();
                     self.parent_selected = 0;
                     // Fill the parent pane like normal navigation does — goto
@@ -1206,53 +1245,24 @@ impl App {
                     self.push_log(format!("Quota fetch failed: {e:#}"));
                 }
                 OpResult::Upload(Ok(msg)) => {
-                    self.finish_loading();
+                    self.finish_background_loading();
                     self.push_log(msg);
                     self.refresh();
                 }
                 OpResult::Upload(Err(e)) => {
-                    self.finish_loading();
-                    self.push_log(format!("Upload failed: {e:#}"));
-                }
-                OpResult::ShareCreated {
-                    title,
-                    url,
-                    pass_code,
-                } => {
-                    self.push_log(format!("Share created: {url}"));
-                    if let InputMode::ShareCreatedView { ref mut shares } = self.input {
-                        shares.push((title, url, pass_code));
-                    } else {
-                        self.input = InputMode::ShareCreatedView {
-                            shares: vec![(title, url, pass_code)],
-                        };
+                    self.finish_background_loading();
+                    if self.report_mutation_error("Upload", &e) {
+                        self.refresh();
                     }
                 }
-                OpResult::MyShares(Ok(shares)) => {
-                    self.finish_loading();
-                    if self.shares_pending || matches!(self.input, InputMode::MySharesView { .. }) {
-                        self.shares_pending = false;
-                        let selected = if let InputMode::MySharesView { selected, .. } = &self.input
-                        {
-                            (*selected).min(shares.len().saturating_sub(1))
-                        } else {
-                            0
-                        };
-                        self.input = InputMode::MySharesView {
-                            shares,
-                            selected,
-                            confirm_delete: None,
-                        };
+                OpResult::ShareCreated(request, title, result) => {
+                    if let Some(url) = self.record_share_created(request, title, result)
+                        && let Err(error) = handler::write_clipboard(&url)
+                    {
+                        self.push_log(format!("Clipboard failed: {error:#}"));
                     }
                 }
-                OpResult::MyShares(Err(e)) => {
-                    self.finish_loading();
-                    self.shares_pending = false;
-                    self.push_log(format!("Failed to load shares: {e:#}"));
-                    if matches!(self.input, InputMode::MySharesView { .. }) {
-                        self.input = InputMode::Normal;
-                    }
-                }
+                OpResult::MyShares(request, result) => self.apply_my_shares(request, result),
                 OpResult::UpdateAvailable(Some(version)) => {
                     self.push_log(format!(
                         "Update available: v{} → v{} (run `pikpaktui update`)",
@@ -1425,6 +1435,24 @@ impl App {
         self.loading_label = None;
     }
 
+    fn finish_background_loading(&mut self) {
+        if self.modal_request.is_none() {
+            self.finish_loading();
+        }
+    }
+
+    /// Apply saved preferences; the caller refreshes listings if API image size changed.
+    fn apply_settings(&mut self, config: TuiConfig) -> bool {
+        let thumbnail_size_changed = self.config.thumbnail_size != config.thumbnail_size;
+        self.client
+            .set_thumbnail_size(config.thumbnail_size.as_api_str());
+        self.config = config;
+        self.resort_entries();
+        self.download_state.max_concurrent = self.config.download_jobs.max(1);
+        self.download_state.start_next(&self.client);
+        thumbnail_size_changed
+    }
+
     fn push_log(&mut self, msg: String) {
         let lower = msg.to_ascii_lowercase();
         let kind = if [
@@ -1447,6 +1475,10 @@ impl App {
         } else {
             StatusKind::Info
         };
+        self.push_status_log(msg, kind);
+    }
+
+    fn push_status_log(&mut self, msg: String, kind: StatusKind) {
         self.status_message = Some(StatusMessage {
             text: msg.clone(),
             kind,
@@ -1479,6 +1511,8 @@ impl App {
     }
 
     fn refresh(&mut self) {
+        self.browser.invalidate();
+        self.clear_preview();
         self.loading = true;
         let fid = self.current_folder_id.clone();
         self.request_main_listing(fid);
@@ -1487,6 +1521,7 @@ impl App {
     }
 
     fn request_main_listing(&mut self, folder_id: String) {
+        self.browser.cancel_directory_loads(&folder_id);
         self.invalidate_main_listing();
         let request_id = self.main_listing_request_id;
         let client = Arc::clone(&self.client);
@@ -1547,11 +1582,35 @@ impl App {
             && self.preview_target_id.as_deref() == Some(request.target.as_str())
     }
 
+    fn modal_request_survives_input(&self) -> bool {
+        matches!(self.input, InputMode::InfoLoading)
+            || self
+                .modal_request
+                .as_ref()
+                .is_some_and(|request| match &self.input {
+                    InputMode::OfflineTasksView { .. } => {
+                        request.kind == AsyncRequestKind::OfflineTasks
+                    }
+                    InputMode::TrashView { .. } => matches!(
+                        request.kind,
+                        AsyncRequestKind::Trash | AsyncRequestKind::TrashOp
+                    ),
+                    InputMode::MySharesView { .. } => request.kind == AsyncRequestKind::MyShares,
+                    InputMode::ShareCreatedView { .. } => {
+                        request.kind == AsyncRequestKind::ShareCreate
+                    }
+                    _ => false,
+                })
+    }
+
     fn invalidate_modal_request(&mut self) {
         let request_owned_loading = self.modal_request.as_ref().is_some_and(|request| {
             matches!(
                 request.kind,
-                AsyncRequestKind::Play | AsyncRequestKind::PlayPicker | AsyncRequestKind::GotoPath
+                AsyncRequestKind::Play
+                    | AsyncRequestKind::PlayPicker
+                    | AsyncRequestKind::GotoPath
+                    | AsyncRequestKind::ShareCreate
             )
         });
         self.modal_request = None;
@@ -1561,6 +1620,23 @@ impl App {
     }
 
     fn refresh_parent(&mut self) {
+        let width = self
+            .browser
+            .hits
+            .borrow()
+            .iter()
+            .map(|pane| pane.area.width as usize)
+            .sum::<usize>()
+            .min(u16::MAX as usize) as u16;
+        let visible = self.breadcrumb.len().checked_sub(1).is_some_and(|depth| {
+            self.browser_pane_plan(width)
+                .panes
+                .contains(&browser::PaneKind::Ancestor(depth))
+        });
+        if !visible {
+            self.parent_listing_request = None;
+            return;
+        }
         if let Some(parent_id) = self.breadcrumb.last().map(|(id, _)| id.clone()) {
             let request =
                 self.new_async_request(AsyncRequestKind::ParentListing, parent_id.clone());
@@ -1590,10 +1666,10 @@ impl App {
     fn on_cursor_move(&mut self) {
         self.preview_scroll = 0;
         self.preview_request = None;
+        self.last_cursor_move = Instant::now();
         if !self.config.show_preview {
             return;
         }
-        self.last_cursor_move = Instant::now();
         if let Some(entry) = self.entries.get(self.selected) {
             match entry.kind {
                 EntryKind::File => {
@@ -1636,6 +1712,7 @@ impl App {
         let eid = entry.id.clone();
         match entry.kind {
             EntryKind::Folder => {
+                self.browser.cancel_directory_loads(&eid);
                 let request =
                     self.begin_preview_request(AsyncRequestKind::FolderPreview, eid.clone());
                 // Folders always show content listing, never thumbnails
@@ -1644,13 +1721,16 @@ impl App {
                 });
             }
             EntryKind::File => {
-                if let Some(ref thumb_url) = entry.thumbnail_link
-                    && !thumb_url.is_empty()
+                if browser::inline_thumbnail_url(&entry).is_some()
+                    || theme::categorize(&entry) == theme::FileCategory::Image
                 {
                     let request =
                         self.begin_preview_request(AsyncRequestKind::FilePreview, eid.clone());
-                    self.spawn_thumbnail_fetch(thumb_url.clone(), move |r| {
-                        OpResult::PreviewThumbnail(request, r)
+                    std::thread::spawn(move || {
+                        let _ = tx.send(OpResult::PreviewThumbnail(
+                            request,
+                            fetch_entry_thumbnail(&entry, &client),
+                        ));
                     });
                     return;
                 }
@@ -1675,41 +1755,19 @@ impl App {
         }
     }
 
-    fn open_trash_view_preserve(&mut self) {
-        self.input = InputMode::TrashView {
-            entries: self.trash_entries.clone(),
-            selected: self.trash_selected,
-            expanded: self.trash_expanded,
-        };
-        self.loading = true;
-        self.loading_label = Some("Loading trash...".into());
-        let client = Arc::clone(&self.client);
-        let tx = self.result_tx.clone();
-        std::thread::spawn(move || {
-            let _ = tx.send(OpResult::TrashList(client.ls_trash(200)));
-        });
-    }
-
-    fn open_my_shares_view(&mut self) {
-        self.shares_pending = true;
-        self.loading = true;
-        self.loading_label = Some("Loading shares...".into());
-        let client = Arc::clone(&self.client);
-        let tx = self.result_tx.clone();
-        std::thread::spawn(move || {
-            let _ = tx.send(OpResult::MyShares(client.list_shares()));
-        });
-    }
-
     fn resort_entries(&mut self) {
+        let selected_id = self.entries.get(self.selected).map(|e| e.id.clone());
         crate::config::sort_entries(
             &mut self.entries,
             self.config.sort_field,
             self.config.sort_reverse,
         );
-        if self.selected >= self.entries.len() {
-            self.selected = self.entries.len().saturating_sub(1);
-        }
+        self.selected = selected_id
+            .and_then(|id| self.entries.iter().position(|e| e.id == id))
+            .unwrap_or_else(|| self.selected.min(self.entries.len().saturating_sub(1)));
+        self.browser
+            .resort(self.config.sort_field, self.config.sort_reverse);
+        self.on_cursor_move();
         let arrow = if self.config.sort_reverse {
             "\u{2193}"
         } else {
@@ -1792,6 +1850,8 @@ fn truncate_name(name: &str, max_width: usize) -> String {
     use unicode_width::UnicodeWidthStr;
     if UnicodeWidthStr::width(name) <= max_width {
         name.to_string()
+    } else if max_width < 3 {
+        ".".repeat(max_width)
     } else {
         let mut w = 0;
         let mut out = String::new();
@@ -1843,6 +1903,8 @@ mod folder_listing_result_tests {
             modified_time: None,
             web_content_link: Some("https://example.invalid/video".to_string()),
             thumbnail_link: None,
+            phase: None,
+            audit: None,
             links: None,
             medias: None,
         }
@@ -1858,6 +1920,8 @@ mod folder_listing_result_tests {
             modified_time: String::new(),
             starred: false,
             thumbnail_link: None,
+            phase: None,
+            audit: None,
         }
     }
 
@@ -2547,17 +2611,69 @@ mod text_input_tests {
     }
 }
 
+fn fetch_entry_thumbnail(
+    entry: &Entry,
+    client: &crate::pikpak::PikPak,
+) -> Result<image::DynamicImage> {
+    use anyhow::Context;
+    let mut tried = Vec::new();
+    let mut error = None;
+    if let Some(url) = browser::inline_thumbnail_url(entry) {
+        match fetch_and_render_thumbnail(url, client) {
+            Ok(image) => return Ok(image),
+            Err(err) => error = Some(err),
+        }
+    }
+    // Listing links can expire or fail independently of the original image.
+    // Refresh metadata once; for small images the original file is also safe
+    // to decode. Never fetch an original video to make a thumbnail.
+    let info = client
+        .file_info(&entry.id)
+        .context("failed to refresh preview links")?;
+    let urls = thumbnail_fallback_urls(entry, &info);
+    for url in urls {
+        if tried.iter().any(|tried| tried == url) {
+            continue;
+        }
+        tried.push(url.to_owned());
+        match fetch_and_render_thumbnail(url, client) {
+            Ok(image) => return Ok(image),
+            Err(err) => error = Some(err),
+        }
+    }
+    Err(error.unwrap_or_else(|| anyhow::anyhow!("no preview image available")))
+}
+
+fn thumbnail_fallback_urls<'a>(entry: &Entry, info: &'a FileInfoResponse) -> Vec<&'a str> {
+    let mut urls = Vec::new();
+    if let Some(url) = info.thumbnail_link.as_deref().filter(|url| !url.is_empty()) {
+        urls.push(url);
+    }
+    if theme::categorize(entry) == theme::FileCategory::Image
+        && entry.size > 0
+        && entry.size <= 16 * 1024 * 1024
+        && info.file_size() <= 16 * 1024 * 1024
+        && let Some(url) = info.download_url().filter(|url| !url.is_empty())
+    {
+        urls.push(url);
+    }
+    urls
+}
+
 fn fetch_and_render_thumbnail(
     url: &str,
     client: &crate::pikpak::PikPak,
 ) -> Result<image::DynamicImage> {
     use anyhow::Context;
     use image::ImageReader;
-    use std::io::Cursor;
+    use std::io::{Cursor, Read};
+
+    const MAX_THUMBNAIL_BYTES: u64 = 16 * 1024 * 1024;
 
     let response = client
         .http()
         .get(url)
+        .timeout(Duration::from_secs(30))
         .send()
         .context("failed to download thumbnail")?;
 
@@ -2568,10 +2684,24 @@ fn fetch_and_render_thumbnail(
         ));
     }
 
-    let bytes = response.bytes().context("failed to read thumbnail bytes")?;
-    let img = ImageReader::new(Cursor::new(&bytes))
+    let mut bytes = Vec::new();
+    response
+        .take(MAX_THUMBNAIL_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .context("failed to read thumbnail bytes")?;
+    anyhow::ensure!(
+        bytes.len() as u64 <= MAX_THUMBNAIL_BYTES,
+        "thumbnail exceeds 16 MiB"
+    );
+    let mut reader = ImageReader::new(Cursor::new(&bytes))
         .with_guessed_format()
-        .context("failed to guess image format")?
+        .context("failed to guess image format")?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(8192);
+    limits.max_image_height = Some(8192);
+    limits.max_alloc = Some(64 * 1024 * 1024);
+    reader.limits(limits);
+    let img = reader
         .decode()
         .context("failed to decode thumbnail image")?;
 
@@ -2725,5 +2855,243 @@ mod wrap_tests {
             .map(|s| s.as_str())
             .collect();
         assert_eq!(bottom.last().unwrap(), &"last line");
+    }
+}
+
+#[cfg(test)]
+mod thumbnail_loading_tests {
+    use super::*;
+
+    #[test]
+    fn original_file_fallback_is_limited_to_small_images() {
+        let info: FileInfoResponse = serde_json::from_str(
+            r#"{
+            "name": "photo.jpg", "size": "220801",
+            "thumbnail_link": "https://example.invalid/preview",
+            "web_content_link": "https://example.invalid/original"
+        }"#,
+        )
+        .unwrap();
+        let mut entry = Entry {
+            id: "image".into(),
+            name: "photo.jpg".into(),
+            kind: EntryKind::File,
+            size: 220801,
+            created_time: String::new(),
+            modified_time: String::new(),
+            starred: false,
+            thumbnail_link: None,
+            phase: None,
+            audit: None,
+        };
+        assert_eq!(
+            thumbnail_fallback_urls(&entry, &info),
+            [
+                "https://example.invalid/preview",
+                "https://example.invalid/original"
+            ]
+        );
+        entry.name = "clip.mp4".into();
+        assert_eq!(
+            thumbnail_fallback_urls(&entry, &info),
+            ["https://example.invalid/preview"]
+        );
+        entry.name = "photo.jpg".into();
+        entry.size = 17 * 1024 * 1024;
+        assert_eq!(
+            thumbnail_fallback_urls(&entry, &info),
+            ["https://example.invalid/preview"]
+        );
+    }
+
+    #[test]
+    fn thumbnail_fetch_decodes_a_real_http_image_response() {
+        use std::io::{Cursor, Read, Write};
+        let mut bytes = Cursor::new(Vec::new());
+        image::DynamicImage::new_rgb8(32, 16)
+            .write_to(&mut bytes, image::ImageFormat::Png)
+            .unwrap();
+        let bytes = bytes.into_inner();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/preview", listener.local_addr().unwrap());
+        let worker = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0; 4096];
+            assert!(stream.read(&mut request).unwrap() > 0);
+            write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", bytes.len()).unwrap();
+            stream.write_all(&bytes).unwrap();
+        });
+        let client = PikPak::new().unwrap();
+        let image = fetch_and_render_thumbnail(&url, &client).unwrap();
+        worker.join().unwrap();
+        assert_eq!((image.width(), image.height()), (32, 16));
+    }
+}
+
+#[cfg(test)]
+mod offline_refresh_tests {
+    use super::*;
+    use crate::pikpak::{OfflineListResponse, OfflineTask};
+
+    fn app() -> App {
+        App::new_login(PikPak::new().unwrap(), None, TuiConfig::default())
+    }
+    fn task(id: &str, phase: &str) -> OfflineTask {
+        serde_json::from_value(serde_json::json!({"id":id,"phase":phase,"name":id})).unwrap()
+    }
+    fn response(tasks: Vec<OfflineTask>) -> OfflineListResponse {
+        OfflineListResponse {
+            tasks,
+            next_page_token: None,
+            expires_in: Some(2),
+        }
+    }
+
+    #[test]
+    fn refresh_keeps_selection_by_identity_when_tasks_reorder() {
+        let mut app = app();
+        app.input = InputMode::OfflineTasksView {
+            tasks: vec![
+                task("a", "PHASE_TYPE_RUNNING"),
+                task("b", "PHASE_TYPE_PAUSED"),
+            ],
+            selected: 1,
+        };
+        let request = app.begin_modal_request(AsyncRequestKind::OfflineTasks, "offline-tasks");
+        app.result_tx
+            .send(OpResult::OfflineTasks(
+                request,
+                Ok(response(vec![
+                    task("b", "PHASE_TYPE_PAUSED"),
+                    task("a", "PHASE_TYPE_RUNNING"),
+                ])),
+            ))
+            .unwrap();
+        app.poll_results();
+        assert!(matches!(
+            app.input,
+            InputMode::OfflineTasksView { selected: 0, .. }
+        ));
+        let remaining = app
+            .offline_refresh_at
+            .unwrap()
+            .duration_since(Instant::now());
+        assert!(remaining <= Duration::from_secs(2) && remaining > Duration::from_secs(1));
+    }
+
+    #[test]
+    fn navigating_during_refresh_keeps_request_but_escape_cancels_it() {
+        let mut app = app();
+        app.input = InputMode::OfflineTasksView {
+            tasks: vec![
+                task("a", "PHASE_TYPE_RUNNING"),
+                task("b", "PHASE_TYPE_PAUSED"),
+            ],
+            selected: 0,
+        };
+        let request = app.begin_modal_request(AsyncRequestKind::OfflineTasks, "offline-tasks");
+        app.handle_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        assert_eq!(app.modal_request.as_ref(), Some(&request));
+        app.handle_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+        assert!(app.modal_request.is_none());
+        app.result_tx
+            .send(OpResult::OfflineTasks(
+                request,
+                Ok(response(vec![task("a", "PHASE_TYPE_COMPLETE")])),
+            ))
+            .unwrap();
+        app.poll_results();
+        assert!(matches!(app.input, InputMode::Normal));
+    }
+
+    #[test]
+    fn mouse_scroll_during_refresh_keeps_the_request_and_updates_selection() {
+        use crossterm::event::{MouseEvent, MouseEventKind};
+        let mut app = app();
+        app.input = InputMode::OfflineTasksView {
+            tasks: vec![
+                task("a", "PHASE_TYPE_RUNNING"),
+                task("b", "PHASE_TYPE_PAUSED"),
+            ],
+            selected: 0,
+        };
+        let request = app.begin_modal_request(AsyncRequestKind::OfflineTasks, "offline-tasks");
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 10,
+            row: 10,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(app.modal_request.as_ref(), Some(&request));
+        assert!(matches!(
+            app.input,
+            InputMode::OfflineTasksView { selected: 1, .. }
+        ));
+        app.result_tx
+            .send(OpResult::OfflineTasks(
+                request,
+                Ok(response(vec![
+                    task("b", "PHASE_TYPE_PAUSED"),
+                    task("a", "PHASE_TYPE_RUNNING"),
+                ])),
+            ))
+            .unwrap();
+        app.poll_results();
+        assert!(matches!(
+            app.input,
+            InputMode::OfflineTasksView { selected: 0, .. }
+        ));
+    }
+
+    #[test]
+    fn failed_refresh_keeps_visible_tasks_and_schedules_retry() {
+        let mut app = app();
+        app.input = InputMode::OfflineTasksView {
+            tasks: vec![task("a", "PHASE_TYPE_RUNNING")],
+            selected: 0,
+        };
+        let request = app.begin_modal_request(AsyncRequestKind::OfflineTasks, "offline-tasks");
+        app.result_tx
+            .send(OpResult::OfflineTasks(
+                request,
+                Err(anyhow::anyhow!("fixture failure")),
+            ))
+            .unwrap();
+        app.poll_results();
+        assert!(
+            matches!(&app.input, InputMode::OfflineTasksView { tasks, .. } if tasks.len() == 1)
+        );
+        assert!(app.offline_refresh_at.is_some());
+    }
+
+    #[test]
+    fn completed_only_list_stops_automatic_polling() {
+        let mut app = app();
+        app.input = InputMode::InfoLoading;
+        let request = app.begin_modal_request(AsyncRequestKind::OfflineTasks, "offline-tasks");
+        app.result_tx
+            .send(OpResult::OfflineTasks(
+                request,
+                Ok(response(vec![task("a", "PHASE_TYPE_COMPLETE")])),
+            ))
+            .unwrap();
+        app.poll_results();
+        assert!(matches!(app.input, InputMode::OfflineTasksView { .. }));
+        assert!(app.offline_refresh_at.is_none());
+    }
+
+    #[test]
+    fn quick_play_uses_the_same_original_media_as_picker() {
+        let mut app = app();
+        app.input = InputMode::Normal;
+        let info: FileInfoResponse = serde_json::from_str(r#"{"id":"file","name":"fixture","web_content_link":"https://slow.invalid/download","medias":[{"is_origin":true,"is_visible":true,"link":{"url":"https://media.invalid/original"}}]}"#).unwrap();
+        let request = app.begin_modal_request(AsyncRequestKind::Play, "file");
+        app.result_tx
+            .send(OpResult::PlayInfo(request, Ok(info)))
+            .unwrap();
+        app.poll_results();
+        assert!(
+            matches!(&app.input, InputMode::ConfirmPlay { dialog } if dialog.option().is_some_and(|o| o.url == "https://media.invalid/original"))
+        );
     }
 }

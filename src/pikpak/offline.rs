@@ -5,6 +5,15 @@ use super::{
     json_or_api_error,
 };
 
+pub const OFFLINE_TASK_PHASES: &[&str] = &[
+    "PHASE_TYPE_RUNNING",
+    "PHASE_TYPE_PENDING",
+    "PHASE_TYPE_COMPLETE",
+    "PHASE_TYPE_ERROR",
+    "PHASE_TYPE_PAUSED",
+    "PHASE_TYPE_UNKNOW",
+];
+
 impl PikPak {
     pub fn offline_download(
         &self,
@@ -36,20 +45,55 @@ impl PikPak {
     }
 
     pub fn offline_list(&self, limit: u32, phases: &[&str]) -> Result<OfflineListResponse> {
+        let mut result = OfflineListResponse {
+            tasks: Vec::new(),
+            next_page_token: None,
+            expires_in: None,
+        };
+        let mut seen = std::collections::HashSet::new();
+        while result.tasks.len() < limit as usize {
+            let page_size = (limit as usize - result.tasks.len()).min(500) as u32;
+            let mut page =
+                self.offline_list_page(page_size, phases, result.next_page_token.as_deref())?;
+            result.expires_in = match (result.expires_in, page.expires_in) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (a, b) => a.or(b),
+            };
+            result.tasks.append(&mut page.tasks);
+            result.tasks.truncate(limit as usize);
+            result.next_page_token = page.next_page_token.filter(|t| !t.is_empty());
+            match &result.next_page_token {
+                Some(token) if !seen.insert(token.clone()) => {
+                    return Err(anyhow!(
+                        "offline list pagination stuck: repeated page token"
+                    ));
+                }
+                Some(_) => {}
+                None => break,
+            }
+        }
+        Ok(result)
+    }
+
+    fn offline_list_page(
+        &self,
+        limit: u32,
+        phases: &[&str],
+        page_token: Option<&str>,
+    ) -> Result<OfflineListResponse> {
         let token = self.access_token()?;
         let url = self.drive_url("drive/v1/tasks");
-
-        let filters = serde_json::json!({
-            "phase": { "in": phases.join(",") }
-        });
-
-        let rb = self.http.get(&url).bearer_auth(&token).query(&[
+        let filters = serde_json::json!({"phase": {"in": phases.join(",")}});
+        let mut rb = self.http.get(&url).bearer_auth(&token).query(&[
             ("type", "offline"),
             ("thumbnail_size", "SIZE_SMALL"),
             ("limit", &limit.to_string()),
             ("filters", &filters.to_string()),
             ("with", "reference_resource"),
         ]);
+        if let Some(token) = page_token {
+            rb = rb.query(&[("page_token", token)]);
+        }
         let response = self.send_authed("offline list", rb)?;
         json_or_api_error(response, "offline list")
     }

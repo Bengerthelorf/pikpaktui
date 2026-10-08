@@ -40,12 +40,19 @@ color_scheme = "vibrant"    # "vibrant" | "classic" | "custom"
 show_help_bar = true        # 底部快捷键提示栏
 quota_bar_style = "bar"     # "bar"（可视化进度条）| "percent"（百分比数字）
 
+# 文件浏览
+columns = "auto"           # "auto" 或正整数（4、5、6……）
+column_min_width = 28       # 最小栏宽，单位为终端字符格，至少 16
+inline_thumbnails = true   # 文件名前的小缩略图；v 开关
+inline_thumbnail_size = "tiny"  # "tiny" | "small" | "medium" | "large"；[ / ] 调整
+thumbnail_placeholders = true  # 等待或不可用时保留灰色图片占位卡
+
 # 预览
 show_preview = true         # 宽度允许时显示预览；false = 仅文件浏览面板
-lazy_preview = false        # 仅在光标停止移动后加载预览
+lazy_preview = false        # 光标停止后自动加载文本预览和文件详情
 preview_max_size = 65536    # 文本预览最大加载字节数（默认 64 KB）
 thumbnail_mode = "auto"     # "auto" | "off" | "force-color" | "force-grayscale"
-thumbnail_size = "medium"   # "small" | "medium" | "large"
+thumbnail_size = "medium"   # 服务端图片清晰度，与列表显示尺寸分开设置; "small" | "medium" | "large"
 
 # 排序（在 TUI 中用 S / R 修改时自动保存）
 sort_field = "name"         # "name" | "size" | "created" | "type" | "extension" | "none"
@@ -57,11 +64,24 @@ cli_nerd_font = false       # CLI 输出中使用 Nerd Font 图标
 
 # 播放
 player = "mpv"              # 外部视频播放器命令；首次播放视频时在 TUI 设置
+playback_quality = "original" # TUI 默认播放画质；original | 2160p | 1440p | 1080p | 720p | 480p | 360p
 
 # 下载
 download_jobs = 1           # TUI 下载工作线程数（设置界面范围 1–16）
 update_check = "notify"     # "notify" | "quiet" | "off"
 ```
+
+默认播放偏好为 `original`（原画），表示源文件的画质，不固定为 1080p。可在 **Playback Settings → Default Playback Quality** 修改并按 `s` 保存，或设置顶层 `playback_quality`；`4k` 是 `2160p` 的别名。指定分辨率时，优先选择允许播放且不高于目标的最高转码版本，其次选择高于目标的最低版本；没有已知分辨率的可用转码时回退到原画／首个允许播放的链接。播放确认框显示实际选项，偏好不可用时提示回退。下拉框的单次选择不修改默认配置。CLI `play` 仍在省略画质参数时列出版本，提供名称／序号时按该参数播放。
+
+### 缩略图设置
+
+**Browser Settings** 提供栏目数、最小栏宽、行内缩略图开关、显示尺寸、占位图开关和服务端缩略图尺寸。这些字段都放在 `config.toml` 顶层。
+
+`inline_thumbnail_size` 控制列表图片占多少终端字符格；`thumbnail_size` 控制服务端图片清晰度（`small`、`medium`、`large`）。保存 **Thumbnail Source Size** 后，共享后台任务立即使用新尺寸，并刷新浏览器。
+
+`thumbnail_placeholders = true` 默认开启，旧配置没有这个字段也会开启。未加载时显示低对比度灰色卡片，加载中显示小转动指示，不可用时显示叉号；没有缩略图链接的图片、视频也保留不可用卡片。行高和文件名位置保持稳定。设为 `false` 可恢复普通图标回退。`inline_thumbnails` 控制列表图片，`show_preview` 控制预览面板，`thumbnail_mode` 控制大预览的图片渲染。
+
+播放链接选择、任务完成确认、凭据刷新和过期响应修复自动生效，无需额外兼容开关。
 
 ### 图片协议配置
 

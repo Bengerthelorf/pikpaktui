@@ -142,6 +142,10 @@ pub struct OfflineTask {
 pub struct OfflineListResponse {
     #[serde(default)]
     pub tasks: Vec<OfflineTask>,
+    #[serde(default)]
+    pub next_page_token: Option<String>,
+    #[serde(default)]
+    pub expires_in: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]

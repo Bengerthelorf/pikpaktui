@@ -261,6 +261,30 @@ pub enum ThumbnailSize {
 }
 
 impl ThumbnailSize {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Small => "small",
+            Self::Medium => "medium",
+            Self::Large => "large",
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            Self::Small => Self::Medium,
+            Self::Medium => Self::Large,
+            Self::Large => Self::Small,
+        }
+    }
+
+    pub fn prev(self) -> Self {
+        match self {
+            Self::Small => Self::Large,
+            Self::Medium => Self::Small,
+            Self::Large => Self::Medium,
+        }
+    }
+
     pub fn as_api_str(self) -> &'static str {
         match self {
             Self::Small => "SIZE_SMALL",
@@ -500,6 +524,69 @@ pub enum MoveMode {
     Input,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum PlaybackQuality {
+    #[default]
+    Original,
+    #[serde(rename = "2160p", alias = "4k")]
+    P2160,
+    #[serde(rename = "1440p")]
+    P1440,
+    #[serde(rename = "1080p")]
+    P1080,
+    #[serde(rename = "720p")]
+    P720,
+    #[serde(rename = "480p")]
+    P480,
+    #[serde(rename = "360p")]
+    P360,
+}
+
+impl PlaybackQuality {
+    pub fn all() -> &'static [Self] {
+        &[
+            Self::Original,
+            Self::P2160,
+            Self::P1440,
+            Self::P1080,
+            Self::P720,
+            Self::P480,
+            Self::P360,
+        ]
+    }
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Original => "original",
+            Self::P2160 => "2160p",
+            Self::P1440 => "1440p",
+            Self::P1080 => "1080p",
+            Self::P720 => "720p",
+            Self::P480 => "480p",
+            Self::P360 => "360p",
+        }
+    }
+    pub fn height(self) -> Option<u32> {
+        match self {
+            Self::Original => None,
+            Self::P2160 => Some(2160),
+            Self::P1440 => Some(1440),
+            Self::P1080 => Some(1080),
+            Self::P720 => Some(720),
+            Self::P480 => Some(480),
+            Self::P360 => Some(360),
+        }
+    }
+    pub fn next(self) -> Self {
+        let all = Self::all();
+        all[(all.iter().position(|q| *q == self).unwrap() + 1) % all.len()]
+    }
+    pub fn prev(self) -> Self {
+        let all = Self::all();
+        all[(all.iter().position(|q| *q == self).unwrap() + all.len() - 1) % all.len()]
+    }
+}
+
 impl MoveMode {
     pub fn toggle(self) -> Self {
         match self {
@@ -514,6 +601,91 @@ impl MoveMode {
             Self::Input => "input",
         }
     }
+}
+
+/// A fixed pane count is a preference; narrow terminals can show fewer panes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ColumnCount {
+    #[default]
+    Auto,
+    Fixed(usize),
+}
+
+impl Serialize for ColumnCount {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Auto => serializer.serialize_str("auto"),
+            Self::Fixed(count) => serializer.serialize_u64(*count as u64),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ColumnCount {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Value {
+            Text(String),
+            Count(usize),
+        }
+        match Value::deserialize(deserializer)? {
+            Value::Text(s) if s == "auto" => Ok(Self::Auto),
+            Value::Count(n) if n > 0 => Ok(Self::Fixed(n)),
+            _ => Err(serde::de::Error::custom(
+                "columns must be \"auto\" or a positive integer",
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum InlineThumbnailSize {
+    #[default]
+    Tiny,
+    Small,
+    Medium,
+    Large,
+}
+
+impl InlineThumbnailSize {
+    pub fn dimensions(self) -> (u16, u16) {
+        match self {
+            Self::Tiny => (2, 1),
+            Self::Small => (4, 2),
+            Self::Medium => (6, 3),
+            Self::Large => (8, 4),
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Tiny => "Tiny (2 x 1)",
+            Self::Small => "Small (4 x 2)",
+            Self::Medium => "Medium (6 x 3)",
+            Self::Large => "Large (8 x 4)",
+        }
+    }
+
+    pub fn larger(self) -> Self {
+        match self {
+            Self::Tiny => Self::Small,
+            Self::Small => Self::Medium,
+            Self::Medium | Self::Large => Self::Large,
+        }
+    }
+
+    pub fn smaller(self) -> Self {
+        match self {
+            Self::Tiny | Self::Small => Self::Tiny,
+            Self::Medium => Self::Small,
+            Self::Large => Self::Medium,
+        }
+    }
+}
+
+fn default_column_min_width() -> u16 {
+    28
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -535,6 +707,16 @@ pub struct TuiConfig {
     #[serde(default = "default_true")]
     pub show_preview: bool,
     #[serde(default)]
+    pub columns: ColumnCount,
+    #[serde(default = "default_column_min_width")]
+    pub column_min_width: u16,
+    #[serde(default = "default_true")]
+    pub inline_thumbnails: bool,
+    #[serde(default)]
+    pub inline_thumbnail_size: InlineThumbnailSize,
+    #[serde(default = "default_true")]
+    pub thumbnail_placeholders: bool,
+    #[serde(default)]
     pub lazy_preview: bool,
     #[serde(default = "default_preview_max_size")]
     pub preview_max_size: u64,
@@ -555,6 +737,8 @@ pub struct TuiConfig {
     image_protocol: Option<ImageProtocol>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub player: Option<String>,
+    #[serde(default)]
+    pub playback_quality: PlaybackQuality,
     #[serde(default = "default_download_jobs")]
     pub download_jobs: usize,
     #[serde(default)]
@@ -627,6 +811,11 @@ impl Default for TuiConfig {
             border_style: BorderStyle::default(),
             color_scheme: ColorScheme::default(),
             show_preview: true,
+            columns: ColumnCount::Auto,
+            column_min_width: default_column_min_width(),
+            inline_thumbnails: true,
+            inline_thumbnail_size: InlineThumbnailSize::default(),
+            thumbnail_placeholders: true,
             lazy_preview: false,
             preview_max_size: default_preview_max_size(),
             custom_colors: CustomColors::default(),
@@ -637,6 +826,7 @@ impl Default for TuiConfig {
             image_protocols: BTreeMap::new(),
             image_protocol: None,
             player: None,
+            playback_quality: PlaybackQuality::default(),
             download_jobs: 1,
             update_check: UpdateCheck::default(),
         }
@@ -837,5 +1027,103 @@ fn category_order(cat: crate::theme::FileCategory) -> u8 {
         FileCategory::Document => 5,
         FileCategory::Code => 6,
         FileCategory::Default => 7,
+    }
+}
+
+#[cfg(test)]
+mod browser_config_tests {
+    use super::*;
+
+    #[test]
+    fn old_configs_receive_browser_defaults() {
+        let config: TuiConfig = toml::from_str("nerd_font = true\nshow_preview = false\n").unwrap();
+        assert!(config.nerd_font);
+        assert!(!config.show_preview);
+        assert_eq!(config.columns, ColumnCount::Auto);
+        assert_eq!(config.column_min_width, 28);
+        assert!(config.inline_thumbnails);
+        assert_eq!(config.inline_thumbnail_size.dimensions(), (2, 1));
+        assert!(config.thumbnail_placeholders);
+        assert_eq!(config.playback_quality, PlaybackQuality::Original);
+    }
+
+    #[test]
+    fn playback_preferences_round_trip_and_validate() {
+        for quality in PlaybackQuality::all() {
+            let config = TuiConfig {
+                playback_quality: *quality,
+                ..TuiConfig::default()
+            };
+            let raw = toml::to_string_pretty(&config).unwrap();
+            let restored: TuiConfig = toml::from_str(&raw).unwrap();
+            assert_eq!(restored.playback_quality, *quality);
+            assert_eq!(quality.next().prev(), *quality);
+        }
+        assert_eq!(
+            toml::from_str::<TuiConfig>("playback_quality = \"4k\"")
+                .unwrap()
+                .playback_quality,
+            PlaybackQuality::P2160
+        );
+        assert!(toml::from_str::<TuiConfig>("playback_quality = \"best\"").is_err());
+    }
+
+    #[test]
+    fn fixed_and_auto_columns_round_trip_with_thumbnail_settings() {
+        for columns in [
+            ColumnCount::Auto,
+            ColumnCount::Fixed(1),
+            ColumnCount::Fixed(6),
+            ColumnCount::Fixed(100),
+        ] {
+            let config = TuiConfig {
+                columns,
+                inline_thumbnails: false,
+                inline_thumbnail_size: InlineThumbnailSize::Large,
+                thumbnail_placeholders: false,
+                thumbnail_size: ThumbnailSize::Large,
+                ..TuiConfig::default()
+            };
+            let raw = toml::to_string_pretty(&config).unwrap();
+            let restored: TuiConfig = toml::from_str(&raw).unwrap();
+            assert_eq!(restored.columns, columns);
+            assert!(!restored.inline_thumbnails);
+            assert_eq!(restored.inline_thumbnail_size.dimensions(), (8, 4));
+            assert!(!restored.thumbnail_placeholders);
+            assert_eq!(restored.thumbnail_size, ThumbnailSize::Large);
+        }
+    }
+
+    #[test]
+    fn columns_reject_zero_and_non_counts() {
+        for value in ["0", "-1", "2.5", "true", "\"4\"", "\"AUTO\""] {
+            assert!(
+                toml::from_str::<TuiConfig>(&format!("columns = {value}")).is_err(),
+                "{value}"
+            );
+        }
+    }
+
+    #[test]
+    fn documented_settings_parse_with_the_current_schema() {
+        for doc in [
+            include_str!("../docs/configuration.md"),
+            include_str!("../docs/zh/configuration.md"),
+            include_str!("../docs/zh-Hant/configuration.md"),
+        ] {
+            let example = doc
+                .split("```toml\n")
+                .nth(2)
+                .unwrap()
+                .split("```")
+                .next()
+                .unwrap();
+            let config: TuiConfig = toml::from_str(example).unwrap();
+            assert!(config.thumbnail_placeholders);
+            assert!(config.inline_thumbnails);
+            assert_eq!(config.inline_thumbnail_size, InlineThumbnailSize::Tiny);
+            assert_eq!(config.thumbnail_size, ThumbnailSize::Medium);
+            assert_eq!(config.columns, ColumnCount::Auto);
+        }
     }
 }

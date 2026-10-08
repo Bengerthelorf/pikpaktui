@@ -485,7 +485,7 @@ pub fn cli_config() -> crate::config::TuiConfig {
 
 pub fn cli_client() -> Result<PikPak> {
     let mut client = PikPak::new()?;
-    client.thumbnail_size = cli_config().thumbnail_size.as_api_str().to_string();
+    client.set_thumbnail_size(cli_config().thumbnail_size.as_api_str());
 
     if client.has_valid_session() {
         return Ok(client);

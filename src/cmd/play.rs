@@ -1,59 +1,6 @@
 use anyhow::{Result, anyhow};
 
-use crate::pikpak::PikPak;
-
-struct PlayOption {
-    label: String,
-    url: String,
-    available: bool,
-}
-
-fn build_play_options(client: &PikPak, file_id: &str) -> Result<Vec<PlayOption>> {
-    let info = client.file_info(file_id)?;
-    let mut options = Vec::new();
-
-    if let Some(ref url) = info.web_content_link
-        && !url.is_empty()
-    {
-        let size_str = info
-            .size
-            .as_deref()
-            .and_then(|s| s.parse::<u64>().ok())
-            .map(super::format_size)
-            .unwrap_or_default();
-        options.push(PlayOption {
-            label: format!("original ({})", size_str),
-            url: url.clone(),
-            available: true,
-        });
-    }
-
-    if let Some(ref medias) = info.medias {
-        for m in medias {
-            if m.is_origin.unwrap_or(false) {
-                continue;
-            }
-            let url = m
-                .link
-                .as_ref()
-                .and_then(|l| l.url.as_deref())
-                .unwrap_or("")
-                .to_string();
-            if url.is_empty() {
-                continue;
-            }
-            let label = m.media_name.as_deref().unwrap_or("unknown").to_string();
-            let available = client.check_stream_available(&url);
-            options.push(PlayOption {
-                label,
-                url,
-                available,
-            });
-        }
-    }
-
-    Ok(options)
-}
+use crate::pikpak::PlayOption;
 
 pub fn run(args: &[String]) -> Result<()> {
     if args.is_empty() {
@@ -71,7 +18,7 @@ pub fn run(args: &[String]) -> Result<()> {
     let player = config.player.ok_or_else(|| {
         anyhow!(
             "no player configured.\n\
-             Set `player` in ~/.config/pikpaktui/config.toml under [tui], e.g.:\n\n  \
+             Set `player` in ~/.config/pikpaktui/config.toml at the top level, e.g.:\n\n  \
              player = \"mpv\""
         )
     })?;
@@ -82,7 +29,7 @@ pub fn run(args: &[String]) -> Result<()> {
     let parent_id = client.resolve_path(&parent_path)?;
     let entry = super::find_entry(&client, &parent_id, &name)?;
 
-    let options = build_play_options(&client, &entry.id)?;
+    let options = client.file_info(&entry.id)?.play_options();
     if options.is_empty() {
         return Err(anyhow!("no playable streams found for '{}'", name));
     }
@@ -91,7 +38,10 @@ pub fn run(args: &[String]) -> Result<()> {
         None => {
             println!("Available streams for '{}':", name);
             for (i, opt) in options.iter().enumerate() {
-                let status = if opt.available { "" } else { " (unavailable)" };
+                let status = opt
+                    .unavailable_reason
+                    .map(|r| format!(" ({r})"))
+                    .unwrap_or_default();
                 println!("  {}. {}{}", i + 1, opt.label, status);
             }
             println!();
@@ -104,8 +54,9 @@ pub fn run(args: &[String]) -> Result<()> {
                     let opt = &options[num - 1];
                     if !opt.available {
                         return Err(anyhow!(
-                            "stream '{}' is not available (cold storage)",
-                            opt.label
+                            "stream '{}' is not available: {}",
+                            opt.label,
+                            opt.unavailable_reason.unwrap_or("unavailable")
                         ));
                     }
                     return launch_player(&player, &opt.url, &opt.label);
@@ -136,8 +87,9 @@ pub fn run(args: &[String]) -> Result<()> {
                     let opt = matched[0];
                     if !opt.available {
                         return Err(anyhow!(
-                            "stream '{}' is not available (cold storage)",
-                            opt.label
+                            "stream '{}' is not available: {}",
+                            opt.label,
+                            opt.unavailable_reason.unwrap_or("unavailable")
                         ));
                     }
                     launch_player(&player, &opt.url, &opt.label)

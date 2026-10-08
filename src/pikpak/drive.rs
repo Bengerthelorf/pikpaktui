@@ -31,6 +31,10 @@ pub(super) struct DriveFile {
     tags: Vec<DriveFileTag>,
     #[serde(default)]
     thumbnail_link: Option<String>,
+    #[serde(default)]
+    phase: Option<String>,
+    #[serde(default)]
+    audit: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -59,6 +63,8 @@ impl DriveFile {
             modified_time: self.modified_time.unwrap_or_default(),
             starred,
             thumbnail_link: self.thumbnail_link,
+            phase: self.phase,
+            audit: self.audit,
         }
     }
 
@@ -73,6 +79,8 @@ impl DriveFile {
             modified_time: self.modified_time.unwrap_or_default(),
             starred,
             thumbnail_link: self.thumbnail_link,
+            phase: self.phase,
+            audit: self.audit,
         }
     }
 }

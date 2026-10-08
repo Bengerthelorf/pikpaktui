@@ -5,7 +5,10 @@ mod drive;
 mod file_info;
 mod files;
 mod models;
+mod mutation;
 mod offline;
+#[cfg(test)]
+mod parity_tests;
 mod responses;
 mod share;
 mod upload;
@@ -14,8 +17,12 @@ use auth::{CaptchaInitResponse, SigninResponse};
 #[cfg(test)]
 pub(crate) use download::part_path;
 pub(crate) use download::{finish_partial_download, prepare_partial_download};
-pub use file_info::FileInfoResponse;
+pub use file_info::{FileInfoResponse, PlayOption};
 pub use models::{Entry, EntryKind, SessionToken};
+pub use mutation::mutation_progress;
+#[cfg(test)]
+pub(crate) use mutation::test_batch_failure;
+pub use offline::OFFLINE_TASK_PHASES;
 pub use responses::{
     CreateShareResponse, EventsResponse, MyShare, OfflineListResponse, OfflineTask,
     OfflineTaskResponse, QuotaInfo, ShareDetailResponse, ShareEntry, ShareInfoResponse,
@@ -78,7 +85,7 @@ pub struct PikPak {
     /// concurrent failures for the same action reuse one refresh safely.
     captcha_action: Mutex<String>,
     user_id: String,
-    pub thumbnail_size: String,
+    thumbnail_size: Mutex<String>,
     ls_cache: Mutex<LsCache>,
     /// Serializes session-file writes and load/modify/save updates in this
     /// process. A disk lock below coordinates separate CLI/TUI processes.
@@ -110,7 +117,7 @@ impl PikPak {
             captcha_refresh_lock: Mutex::new(()),
             captcha_action: Mutex::new(String::new()),
             user_id: String::new(),
-            thumbnail_size: "SIZE_MEDIUM".to_string(),
+            thumbnail_size: Mutex::new("SIZE_MEDIUM".to_string()),
             ls_cache: Mutex::new(LsCache::default()),
             session_lock: Mutex::new(()),
             refresh_lock: Mutex::new(()),
@@ -346,6 +353,15 @@ impl PikPak {
     /// the user's password. Saves the updated session to disk and returns
     /// the new access_token.
     fn refresh_session(&self, _refresh_token_hint: &str) -> Result<String> {
+        self.refresh_session_inner(None)
+    }
+
+    fn refresh_rejected_token(&self, rejected: &str) -> Result<String> {
+        let _guard = self.refresh_lock.lock().unwrap_or_else(|e| e.into_inner());
+        self.refresh_session_inner(Some(rejected))
+    }
+
+    fn refresh_session_inner(&self, rejected: Option<&str>) -> Result<String> {
         // Hold both locks through the HTTP exchange. A second process then
         // reloads the newly rotated refresh token instead of submitting the
         // stale one it observed before waiting.
@@ -354,7 +370,9 @@ impl PikPak {
         let mut session = self
             .load_session()?
             .ok_or_else(|| anyhow!("not logged in, please login first"))?;
-        if !session.is_expired(now_unix() + 300) {
+        if !session.is_expired(now_unix() + 300)
+            && rejected.is_none_or(|old| old != session.access_token)
+        {
             return Ok(session.access_token);
         }
 
@@ -476,60 +494,93 @@ impl PikPak {
         rb: reqwest::blocking::RequestBuilder,
     ) -> Result<reqwest::blocking::Response> {
         let action = self.request_action(&rb)?;
-        let retry = rb
+        let request = rb
             .try_clone()
-            .ok_or_else(|| anyhow!("cannot clone {op} request for captcha retry"))?;
-
+            .ok_or_else(|| anyhow!("cannot clone {op} request"))?
+            .build()
+            .context("invalid authenticated request")?;
+        let mut token = request
+            .headers()
+            .get(reqwest::header::AUTHORIZATION)
+            .and_then(|h| h.to_str().ok())
+            .and_then(|h| h.strip_prefix("Bearer "))
+            .unwrap_or_default()
+            .to_owned();
+        let mut refreshed_auth = false;
+        let mut refreshed_captcha = false;
         self.ensure_captcha_for_action(&action)?;
-        let (first, used_captcha) = self.attach_authed_headers(rb);
-        let response = first
-            .send()
-            .with_context(|| format!("{op} request failed"))?;
-        let status = response.status();
-        if status.is_success() {
-            return Ok(response);
-        }
-        let body = response.text().unwrap_or_default();
-        if !api_error_requires_captcha_refresh(&body) {
+        loop {
+            let attempt = rb
+                .try_clone()
+                .ok_or_else(|| anyhow!("cannot clone {op} request"))?;
+            let (attempt, used_captcha) = self.attach_authed_headers(attempt);
+            let mut attempt = attempt.build().context("invalid authenticated request")?;
+            if !token.is_empty() {
+                attempt.headers_mut().insert(
+                    reqwest::header::AUTHORIZATION,
+                    reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))
+                        .context("invalid bearer token")?,
+                );
+            }
+            // Only explicit credential rejection is retried. Transport errors
+            // may follow an accepted mutation and must not be blindly replayed.
+            let response = self
+                .http
+                .execute(attempt)
+                .with_context(|| format!("{op} request failed"))?;
+            let status = response.status();
+            if status.is_success() {
+                return Ok(response);
+            }
+            let body = response.text().unwrap_or_default();
+            let unauthenticated = status == reqwest::StatusCode::UNAUTHORIZED
+                || serde_json::from_str::<serde_json::Value>(&body)
+                    .ok()
+                    .is_some_and(|v| {
+                        ["error", "error_code"].iter().any(|key| {
+                            v[*key]
+                                .as_str()
+                                .is_some_and(|s| s.eq_ignore_ascii_case("UNAUTHENTICATED"))
+                        })
+                    });
+            if unauthenticated && !refreshed_auth && !token.is_empty() {
+                refreshed_auth = true;
+                token = self.refresh_rejected_token(&token).with_context(|| {
+                    format!("{op}: access token rejected; session refresh failed")
+                })?;
+                continue;
+            }
+            if api_error_requires_captcha_refresh(&body) && !refreshed_captcha {
+                refreshed_captcha = true;
+                let _guard = self
+                    .captcha_refresh_lock
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                let current = self
+                    .captcha_token
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clone();
+                let current_action = self
+                    .captcha_action
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clone();
+                let expiry = *self
+                    .captcha_expires_at_unix
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                if !(current != used_captcha
+                    && current_action == action
+                    && expiry > now_unix().saturating_add(30))
+                {
+                    self.refresh_captcha_for_action_locked(&action)
+                        .with_context(|| format!("captcha refresh for {action} failed"))?;
+                }
+                continue;
+            }
             return Err(anyhow!("{} failed ({}): {}", op, status, sanitize(&body)));
         }
-
-        let _guard = self
-            .captcha_refresh_lock
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let current_captcha = self
-            .captcha_token
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone();
-        let current_action = self
-            .captcha_action
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone();
-        let current_expiry = *self
-            .captcha_expires_at_unix
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let same_action_was_refreshed = current_captcha != used_captcha
-            && current_action == action
-            && current_expiry > now_unix().saturating_add(30);
-        if !same_action_was_refreshed {
-            self.refresh_captcha_for_action_locked(&action)
-                .with_context(|| format!("captcha refresh for {action} failed"))?;
-        }
-
-        let (retry, _) = self.attach_authed_headers(retry);
-        let response = retry
-            .send()
-            .with_context(|| format!("{op} request failed"))?;
-        let status = response.status();
-        if status.is_success() {
-            return Ok(response);
-        }
-        let body = response.text().unwrap_or_default();
-        Err(anyhow!("{} failed ({}): {}", op, status, sanitize(&body)))
     }
 
     /// The salted MD5 chain reference clients compute for captcha refresh:
@@ -651,12 +702,34 @@ impl PikPak {
         &self.http
     }
 
+    pub fn thumbnail_size(&self) -> String {
+        self.thumbnail_size
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    /// Shared TUI workers read the current preference for their next request.
+    pub fn set_thumbnail_size(&self, size: &str) {
+        let mut current = self
+            .thumbnail_size
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if *current == size {
+            return;
+        }
+        *current = size.to_owned();
+        drop(current);
+        self.clear_ls_cache();
+    }
+
     pub fn events(&self, limit: u32) -> Result<EventsResponse> {
         let token = self.access_token()?;
+        let thumbnail_size = self.thumbnail_size();
         let url = self.drive_url("drive/v1/events");
 
         let rb = self.http.get(&url).bearer_auth(&token).query(&[
-            ("thumbnail_size", self.thumbnail_size.as_str()),
+            ("thumbnail_size", thumbnail_size.as_str()),
             ("limit", &limit.to_string()),
         ]);
         let response = self.send_authed("events", rb)?;
@@ -1073,7 +1146,7 @@ mod tests {
         handle: std::thread::JoinHandle<()>,
     }
 
-    fn test_client(base_url: String, session_path: std::path::PathBuf) -> PikPak {
+    pub(super) fn test_client(base_url: String, session_path: std::path::PathBuf) -> PikPak {
         let client = PikPak {
             http: reqwest::blocking::Client::builder().build().unwrap(),
             drive_base_url: base_url,
@@ -1087,7 +1160,7 @@ mod tests {
             captcha_refresh_lock: Mutex::new(()),
             captcha_action: Mutex::new(String::new()),
             user_id: String::new(),
-            thumbnail_size: "SIZE_MEDIUM".to_string(),
+            thumbnail_size: Mutex::new("SIZE_MEDIUM".to_string()),
             ls_cache: Mutex::new(LsCache::default()),
             session_lock: Mutex::new(()),
             refresh_lock: Mutex::new(()),
@@ -1103,7 +1176,7 @@ mod tests {
         client
     }
 
-    fn temp_test_dir(name: &str) -> std::path::PathBuf {
+    pub(super) fn temp_test_dir(name: &str) -> std::path::PathBuf {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -1183,7 +1256,12 @@ mod tests {
         }
     }
 
-    fn write_response(stream: &mut std::net::TcpStream, code: u16, reason: &str, body: &[u8]) {
+    pub(super) fn write_response(
+        stream: &mut std::net::TcpStream,
+        code: u16,
+        reason: &str,
+        body: &[u8],
+    ) {
         write_response_with_headers(stream, code, reason, body, "");
     }
 

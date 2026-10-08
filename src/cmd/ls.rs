@@ -477,6 +477,8 @@ mod sort_tests {
             modified_time: String::new(),
             starred: false,
             thumbnail_link: None,
+            phase: None,
+            audit: None,
         }
     }
 

@@ -11,7 +11,10 @@ documentation = "https://app.snaix.homes/pikpaktui/"
 keywords = ["tui", "pikpak", "cloud-storage", "cli"]
 categories = ["command-line-utilities"]
 include = [
-    "/src/**",
+    "/src/**/*.rs",
+    "/docs/configuration.md",
+    "/docs/zh/configuration.md",
+    "/docs/zh-Hant/configuration.md",
     "/Cargo.toml",
     "/Cargo.lock",
     "/LICENSE",

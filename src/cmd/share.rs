@@ -27,13 +27,37 @@ pub fn run(args: &[String]) -> Result<()> {
 }
 
 /// Extract the share id from a full share URL, or pass a bare id through.
-fn extract_share_id(share_url: &str) -> &str {
-    if share_url.contains("/s/") {
-        let trimmed = share_url.trim_end_matches('/');
-        trimmed.rsplit('/').next().unwrap_or(trimmed)
-    } else {
-        share_url
+fn extract_share_id(share_url: &str) -> Result<String> {
+    let input = share_url.trim();
+    if !input.contains("://")
+        && !input.contains('/')
+        && !input.contains(['?', '#'])
+        && !input.is_empty()
+    {
+        return Ok(input.to_owned());
     }
+    let url = reqwest::Url::parse(input).map_err(|_| anyhow!("invalid share URL"))?;
+    if !matches!(url.scheme(), "https" | "http") {
+        return Err(anyhow!("invalid share URL scheme"));
+    }
+    let parts: Vec<_> = url
+        .path_segments()
+        .ok_or_else(|| anyhow!("share URL has no path"))?
+        .filter(|s| !s.is_empty())
+        .collect();
+    parts
+        .windows(2)
+        .find(|p| p[0] == "s")
+        .map(|p| p[1].to_owned())
+        .ok_or_else(|| anyhow!("share URL must contain /s/<share_id>"))
+}
+
+fn query_pass_code(share_url: &str) -> Option<String> {
+    reqwest::Url::parse(share_url)
+        .ok()?
+        .query_pairs()
+        .find(|(key, _)| key == "pass_code")
+        .map(|(_, value)| value.into_owned())
 }
 
 fn load_share_path(
@@ -140,14 +164,20 @@ fn run_browse(args: &[String]) -> Result<()> {
     }
 
     let share_url = share_url.ok_or_else(|| anyhow!("no share URL or ID provided"))?;
-    let share_id = extract_share_id(share_url);
+    let share_id = extract_share_id(share_url)?;
+    let url_pass_code = query_pass_code(share_url);
+    let pass_code = if args.iter().any(|a| a == "-p" || a == "--pass-code") {
+        pass_code
+    } else {
+        url_pass_code.as_deref().unwrap_or(pass_code)
+    };
 
     let client = super::cli_client()?;
     let spinner = super::Spinner::new("Fetching share...");
-    let info = client.share_info(share_id, pass_code)?;
+    let info = client.share_info(&share_id, pass_code)?;
 
     let entries = load_share_path(inner_path.unwrap_or(""), |parent_id| {
-        client.share_detail(share_id, parent_id, &info.pass_code_token)
+        client.share_detail(&share_id, parent_id, &info.pass_code_token)
     })?;
     drop(spinner);
 
@@ -304,7 +334,13 @@ fn run_save(args: &[String]) -> Result<()> {
     }
 
     let share_url = share_url.ok_or_else(|| anyhow!("no share URL or ID provided"))?;
-    let share_id = extract_share_id(share_url);
+    let share_id = extract_share_id(share_url)?;
+    let url_pass_code = query_pass_code(share_url);
+    let pass_code = if args.iter().any(|a| a == "-p" || a == "--pass-code") {
+        pass_code
+    } else {
+        url_pass_code.as_deref().unwrap_or(pass_code)
+    };
 
     let client = super::cli_client()?;
 
@@ -317,12 +353,12 @@ fn run_save(args: &[String]) -> Result<()> {
     if !json {
         println!(
             "Fetching share info for '{}'...",
-            terminal_safe_text(share_id)
+            terminal_safe_text(&share_id)
         );
     }
-    let info = client.share_info(share_id, pass_code)?;
+    let info = client.share_info(&share_id, pass_code)?;
     let entries = load_share_path("", |parent_id| {
-        client.share_detail(share_id, parent_id, &info.pass_code_token)
+        client.share_detail(&share_id, parent_id, &info.pass_code_token)
     })?;
 
     if entries.is_empty() {
@@ -349,7 +385,7 @@ fn run_save(args: &[String]) -> Result<()> {
     if !json {
         println!("Saving to '{}'...", terminal_safe_text(dest_display));
     }
-    client.save_share(share_id, &info.pass_code_token, &file_ids, &to_parent_id)?;
+    client.save_share(&share_id, &info.pass_code_token, &file_ids, &to_parent_id)?;
 
     if json {
         let out = serde_json::json!({
@@ -596,5 +632,34 @@ mod tests {
             safe,
             "left\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}right"
         );
+    }
+}
+
+#[cfg(test)]
+mod share_url_tests {
+    use super::*;
+
+    #[test]
+    fn share_identity_is_independent_of_query_fragment_and_nested_route() {
+        for input in [
+            "SHARE_ID",
+            "https://mypikpak.com/s/SHARE_ID",
+            "https://mypikpak.com/s/SHARE_ID/",
+            "https://mypikpak.com/s/SHARE_ID#1234",
+            "https://mypikpak.com/s/SHARE_ID?utm_source=test",
+            "https://mypikpak.com/s/SHARE_ID/folder/child?pass_code=abcd#encrypted",
+        ] {
+            assert_eq!(extract_share_id(input).unwrap(), "SHARE_ID", "{input}");
+        }
+        assert_eq!(
+            query_pass_code("https://mypikpak.com/s/SHARE_ID?pass_code=a%2Bb#encrypted").as_deref(),
+            Some("a+b")
+        );
+        assert_eq!(
+            query_pass_code("https://mypikpak.com/s/SHARE_ID#1234"),
+            None
+        );
+        assert!(extract_share_id("https://mypikpak.com/s/").is_err());
+        assert!(extract_share_id("not/a/url").is_err());
     }
 }

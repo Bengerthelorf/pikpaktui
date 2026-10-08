@@ -39,12 +39,19 @@ color_scheme = "vibrant"    # "vibrant" | "classic" | "custom"
 show_help_bar = true        # Bottom keybinding hint bar
 quota_bar_style = "bar"     # "bar" (visual bar) | "percent" (numeric %)
 
+# Browser
+columns = "auto"           # "auto" or a positive integer (4, 5, 6, ...)
+column_min_width = 28       # Minimum pane width in terminal cells; at least 16
+inline_thumbnails = true   # Tiny image before filename; v toggles
+inline_thumbnail_size = "tiny"  # "tiny" | "small" | "medium" | "large"; [ / ] resize
+thumbnail_placeholders = true  # Reserve a grey image card while waiting or unavailable
+
 # Preview
 show_preview = true         # Include preview when width allows; false = browser panes only
-lazy_preview = false        # Only load preview when cursor stops moving
+lazy_preview = false        # Auto-load text/file details after cursor stops
 preview_max_size = 65536    # Max bytes loaded for text preview (default: 64 KB)
 thumbnail_mode = "auto"     # "auto" | "off" | "force-color" | "force-grayscale"
-thumbnail_size = "medium"   # "small" | "medium" | "large"
+thumbnail_size = "medium"   # Server thumbnail resolution; separate from inline display size; "small" | "medium" | "large"
 
 # Sort (persisted when changed with S / R in TUI)
 sort_field = "name"         # "name" | "size" | "created" | "type" | "extension" | "none"
@@ -56,11 +63,14 @@ cli_nerd_font = false       # Nerd Font icons in CLI output
 
 # Playback
 player = "mpv"              # External video player command; set in TUI on first video play
+playback_quality = "original" # Preferred TUI playback quality; original | 2160p | 1440p | 1080p | 720p | 480p | 360p
 
 # Downloads
 download_jobs = 1           # TUI download workers (1–16 in the settings UI)
 update_check = "notify"     # "notify" | "quiet" | "off"
 ```
+
+The default playback preference is `original`: source quality, not a fixed resolution. Change it in **Playback Settings → Default Playback Quality**, then press `s` to save, or set the top-level `playback_quality` key. `4k` is accepted as an alias for `2160p`. An explicit resolution prefers a permitted transcode: the highest at or below the target, then the lowest above it, then the original/first permitted link when resolution metadata is unavailable. The Play Video dialog shows the actual selection and a notice if the preference is unavailable. Per-file changes in the dropdown do not change the saved default. CLI `play` still lists streams when quality is omitted and uses an explicitly supplied name/index when provided.
 
 ### update_check
 
@@ -73,6 +83,16 @@ Controls update checking behavior.
 ```toml
 update_check = "notify"
 ```
+
+### Thumbnail settings
+
+**Browser Settings** exposes columns, minimum column width, inline thumbnails, inline display size, thumbnail placeholders and thumbnail source size. These scalar keys stay at the top level of `config.toml`.
+
+`inline_thumbnail_size` controls the terminal space occupied by a row image. `thumbnail_size` controls the server image resolution (`small`, `medium`, `large`); saving **Thumbnail Source Size** updates shared workers and refreshes the browser immediately.
+
+`thumbnail_placeholders = true` is the default for both new and older configs. Pending images use a quiet grey card, loading images show a spinner, and unavailable images show a cross. Image and video files without a thumbnail URL also keep an unavailable card. Row height and filename alignment stay stable. Set it to `false` to restore the icon fallback. `inline_thumbnails` controls row images; `show_preview` controls preview panes; `thumbnail_mode` controls image rendering in the large preview.
+
+Playback selection, task completion checks, token recovery and stale-response fixes apply automatically and do not need compatibility switches.
 
 ### Image Protocols
 

@@ -250,24 +250,6 @@ impl PikPak {
         Ok((url, info.file_size()))
     }
 
-    pub fn check_stream_available(&self, url: &str) -> bool {
-        // Reuse the pooled client (keep-alive + user-agent); just override the
-        // timeout for this quick probe.
-        match self
-            .http
-            .get(url)
-            .timeout(std::time::Duration::from_secs(5))
-            .header("Range", "bytes=0-0")
-            .send()
-        {
-            Ok(resp) => {
-                resp.headers().contains_key("content-range")
-                    && resp.content_length().unwrap_or(0) > 0
-            }
-            Err(_) => false,
-        }
-    }
-
     /// Issue a ranged GET for a download URL, resuming from `existing_size`.
     /// Returns the response and the byte offset its body starts at (0 for a
     /// fresh 200, `existing_size` for a 206 — some CDNs ignore Range and reply

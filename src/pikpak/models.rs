@@ -16,6 +16,10 @@ pub struct Entry {
     pub modified_time: String,
     pub starred: bool,
     pub thumbnail_link: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub phase: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audit: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

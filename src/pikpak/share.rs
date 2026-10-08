@@ -3,7 +3,7 @@ use std::collections::HashSet;
 
 use super::{
     CreateShareResponse, MyShare, PikPak, ShareEntry, ShareInfoResponse, ShareListResponse,
-    ensure_success, json_or_api_error,
+    json_or_api_error,
 };
 
 impl PikPak {
@@ -35,27 +35,21 @@ impl PikPak {
         file_ids: &[&str],
         to_parent_id: &str,
     ) -> Result<()> {
-        let token = self.access_token()?;
-        let url = self.drive_url("drive/v1/share/restore");
-
-        let payload = serde_json::json!({
-            "share_id": share_id,
-            "pass_code_token": pass_code_token,
-            "file_ids": file_ids,
-            "to": { "parent_id": to_parent_id },
-        });
-
-        let rb = self.http.post(&url).bearer_auth(&token).json(&payload);
-        if let Err(e) = self.send_authed("save share", rb) {
+        let result = self.batch_mutation(
+            "save share",
+            "drive/v1/share/restore",
+            file_ids,
+            "file_ids",
+            serde_json::json!({"share_id": share_id, "pass_code_token": pass_code_token,
+                "to": {"parent_id": to_parent_id}}),
+        );
+        result.map_err(|e| {
             if format!("{e:#}").contains("file_restore_own") {
-                return Err(anyhow!(
-                    "cannot save: these files already belong to your account"
-                ));
+                anyhow!("cannot save: these files already belong to your account")
+            } else {
+                e
             }
-            return Err(e);
-        }
-        self.clear_ls_cache();
-        Ok(())
+        })
     }
 
     pub fn create_share(
@@ -150,13 +144,12 @@ impl PikPak {
     }
 
     pub fn delete_shares(&self, share_ids: &[&str]) -> Result<()> {
-        let token = self.access_token()?;
-        let url = self.drive_url("drive/v1/share:batchDelete");
-
-        let payload = serde_json::json!({ "ids": share_ids });
-
-        let rb = self.http.post(&url).bearer_auth(&token).json(&payload);
-        let response = self.send_authed("delete shares", rb)?;
-        ensure_success(response, "delete shares")
+        self.batch_mutation(
+            "delete shares",
+            "drive/v1/share:batchDelete",
+            share_ids,
+            "ids",
+            serde_json::json!({}),
+        )
     }
 }

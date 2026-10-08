@@ -27,23 +27,7 @@ type SettingItem = (String, String, String);
 /// One Settings category: (name, rows).
 type SettingsCategory = (&'static str, Vec<SettingItem>);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum MainLayoutMode {
-    ThreePane,
-    CurrentPreview,
-    ParentCurrent,
-    CurrentOnly,
-}
-
-fn main_layout_mode(width: u16, show_preview: bool) -> MainLayoutMode {
-    match (show_preview, width) {
-        (true, 96..) => MainLayoutMode::ThreePane,
-        (true, 64..) => MainLayoutMode::CurrentPreview,
-        (true, _) => MainLayoutMode::CurrentOnly,
-        (false, 60..) => MainLayoutMode::ParentCurrent,
-        (false, _) => MainLayoutMode::CurrentOnly,
-    }
-}
+mod browser_panes;
 
 impl App {
     fn text_input_display(&self, value: &str, max_width: usize) -> String {
@@ -271,45 +255,157 @@ impl App {
         }
     }
 
-    fn draw_confirm_play_overlay(&self, f: &mut Frame, name: &str, _url: &str) {
-        let area = self.prepare_overlay(f, 60, 20);
-        let player_display = self.config.player.as_deref().unwrap_or("not configured");
+    fn playback_overlay_area(&self, f: &mut Frame, height: u16, title: &str) -> Rect {
+        let screen = f.area();
+        let width = (screen.width * 7 / 10).max(48).min(screen.width);
+        let height = height.min(screen.height);
+        let area = Rect::new(
+            screen.x + (screen.width - width) / 2,
+            screen.y + (screen.height - height) / 2,
+            width,
+            height,
+        );
+        clear_overlay_area(f, area);
         let (bc, tc) = if self.is_vibrant() {
             (Color::LightGreen, Color::LightGreen)
         } else {
             (Color::Cyan, Color::Yellow)
         };
-        let truncated_name = truncate_name(name, 40);
+        let block = self.overlay_block(title, bc, tc);
+        let inner = block.inner(area);
+        f.render_widget(block, area);
+        inner
+    }
+
+    fn draw_quality_rows(
+        &self,
+        f: &mut Frame,
+        area: Rect,
+        medias: &[super::PlayOption],
+        cursor: usize,
+        chosen: Option<usize>,
+    ) {
+        let visible = (area.height as usize).min(medias.len());
+        let offset = cursor
+            .saturating_add(1)
+            .saturating_sub(visible)
+            .min(medias.len().saturating_sub(visible));
+        self.set_mouse_list_rows(area, area.y, offset, visible);
+        let lines: Vec<_> = medias
+            .iter()
+            .enumerate()
+            .skip(offset)
+            .take(visible)
+            .map(|(i, option)| {
+                let style = if !option.available {
+                    Style::default().fg(Color::DarkGray)
+                } else if i == cursor {
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::Reset)
+                };
+                let prefix = if i == cursor { " › " } else { "   " };
+                let mark = if chosen == Some(i) { " ✓" } else { "" };
+                let reason = option
+                    .unavailable_reason
+                    .map(|r| format!(" — {r}"))
+                    .unwrap_or_default();
+                Line::from(Span::styled(
+                    format!("{prefix}{}{mark}{reason}", option.display_label()),
+                    style,
+                ))
+            })
+            .collect();
+        f.render_widget(Paragraph::new(lines), area);
+    }
+
+    fn draw_confirm_play_overlay(&self, f: &mut Frame, dialog: &super::playback::PlaybackDialog) {
+        let expanded = dialog.quality_cursor.is_some();
+        let rows = if expanded {
+            dialog.medias.len().min(8) as u16
+        } else {
+            0
+        };
+        let inner = self.playback_overlay_area(f, 10 + rows, "Play Video");
+        if inner.height < 8 || inner.width < 16 {
+            f.render_widget(Paragraph::new("Enlarge terminal to select quality"), inner);
+            return;
+        }
+        let name = truncate_name(&dialog.name, inner.width.saturating_sub(10) as usize);
         f.render_widget(
             Paragraph::new(vec![
-                Line::from(""),
-                Line::from(vec![
-                    Span::styled("  Play ", Style::default().fg(Color::Cyan)),
-                    Span::styled(
-                        format!("\"{}\"", truncated_name),
-                        Style::default()
-                            .fg(Color::Yellow)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled("?", Style::default().fg(Color::Cyan)),
-                ]),
+                Line::from(Span::styled(
+                    format!("  Play \"{name}\"?"),
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                )),
                 Line::from(""),
                 Line::from(vec![
                     Span::styled("  Open with: ", Style::default().fg(Color::DarkGray)),
                     Span::styled(
-                        player_display,
-                        if self.config.player.is_some() {
-                            Style::default().fg(Color::Green)
-                        } else {
-                            Style::default().fg(Color::Red)
-                        },
+                        self.config.player.as_deref().unwrap_or("not configured"),
+                        Style::default().fg(Color::Green),
                     ),
                 ]),
-                Line::from(""),
-                Self::hint_line(&[("y/Enter", "play"), ("n/Esc", "cancel")]),
+            ]),
+            Rect::new(inner.x, inner.y, inner.width, 3),
+        );
+        let quality = Rect::new(inner.x + 2, inner.y + 4, inner.width.saturating_sub(4), 1);
+        self.play_quality_area.set(quality);
+        let label = dialog
+            .option()
+            .map(|o| o.display_label())
+            .unwrap_or_else(|| "Unavailable".into());
+        let arrow = if expanded { "▴" } else { "▾" };
+        f.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled("Quality: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    format!("[ {label} {arrow} ]"),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ])),
+            quality,
+        );
+        if let Some(cursor) = dialog.quality_cursor {
+            let list = Rect::new(
+                inner.x + 2,
+                quality.y + 1,
+                inner.width.saturating_sub(4),
+                inner.height.saturating_sub(8),
+            );
+            self.draw_quality_rows(f, list, &dialog.medias, cursor, Some(dialog.selected));
+        }
+        let note = dialog
+            .option()
+            .filter(|o| !o.available)
+            .and_then(|o| o.unavailable_reason)
+            .map(str::to_owned)
+            .unwrap_or_else(|| dialog.preference_note(self.config.playback_quality));
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                format!("  {note}"),
+                Style::default().fg(Color::DarkGray),
+            ))),
+            Rect::new(inner.x, inner.y + inner.height - 2, inner.width, 1),
+        );
+        let hints = if expanded {
+            Self::hint_line(&[("j/k", "quality"), ("Enter", "select"), ("Esc", "back")])
+        } else {
+            Self::hint_line(&[
+                ("q/Space", "quality"),
+                ("y/Enter", "play"),
+                ("n/Esc", "cancel"),
             ])
-            .block(self.overlay_block("Play Video", bc, tc)),
-            area,
+        };
+        f.render_widget(
+            Paragraph::new(hints),
+            Rect::new(inner.x, inner.y + inner.height - 1, inner.width, 1),
         );
     }
 
@@ -320,63 +416,39 @@ impl App {
         medias: &[super::PlayOption],
         selected: usize,
     ) {
-        let height = std::cmp::min(50, 20 + medias.len() as u16 * 2);
-        let area = centered_rect(60, height, f.area());
-        clear_overlay_area(f, area);
-        self.set_mouse_list_rows(
-            area,
-            area.y.saturating_add(4),
-            0,
-            medias.len().min(area.height.saturating_sub(6) as usize),
-        );
-
-        let truncated_name = truncate_name(name, 40);
-
-        let mut lines = vec![
-            Line::from(""),
-            Line::from(vec![
-                Span::styled("  Play ", Style::default().fg(Color::Cyan)),
-                Span::styled(
-                    format!("\"{}\"", truncated_name),
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                ),
-            ]),
-            Line::from(""),
-        ];
-
-        for (i, opt) in medias.iter().enumerate() {
-            let is_selected = i == selected;
-            let prefix = if is_selected { " > " } else { "   " };
-            let style = if !opt.available {
-                Style::default().fg(Color::DarkGray)
-            } else if is_selected {
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(Color::Reset)
-            };
-            let suffix = if !opt.available { " (cold)" } else { "" };
-            lines.push(Line::from(vec![
-                Span::styled(prefix, style),
-                Span::styled(opt.label.clone(), style),
-                Span::styled(suffix, Style::default().fg(Color::DarkGray)),
-            ]));
+        let inner = self.playback_overlay_area(f, 6 + medias.len().min(10) as u16, "Select Stream");
+        if inner.height < 4 {
+            return;
         }
-
-        lines.push(Line::from(""));
-        lines.push(Self::hint_line(&[("Enter", "play"), ("Esc", "cancel")]));
-
-        let (bc, tc) = if self.is_vibrant() {
-            (Color::LightGreen, Color::LightGreen)
-        } else {
-            (Color::Cyan, Color::Yellow)
-        };
         f.render_widget(
-            Paragraph::new(Text::from(lines)).block(self.overlay_block("Select Stream", bc, tc)),
-            area,
+            Paragraph::new(Line::from(Span::styled(
+                format!(
+                    "  Play \"{}\"",
+                    truncate_name(name, inner.width.saturating_sub(10) as usize)
+                ),
+                Style::default().fg(Color::Yellow),
+            ))),
+            Rect::new(inner.x, inner.y, inner.width, 1),
+        );
+        self.draw_quality_rows(
+            f,
+            Rect::new(
+                inner.x,
+                inner.y + 2,
+                inner.width,
+                inner.height.saturating_sub(4),
+            ),
+            medias,
+            selected,
+            None,
+        );
+        f.render_widget(
+            Paragraph::new(Self::hint_line(&[
+                ("j/k", "quality"),
+                ("Enter", "play"),
+                ("Esc", "cancel"),
+            ])),
+            Rect::new(inner.x, inner.y + inner.height - 1, inner.width, 1),
         );
     }
 
@@ -487,6 +559,7 @@ impl App {
     }
 
     pub(super) fn draw(&self, f: &mut Frame) {
+        self.play_quality_area.set(Rect::default());
         self.mouse_list_area.set(Rect::default());
         self.mouse_list_visible.set(0);
         match &self.input {
@@ -722,68 +795,7 @@ impl App {
     fn draw_main(&self, f: &mut Frame) {
         let (main_area, help_bar_area) = self.layout_with_help_bar(f.area());
 
-        match main_layout_mode(main_area.width, self.config.show_preview) {
-            MainLayoutMode::ThreePane => {
-                let chunks = Layout::default()
-                    .direction(Direction::Horizontal)
-                    .constraints([
-                        Constraint::Percentage(20),
-                        Constraint::Percentage(40),
-                        Constraint::Percentage(40),
-                    ])
-                    .split(main_area);
-                self.parent_pane_area.set(chunks[0]);
-                self.current_pane_area.set(chunks[1]);
-                self.preview_pane_area.set(chunks[2]);
-                self.draw_parent_pane(f, chunks[0]);
-                self.draw_current_pane(f, chunks[1]);
-                self.draw_preview_pane(f, chunks[2]);
-                if self.show_logs_overlay {
-                    self.draw_log_overlay(f, chunks[2]);
-                }
-            }
-            MainLayoutMode::CurrentPreview => {
-                let chunks = Layout::default()
-                    .direction(Direction::Horizontal)
-                    .constraints([Constraint::Percentage(58), Constraint::Percentage(42)])
-                    .split(main_area);
-                self.parent_pane_area.set(Rect::default());
-                self.current_pane_area.set(chunks[0]);
-                self.preview_pane_area.set(chunks[1]);
-                self.draw_current_pane(f, chunks[0]);
-                self.draw_preview_pane(f, chunks[1]);
-                if self.show_logs_overlay {
-                    self.draw_log_overlay(f, chunks[1]);
-                }
-            }
-            MainLayoutMode::ParentCurrent => {
-                let chunks = Layout::default()
-                    .direction(Direction::Horizontal)
-                    .constraints([Constraint::Percentage(25), Constraint::Percentage(75)])
-                    .split(main_area);
-                self.parent_pane_area.set(chunks[0]);
-                self.current_pane_area.set(chunks[1]);
-                self.preview_pane_area.set(Rect::default());
-                self.draw_parent_pane(f, chunks[0]);
-                self.draw_current_pane(f, chunks[1]);
-                if self.show_logs_overlay {
-                    self.draw_log_overlay(f, chunks[1]);
-                }
-            }
-            MainLayoutMode::CurrentOnly => {
-                self.parent_pane_area.set(Rect::default());
-                self.current_pane_area.set(main_area);
-                self.preview_pane_area.set(Rect::default());
-                self.draw_current_pane(f, main_area);
-                if self.show_logs_overlay {
-                    let log_area = Layout::default()
-                        .direction(Direction::Horizontal)
-                        .constraints([Constraint::Percentage(48), Constraint::Percentage(52)])
-                        .split(main_area)[1];
-                    self.draw_log_overlay(f, log_area);
-                }
-            }
-        }
+        self.draw_browser_panes(f, main_area);
 
         if let Some(bar_area) = help_bar_area {
             let pairs = self.help_pairs();
@@ -932,7 +944,13 @@ impl App {
         self.draw_status_toast(f, main_area);
         self.draw_overlay(f);
 
-        if self.shares_pending && self.loading {
+        if self.loading
+            && (self
+                .modal_request
+                .as_ref()
+                .is_some_and(|r| r.kind == super::AsyncRequestKind::MyShares)
+                || matches!(&self.input, InputMode::ShareCreatedView { shares } if shares.is_empty() && self.share_creations_pending > 0))
+        {
             self.draw_info_loading_overlay(f);
         }
 
@@ -977,132 +995,71 @@ impl App {
         );
     }
 
-    fn draw_parent_pane(&self, f: &mut Frame, area: ratatui::layout::Rect) {
-        if self.breadcrumb.is_empty() {
-            let p = Paragraph::new(Text::from(vec![])).block(
+    fn thumbnail_preview_layout<'a>(
+        &self,
+        area: Rect,
+        entry: Option<&'a Entry>,
+    ) -> (Rect, Rect, Vec<Line<'a>>) {
+        let panel_width = area.width.saturating_sub(2);
+        let panel_height = area.height.saturating_sub(2);
+        let info_lines = entry
+            .map(|entry| self.entry_info_lines(entry, panel_width.max(1) as usize))
+            .unwrap_or_default();
+        let min_image_height = (panel_height / 2).max(4);
+        let info_height =
+            (info_lines.len() as u16).min(panel_height.saturating_sub(min_image_height));
+        let chunks = Layout::vertical([
+            Constraint::Length(panel_height.saturating_sub(info_height)),
+            Constraint::Length(info_height),
+        ])
+        .split(Rect::new(
+            area.x.saturating_add(1),
+            area.y.saturating_add(1),
+            panel_width,
+            panel_height,
+        ));
+        (chunks[0], chunks[1], info_lines)
+    }
+
+    fn draw_entry_preview(
+        &self,
+        f: &mut Frame,
+        area: Rect,
+        entry: Option<&Entry>,
+        state: &PreviewState,
+        scroll_offset: usize,
+    ) {
+        if self.config.thumbnail_placeholders
+            && self.config.thumbnail_mode != crate::config::ThumbnailMode::Off
+            && matches!(
+                state,
+                PreviewState::Empty | PreviewState::Loading | PreviewState::FileBasicInfo
+            )
+            && let Some(entry) = entry.filter(|entry| Self::has_thumbnail_slot(entry))
+        {
+            use super::thumbnail_placeholder::{ThumbnailPlaceholder, draw_thumbnail_placeholder};
+            let placeholder = if matches!(state, PreviewState::Loading) {
+                ThumbnailPlaceholder::Loading
+            } else {
+                self.thumbnail_placeholder_state(entry)
+            };
+            let (image_area, info_area, info_lines) =
+                self.thumbnail_preview_layout(area, Some(entry));
+            draw_thumbnail_placeholder(f, image_area, placeholder, self.spinner_idx);
+            f.render_widget(Paragraph::new(Text::from(info_lines)), info_area);
+            f.render_widget(
                 self.styled_block()
-                    .title(" / ")
+                    .title(format!(
+                        " {} ",
+                        truncate_name(&entry.name, area.width.saturating_sub(4) as usize)
+                    ))
                     .title_style(Style::default().fg(Color::DarkGray))
                     .border_style(Style::default().fg(Color::DarkGray)),
+                area,
             );
-            f.render_widget(p, area);
-        } else {
-            let parent_path = if self.breadcrumb.len() <= 1 {
-                " / ".to_string()
-            } else {
-                let path: Vec<&str> = self.breadcrumb[..self.breadcrumb.len() - 1]
-                    .iter()
-                    .map(|(_, n)| n.as_str())
-                    .collect();
-                format!(" /{} ", path.join("/"))
-            };
-
-            let items: Vec<ListItem> = self
-                .parent_entries
-                .iter()
-                .map(|e| {
-                    let cat = theme::categorize(e);
-                    let ico = theme::icon(cat, self.config.nerd_font);
-                    let c = self.file_color(cat);
-                    ListItem::new(Line::from(vec![
-                        Span::styled(ico, Style::default().fg(c)),
-                        Span::styled(" ", Style::default()),
-                        Span::styled(&e.name, Style::default().fg(c)),
-                    ]))
-                })
-                .collect();
-
-            let mut state = ListState::default();
-            if !self.parent_entries.is_empty() {
-                state.select(Some(
-                    self.parent_selected.min(self.parent_entries.len() - 1),
-                ));
-            }
-
-            let list = List::new(items)
-                .block(
-                    self.styled_block()
-                        .title(parent_path)
-                        .title_style(Style::default().fg(Color::DarkGray))
-                        .border_style(Style::default().fg(Color::DarkGray)),
-                )
-                .highlight_style(
-                    Style::default()
-                        .fg(Color::White)
-                        .add_modifier(Modifier::BOLD),
-                );
-            f.render_stateful_widget(list, area, &mut state);
-            self.parent_scroll_offset.set(state.offset());
+            return;
         }
-    }
-
-    fn draw_current_pane(&self, f: &mut Frame, area: ratatui::layout::Rect) {
-        let path_display = self.current_path_display();
-        let title = if self.loading {
-            format!(" {} {} ", SPINNER_FRAMES[self.spinner_idx], path_display)
-        } else {
-            format!(" {} ", path_display)
-        };
-
-        let items: Vec<ListItem> = self
-            .entries
-            .iter()
-            .map(|e| {
-                let cat = theme::categorize(e);
-                let ico = theme::icon(cat, self.config.nerd_font);
-                let c = self.file_color(cat);
-                let size_str = match e.kind {
-                    EntryKind::Folder => String::new(),
-                    EntryKind::File => format!("  {}", format_size(e.size)),
-                };
-                let star_marker = if e.starred { "\u{2605} " } else { "" };
-                let cart_marker = if self.cart_ids.contains(&e.id) {
-                    "\u{2606} "
-                } else {
-                    ""
-                };
-                ListItem::new(Line::from(vec![
-                    Span::styled(ico, Style::default().fg(c)),
-                    Span::styled(" ", Style::default()),
-                    Span::styled(star_marker, Style::default().fg(Color::Yellow)),
-                    Span::styled(
-                        cart_marker,
-                        Style::default()
-                            .fg(Color::Yellow)
-                            .add_modifier(Modifier::DIM),
-                    ),
-                    Span::styled(&e.name, Style::default().fg(c)),
-                    Span::styled(size_str, Style::default().fg(Color::DarkGray)),
-                ]))
-            })
-            .collect();
-
-        let mut state = ListState::default();
-        if !self.entries.is_empty() {
-            state.select(Some(self.selected.min(self.entries.len() - 1)));
-        }
-
-        let (file_bc, file_tc) = if self.is_vibrant() {
-            (Color::LightBlue, Color::LightGreen)
-        } else {
-            (Color::Cyan, Color::Green)
-        };
-        let list = List::new(items)
-            .block(
-                self.styled_block()
-                    .title(title)
-                    .title_style(Style::default().fg(file_tc))
-                    .border_style(Style::default().fg(file_bc)),
-            )
-            .highlight_style(self.highlight_style())
-            .highlight_symbol("\u{203a} ");
-        f.render_stateful_widget(list, area, &mut state);
-        self.scroll_offset.set(state.offset());
-        self.list_area_height.set(area.height);
-    }
-
-    fn draw_preview_pane(&self, f: &mut Frame, area: ratatui::layout::Rect) {
-        match &self.preview_state {
+        match state {
             PreviewState::Empty => {
                 let hint = if self.config.lazy_preview {
                     "Select an item"
@@ -1118,7 +1075,19 @@ impl App {
                 ]))
                 .block(
                     self.styled_block()
-                        .title(" Preview ")
+                        .title(
+                            entry
+                                .map(|e| {
+                                    format!(
+                                        " {} ",
+                                        truncate_name(
+                                            &e.name,
+                                            area.width.saturating_sub(4) as usize
+                                        )
+                                    )
+                                })
+                                .unwrap_or_else(|| " Preview ".into()),
+                        )
                         .title_style(Style::default().fg(Color::DarkGray))
                         .border_style(Style::default().fg(Color::DarkGray)),
                 );
@@ -1135,7 +1104,19 @@ impl App {
                 ]))
                 .block(
                     self.styled_block()
-                        .title(" Preview ")
+                        .title(
+                            entry
+                                .map(|e| {
+                                    format!(
+                                        " {} ",
+                                        truncate_name(
+                                            &e.name,
+                                            area.width.saturating_sub(4) as usize
+                                        )
+                                    )
+                                })
+                                .unwrap_or_else(|| " Preview ".into()),
+                        )
                         .title_style(Style::default().fg(Color::DarkGray))
                         .border_style(Style::default().fg(Color::DarkGray)),
                 );
@@ -1144,7 +1125,7 @@ impl App {
             PreviewState::FolderListing(children) => {
                 let visible_h = area.height.saturating_sub(2) as usize;
                 let max_scroll = children.len().saturating_sub(visible_h.max(1));
-                let scroll = self.preview_scroll.min(max_scroll);
+                let scroll = scroll_offset.min(max_scroll);
                 let items: Vec<ListItem> = children
                     .iter()
                     .skip(scroll)
@@ -1185,7 +1166,7 @@ impl App {
                 let inner_height = area.height.saturating_sub(2) as usize;
                 let max_lines = inner_height.saturating_sub(if *truncated { 1 } else { 0 });
                 let max_scroll = highlighted.len().saturating_sub(max_lines.max(1));
-                let scroll = self.preview_scroll.min(max_scroll);
+                let scroll = scroll_offset.min(max_scroll);
                 let mut lines: Vec<Line> = highlighted
                     .iter()
                     .skip(scroll)
@@ -1218,10 +1199,28 @@ impl App {
             PreviewState::FileBasicInfo => {
                 let wrap_w = area.width.saturating_sub(2) as usize;
                 let mut lines = vec![Line::from("")];
-                if let Some(entry) = self.entries.get(self.selected) {
+                if let Some(entry) = entry {
                     lines.extend(self.entry_info_lines(entry, wrap_w));
                     lines.push(Line::from(""));
-                    let hint = if entry.kind == EntryKind::File
+                    let focused = self
+                        .current_entry()
+                        .is_some_and(|selected| selected.id == entry.id);
+                    let failed = self
+                        .browser
+                        .failed
+                        .contains(&super::browser::LoadKey::File(entry.id.clone()))
+                        || super::browser::inline_thumbnail_url(entry).is_some_and(|url| {
+                            self.browser
+                                .failed
+                                .contains(&super::browser::LoadKey::InlineImage(url.to_owned()))
+                        });
+                    let hint = if failed && focused {
+                        "  Preview unavailable; p to retry"
+                    } else if failed {
+                        "  Unavailable; click, then p to retry"
+                    } else if !focused {
+                        "  Click to focus; p to load"
+                    } else if entry.kind == EntryKind::File
                         && crate::theme::is_text_previewable(entry)
                         && entry.size > self.config.preview_max_size
                     {
@@ -1237,7 +1236,19 @@ impl App {
 
                 let p = Paragraph::new(Text::from(lines)).block(
                     self.styled_block()
-                        .title(" Preview ")
+                        .title(
+                            entry
+                                .map(|e| {
+                                    format!(
+                                        " {} ",
+                                        truncate_name(
+                                            &e.name,
+                                            area.width.saturating_sub(4) as usize
+                                        )
+                                    )
+                                })
+                                .unwrap_or_else(|| " Preview ".into()),
+                        )
                         .title_style(Style::default().fg(Color::DarkGray))
                         .border_style(Style::default().fg(Color::DarkGray)),
                 );
@@ -1245,52 +1256,37 @@ impl App {
             }
             PreviewState::ThumbnailImage { image } if !self.has_overlay() => {
                 use crate::config::ThumbnailRenderMode;
-                use ratatui_image::StatefulImage;
 
-                let panel_width = area.width.saturating_sub(2);
-                let panel_height = area.height.saturating_sub(2);
-                let wrap_w = panel_width.max(1) as usize;
-                let mut info_lines: Vec<Line> = vec![];
-                if let Some(entry) = self.entries.get(self.selected) {
-                    info_lines.extend(self.entry_info_lines(entry, wrap_w));
-                }
+                let (image_area, info_area, info_lines) =
+                    self.thumbnail_preview_layout(area, entry);
 
-                let info_visual_lines = info_lines.len() as u16;
-                let min_image_height = (panel_height / 2).max(4);
-                let info_height =
-                    info_visual_lines.min(panel_height.saturating_sub(min_image_height));
-                let image_height = panel_height.saturating_sub(info_height);
-
-                let inner_rect = ratatui::layout::Rect {
-                    x: area.x + 1,
-                    y: area.y + 1,
-                    width: panel_width,
-                    height: panel_height,
+                let picker = self.configured_image_picker();
+                let render_mode = if self.config.thumbnail_mode
+                    == crate::config::ThumbnailMode::Auto
+                    && picker.as_ref().is_some_and(|picker| {
+                        picker.protocol_type() != ratatui_image::picker::ProtocolType::Halfblocks
+                    }) {
+                    // A successfully detected/configured image protocol is
+                    // stronger evidence than optional COLORTERM/TERM hints.
+                    ThumbnailRenderMode::Auto
+                } else {
+                    self.config.thumbnail_mode.should_use_color()
                 };
-                let chunks = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([
-                        Constraint::Length(image_height),
-                        Constraint::Length(info_height),
-                    ])
-                    .split(inner_rect);
-
-                let image_area = chunks[0];
-                let info_area = chunks[1];
-
-                let render_mode = self.config.thumbnail_mode.should_use_color();
 
                 match render_mode {
                     ThumbnailRenderMode::Auto => {
                         let mut used_protocol = false;
-                        if let Some(picker) = self.configured_image_picker() {
+                        if let Some(picker) = picker
+                            && let Some(entry) = entry
+                        {
                             let render_rect = center_image_rect(image, image_area);
-                            let img_display =
-                                upscale_for_rect(image, render_rect, picker.font_size());
-                            let mut protocol = picker.new_resize_protocol(img_display);
-                            let img_widget = StatefulImage::default();
-                            f.render_stateful_widget(img_widget, render_rect, &mut protocol);
-                            used_protocol = true;
+                            used_protocol = self.draw_cached_preview_image(
+                                f,
+                                render_rect,
+                                entry,
+                                image,
+                                &picker,
+                            );
                         }
                         // Fallback to halfblock when no protocol is available
                         if !used_protocol {
@@ -1328,9 +1324,7 @@ impl App {
                 let info_p = Paragraph::new(Text::from(info_lines));
                 f.render_widget(info_p, info_area);
 
-                let title = self
-                    .entries
-                    .get(self.selected)
+                let title = entry
                     .map(|e| format!(" \u{1f5bc} {} ", truncate_name(&e.name, 25)))
                     .unwrap_or_else(|| " Preview ".to_string());
 
@@ -1356,7 +1350,19 @@ impl App {
                 ]))
                 .block(
                     self.styled_block()
-                        .title(" Preview ")
+                        .title(
+                            entry
+                                .map(|e| {
+                                    format!(
+                                        " {} ",
+                                        truncate_name(
+                                            &e.name,
+                                            area.width.saturating_sub(4) as usize
+                                        )
+                                    )
+                                })
+                                .unwrap_or_else(|| " Preview ".into()),
+                        )
                         .title_style(Style::default().fg(Color::DarkGray))
                         .border_style(Style::default().fg(Color::DarkGray)),
                 );
@@ -1616,8 +1622,15 @@ impl App {
                     ("Esc", "back"),
                 ]
             }
+            InputMode::ConfirmPlay { dialog } if dialog.quality_cursor.is_some() => {
+                vec![("j/k", "quality"), ("Enter", "select"), ("Esc", "back")]
+            }
             InputMode::ConfirmPlay { .. } => {
-                vec![("y/Enter", "play"), ("n/Esc", "cancel")]
+                vec![
+                    ("q/Space", "quality"),
+                    ("y/Enter", "play"),
+                    ("n/Esc", "cancel"),
+                ]
             }
             InputMode::PlayPicker { .. } => {
                 vec![("j/k", "nav"), ("Enter", "play"), ("Esc", "cancel")]
@@ -1849,8 +1862,8 @@ impl App {
                     terminals,
                 );
             }
-            InputMode::ConfirmPlay { name, url } => {
-                self.draw_confirm_play_overlay(f, name, url);
+            InputMode::ConfirmPlay { dialog } => {
+                self.draw_confirm_play_overlay(f, dialog);
             }
             InputMode::PlayPicker {
                 name,
@@ -2439,6 +2452,8 @@ impl App {
                     nav.push(("Space", "Load preview"));
                 }
                 nav.push(("p", "Preview"));
+                nav.push(("v", "Toggle inline thumbnails"));
+                nav.push(("[ / ]", "Smaller / larger thumbnails"));
                 nav.push(("w", "Watch (streams)"));
 
                 vec![
@@ -3024,6 +3039,8 @@ impl App {
                     "PHASE_TYPE_RUNNING" => ("\u{2193}", Color::Cyan),
                     "PHASE_TYPE_PENDING" => ("\u{2026}", Color::DarkGray),
                     "PHASE_TYPE_ERROR" => ("\u{2717}", Color::Red),
+                    "PHASE_TYPE_PAUSED" => ("Ⅱ", Color::Yellow),
+                    "PHASE_TYPE_UNKNOW" => ("?", Color::DarkGray),
                     _ => ("?", Color::Yellow),
                 };
 
@@ -3558,12 +3575,12 @@ impl App {
                 vec![
                     (
                         "Show Preview Pane".to_string(),
-                        "Enable three-column layout".to_string(),
+                        "Expand selected path beside active directory".to_string(),
                         if draft.show_preview { "[✓]" } else { "[ ]" }.to_string(),
                     ),
                     (
                         "Lazy Preview".to_string(),
-                        "Auto-load preview after delay".to_string(),
+                        "Auto-load text and file details after delay".to_string(),
                         if draft.lazy_preview { "[✓]" } else { "[ ]" }.to_string(),
                     ),
                     (
@@ -3573,7 +3590,7 @@ impl App {
                     ),
                     (
                         "Thumbnail Mode".to_string(),
-                        "Colored thumbnail rendering".to_string(),
+                        "Preview thumbnail rendering".to_string(),
                         draft.thumbnail_mode.display_name().to_string(),
                     ),
                     (
@@ -3625,11 +3642,18 @@ impl App {
             ),
             (
                 "Playback Settings",
-                vec![(
-                    "Player Command".to_string(),
-                    "External player for video playback".to_string(),
-                    draft.player.as_deref().unwrap_or("(none)").to_string(),
-                )],
+                vec![
+                    (
+                        "Player Command".to_string(),
+                        "External player for video playback".to_string(),
+                        draft.player.as_deref().unwrap_or("(none)").to_string(),
+                    ),
+                    (
+                        "Default Playback Quality".into(),
+                        "Original or preferred resolution; per-file override in Play Video".into(),
+                        draft.playback_quality.as_str().into(),
+                    ),
+                ],
             ),
             (
                 "Download Settings",
@@ -3646,6 +3670,54 @@ impl App {
                     draft.update_check.description().to_string(),
                     draft.update_check.as_str().to_string(),
                 )],
+            ),
+            (
+                "Browser Settings",
+                vec![
+                    (
+                        "Columns".into(),
+                        "a: auto; digits: fixed count; Left/Right: adjust".into(),
+                        match draft.columns {
+                            crate::config::ColumnCount::Auto => "Auto".into(),
+                            crate::config::ColumnCount::Fixed(n) => n.to_string(),
+                        },
+                    ),
+                    (
+                        "Minimum Column Width".into(),
+                        "Terminal cells (minimum 16); digits or +/-".into(),
+                        draft.column_min_width.max(16).to_string(),
+                    ),
+                    (
+                        "Inline Thumbnails".into(),
+                        "Small media preview before filename; shortcut: v".into(),
+                        if draft.inline_thumbnails {
+                            "[✓]"
+                        } else {
+                            "[ ]"
+                        }
+                        .into(),
+                    ),
+                    (
+                        "Inline Thumbnail Size".into(),
+                        "Width x height in terminal cells; shortcuts: [ / ]".into(),
+                        draft.inline_thumbnail_size.label().into(),
+                    ),
+                    (
+                        "Thumbnail Placeholders".into(),
+                        "Keep image slots while waiting or unavailable".into(),
+                        if draft.thumbnail_placeholders {
+                            "[✓]"
+                        } else {
+                            "[ ]"
+                        }
+                        .into(),
+                    ),
+                    (
+                        "Thumbnail Source Size".into(),
+                        "Server image resolution; refreshes after saving".into(),
+                        draft.thumbnail_size.as_str().into(),
+                    ),
+                ],
             ),
         ]
     }
@@ -4642,8 +4714,8 @@ fn vibrant(c: Color) -> Color {
 #[cfg(test)]
 mod help_layout_tests {
     use super::{
-        App, InputMode, MainLayoutMode, balanced_help_columns, help_column_count,
-        help_column_widths, help_item_parts, help_sheet_width, main_layout_mode,
+        App, InputMode, balanced_help_columns, help_column_count, help_column_widths,
+        help_item_parts, help_sheet_width,
     };
     use crate::{config::TuiConfig, pikpak::PikPak};
     use crossterm::event::{KeyCode, KeyModifiers};
@@ -4689,15 +4761,6 @@ mod help_layout_tests {
         assert!(rendered.contains("Move down"), "{rendered}");
         assert!(rendered.contains("Copy"), "{rendered}");
         assert!(rendered.contains("close"), "{rendered}");
-    }
-
-    #[test]
-    fn main_layout_reduces_panes_at_responsive_breakpoints() {
-        assert_eq!(main_layout_mode(120, true), MainLayoutMode::ThreePane);
-        assert_eq!(main_layout_mode(80, true), MainLayoutMode::CurrentPreview);
-        assert_eq!(main_layout_mode(50, true), MainLayoutMode::CurrentOnly);
-        assert_eq!(main_layout_mode(80, false), MainLayoutMode::ParentCurrent);
-        assert_eq!(main_layout_mode(50, false), MainLayoutMode::CurrentOnly);
     }
 
     #[test]

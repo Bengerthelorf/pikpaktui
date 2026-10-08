@@ -40,12 +40,19 @@ color_scheme = "vibrant"    # "vibrant" | "classic" | "custom"
 show_help_bar = true        # 底部快捷鍵提示列
 quota_bar_style = "bar"     # "bar"（視覺化進度條）| "percent"（百分比數字）
 
+# 檔案瀏覽
+columns = "auto"           # "auto" 或正整數（4、5、6……）
+column_min_width = 28       # 最小欄寬，單位為終端機字元格，至少 16
+inline_thumbnails = true   # 檔名前的小縮圖；v 開關
+inline_thumbnail_size = "tiny"  # "tiny" | "small" | "medium" | "large"；[ / ] 調整
+thumbnail_placeholders = true  # 等待或不可用時保留灰色圖片佔位卡
+
 # 預覽
 show_preview = true         # 寬度允許時顯示預覽；false = 僅檔案瀏覽面板
-lazy_preview = false        # 僅在游標停止移動後載入預覽
+lazy_preview = false        # 游標停止後自動載入文字預覽和檔案詳情
 preview_max_size = 65536    # 文字預覽最大載入位元組數（預設 64 KB）
 thumbnail_mode = "auto"     # "auto" | "off" | "force-color" | "force-grayscale"
-thumbnail_size = "medium"   # "small" | "medium" | "large"
+thumbnail_size = "medium"   # 伺服器圖片清晰度，與列表顯示尺寸分開設定; "small" | "medium" | "large"
 
 # 排序（在 TUI 中用 S / R 修改時自動儲存）
 sort_field = "name"         # "name" | "size" | "created" | "type" | "extension" | "none"
@@ -57,11 +64,14 @@ cli_nerd_font = false       # CLI 輸出中使用 Nerd Font 圖示
 
 # 播放
 player = "mpv"              # 外部影片播放器指令；首次播放影片時在 TUI 設定
+playback_quality = "original" # TUI 預設播放畫質；original | 2160p | 1440p | 1080p | 720p | 480p | 360p
 
 # 下載
 download_jobs = 1           # TUI 下載工作執行緒數（設定介面範圍 1–16）
 update_check = "notify"    # "notify" | "quiet" | "off"
 ```
+
+預設播放偏好為 `original`（原畫），代表來源檔案的畫質，不固定為 1080p。可在 **Playback Settings → Default Playback Quality** 修改並按 `s` 儲存，或設定頂層 `playback_quality`；`4k` 是 `2160p` 的別名。指定解析度時，優先選擇允許播放且不高於目標的最高轉碼版本，其次選擇高於目標的最低版本；沒有已知解析度的可用轉碼時退回原畫／首個允許播放的連結。播放確認框顯示實際選項，偏好不可用時提示退回。下拉選單的單次選擇不修改預設設定。CLI `play` 仍在省略畫質參數時列出版本，提供名稱／序號時依該參數播放。
 
 ### update_check
 
@@ -74,6 +84,16 @@ update_check = "notify"    # "notify" | "quiet" | "off"
 ```toml
 update_check = "notify"
 ```
+
+### 縮圖設定
+
+**Browser Settings** 提供欄目數、最小欄寬、行內縮圖開關、顯示尺寸、佔位圖開關與伺服器縮圖尺寸。這些欄位都放在 `config.toml` 頂層。
+
+`inline_thumbnail_size` 控制列表圖片佔多少終端字元格；`thumbnail_size` 控制伺服器圖片清晰度（`small`、`medium`、`large`）。儲存 **Thumbnail Source Size** 後，共用背景工作立即使用新尺寸，並重新整理瀏覽器。
+
+`thumbnail_placeholders = true` 預設開啟，舊設定沒有這個欄位也會開啟。未載入時顯示低對比度灰色卡片，載入中顯示小轉動指示，不可用時顯示叉號；沒有縮圖連結的圖片、影片也保留不可用卡片。列高與檔名位置保持穩定。設為 `false` 可恢復普通圖示回退。`inline_thumbnails` 控制列表圖片，`show_preview` 控制預覽面板，`thumbnail_mode` 控制大預覽的圖片繪製。
+
+播放連結選擇、工作完成確認、憑據更新及過期回應修復自動生效，無需額外相容開關。
 
 ### 圖片協定設定
 

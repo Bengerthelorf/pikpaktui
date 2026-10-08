@@ -29,12 +29,7 @@ pub fn run(args: &[String]) -> Result<()> {
                 }
             }
 
-            let phases = &[
-                "PHASE_TYPE_RUNNING",
-                "PHASE_TYPE_PENDING",
-                "PHASE_TYPE_COMPLETE",
-                "PHASE_TYPE_ERROR",
-            ];
+            let phases = crate::pikpak::OFFLINE_TASK_PHASES;
 
             let spinner = super::Spinner::new("Fetching tasks...");
             let resp = client.offline_list(limit, phases)?;
@@ -69,6 +64,8 @@ pub fn run(args: &[String]) -> Result<()> {
                         "PHASE_TYPE_COMPLETE" => ("✓", "32"),
                         "PHASE_TYPE_RUNNING" => ("↓", "36"),
                         "PHASE_TYPE_PENDING" => ("…", "2;37"),
+                        "PHASE_TYPE_PAUSED" => ("Ⅱ", "33"),
+                        "PHASE_TYPE_UNKNOW" => ("?", "2;37"),
                         "PHASE_TYPE_ERROR" => ("✗", "31"),
                         _ => ("?", "33"),
                     };

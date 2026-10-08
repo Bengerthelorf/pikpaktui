@@ -2,6 +2,14 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 
+/// Keep the same terminal image id/encoding across frames and list selections.
+pub(super) struct InlineImageProtocol {
+    pub cells: (u16, u16),
+    pub font_size: (u16, u16),
+    pub protocol_type: ratatui_image::picker::ProtocolType,
+    pub protocol: ratatui_image::protocol::StatefulProtocol,
+}
+
 /// Upscale `img` so it fills at least `area` terminal cells (using `font_size` px/cell).
 /// If the image is already large enough, returns a clone unchanged.
 /// This ensures protocol renderers (Kitty/iTerm2) don't render at native pixel size

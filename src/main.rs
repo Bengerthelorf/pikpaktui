@@ -112,9 +112,9 @@ fn cli_update_check(args: &[String]) -> Option<mpsc::Receiver<Option<String>>> {
 }
 
 fn run_tui() -> Result<()> {
-    let mut client = PikPak::new()?;
+    let client = PikPak::new()?;
     let tui_config = TuiConfig::load();
-    client.thumbnail_size = tui_config.thumbnail_size.as_api_str().to_string();
+    client.set_thumbnail_size(tui_config.thumbnail_size.as_api_str());
 
     if client.has_valid_session() {
         return tui::run(client, tui_config);
