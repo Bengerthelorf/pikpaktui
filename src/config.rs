@@ -1111,19 +1111,23 @@ mod browser_config_tests {
             include_str!("../docs/zh/configuration.md"),
             include_str!("../docs/zh-Hant/configuration.md"),
         ] {
-            let example = doc
-                .split("```toml\n")
-                .nth(2)
-                .unwrap()
-                .split("```")
-                .next()
-                .unwrap();
-            let config: TuiConfig = toml::from_str(example).unwrap();
-            assert!(config.thumbnail_placeholders);
-            assert!(config.inline_thumbnails);
-            assert_eq!(config.inline_thumbnail_size, InlineThumbnailSize::Tiny);
-            assert_eq!(config.thumbnail_size, ThumbnailSize::Medium);
-            assert_eq!(config.columns, ColumnCount::Auto);
+            // Windows checkouts may use CRLF; both forms must parse the same settings.
+            let lf = doc.replace("\r\n", "\n");
+            for doc in [lf.clone(), lf.replace('\n', "\r\n")] {
+                let example = doc
+                    .split("```toml")
+                    .nth(2)
+                    .unwrap()
+                    .split("```")
+                    .next()
+                    .unwrap();
+                let config: TuiConfig = toml::from_str(example).unwrap();
+                assert!(config.thumbnail_placeholders);
+                assert!(config.inline_thumbnails);
+                assert_eq!(config.inline_thumbnail_size, InlineThumbnailSize::Tiny);
+                assert_eq!(config.thumbnail_size, ThumbnailSize::Medium);
+                assert_eq!(config.columns, ColumnCount::Auto);
+            }
         }
     }
 }
