@@ -525,6 +525,35 @@ impl PikPak {
         Ok((info.name, content, file_size, truncated))
     }
 
+    /// Recursively list every file under `folder_id` with its unique local
+    /// destination below `local_dir`, creating the directory tree (empty
+    /// folders included). Used by the TUI to queue one task per file.
+    pub fn list_folder_files(
+        &self,
+        folder_id: &str,
+        local_dir: &Path,
+    ) -> Result<Vec<(Entry, std::path::PathBuf)>> {
+        fs::create_dir_all(local_dir)
+            .with_context(|| format!("cannot create dir '{}'", local_dir.display()))?;
+        let mut taken = std::collections::HashSet::new();
+        let mut files = Vec::new();
+        let mut subfolders = Vec::new();
+        for entry in self.ls(folder_id)? {
+            let dest = local_dir.join(super::unique_local_name(
+                &mut taken,
+                &sanitize_filename(&entry.name),
+            ));
+            match entry.kind {
+                EntryKind::File => files.push((entry, dest)),
+                EntryKind::Folder => subfolders.push((entry, dest)),
+            }
+        }
+        for (folder, dest) in subfolders {
+            files.extend(self.list_folder_files(&folder.id, &dest)?);
+        }
+        Ok(files)
+    }
+
     pub fn download_dir(
         &self,
         folder_id: &str,

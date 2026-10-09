@@ -284,6 +284,8 @@ enum OpResult {
     Ok(String),
     Mutation(operations::MutationReport),
     Err(String),
+    /// A cart folder listed recursively: (folder name, files with local destinations).
+    FolderExpanded(Result<(String, Vec<(Entry, std::path::PathBuf)>)>),
     Info(AsyncRequest, Result<FileInfoResponse>, Option<String>),
     ParentLs(AsyncRequest, Result<Vec<Entry>>),
     PreviewLs(AsyncRequest, Result<Vec<Entry>>),
@@ -1243,6 +1245,16 @@ impl App {
                 }
                 OpResult::Quota(Err(e)) => {
                     self.push_log(format!("Quota fetch failed: {e:#}"));
+                }
+                OpResult::FolderExpanded(Ok((name, files))) => {
+                    self.push_log(format!("Queued {} files from '{}'", files.len(), name));
+                    for (entry, dest) in files {
+                        self.download_state.queue(entry, dest);
+                    }
+                    self.download_state.start_next(&self.client);
+                }
+                OpResult::FolderExpanded(Err(e)) => {
+                    self.push_log(format!("Folder download failed: {e:#}"));
                 }
                 OpResult::Upload(Ok(msg)) => {
                     self.finish_background_loading();

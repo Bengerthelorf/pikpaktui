@@ -25,6 +25,14 @@ fn entry() -> Result<()> {
         return run_tui();
     }
 
+    // ponytail: hard exit; downloads keep .part files and resume, so no cooperative cancel.
+    if let Err(e) = ctrlc::set_handler(|| {
+        eprintln!("\nInterrupted");
+        exit(130);
+    }) {
+        eprintln!("warning: cannot install Ctrl-C handler: {e}");
+    }
+
     if args.len() >= 2
         && cmd::wants_help(&args[1..])
         && !matches!(
