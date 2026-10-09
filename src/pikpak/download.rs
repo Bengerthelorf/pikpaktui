@@ -500,12 +500,13 @@ impl PikPak {
             .ok_or_else(|| anyhow!("no download link for file {}", file_id))?;
         let file_size = info.file_size();
 
-        let response = self
-            .http
-            .get(url)
-            .header("Range", format!("bytes=0-{}", max_bytes.saturating_sub(1)))
-            .send()
-            .context("text preview request failed")?;
+        let response = super::interactive::bound(
+            self.http
+                .get(url)
+                .header("Range", format!("bytes=0-{}", max_bytes.saturating_sub(1))),
+        )
+        .send()
+        .context("text preview request failed")?;
 
         let status = response.status();
         if !status.is_success() && status != reqwest::StatusCode::PARTIAL_CONTENT {

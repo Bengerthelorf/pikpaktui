@@ -30,7 +30,7 @@ use crossterm::terminal::{
 };
 use ratatui::DefaultTerminal;
 use ratatui::layout::{Constraint, Direction, Layout};
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashSet, VecDeque};
 use std::io;
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -288,7 +288,7 @@ enum OpResult {
     ParentLs(AsyncRequest, Result<Vec<Entry>>),
     PreviewLs(AsyncRequest, Result<Vec<Entry>>),
     PreviewInfo(AsyncRequest, Result<FileInfoResponse>),
-    PreviewText(AsyncRequest, Result<(String, String, u64, bool)>),
+    PreviewText(AsyncRequest, Result<PreparedTextPreview>),
     PreviewThumbnail(AsyncRequest, Result<image::DynamicImage>),
     OfflineTasks(AsyncRequest, Result<crate::pikpak::OfflineListResponse>),
     PlayInfo(AsyncRequest, Result<FileInfoResponse>),
@@ -300,6 +300,7 @@ enum OpResult {
     GotoPath(AsyncRequest, Result<(String, Vec<(String, String)>)>),
     Quota(Result<crate::pikpak::QuotaInfo>),
     Upload(Result<String>),
+    Clipboard(Result<String>),
     ShareCreated(
         AsyncRequest,
         String,
@@ -395,6 +396,7 @@ enum InputMode {
         input: LocalPathInput,
     },
     DownloadView,
+    UploadView,
     OfflineInput {
         value: String,
     },
@@ -418,6 +420,7 @@ enum InputMode {
         name: String,
         lines: Vec<ratatui::text::Line<'static>>,
         truncated: bool,
+        scroll: usize,
     },
     ConfirmPlay {
         dialog: playback::PlaybackDialog,
@@ -483,6 +486,8 @@ struct App {
     config: TuiConfig,
     current_folder_id: String,
     main_listing_request_id: u64,
+    main_listing_loading: bool,
+    main_listing_error: Option<String>,
     async_request_generation: u64,
     modal_request: Option<AsyncRequest>,
     offline_refresh_at: Option<Instant>,
@@ -519,8 +524,11 @@ struct App {
     cart: Vec<Entry>,
     cart_ids: HashSet<String>,
     cart_mutation_in_flight: bool,
+    file_mutations_pending: usize,
+    background_writes: Arc<std::sync::atomic::AtomicUsize>,
     cart_selected: usize,
     download_state: DownloadState,
+    active_upload: Option<Arc<crate::pikpak::UploadControl>>,
     download_view_mode: DownloadViewMode,
     network_stats: NetworkStats,
     last_network_update: Instant,
@@ -533,6 +541,7 @@ struct App {
     last_click_time: Instant,
     last_click_pos: (u16, u16),
     preview_scroll: usize,
+    text_preview_page: Cell<usize>,
     /// `None` = auto-follow bottom; `Some(y)` = pinned at absolute scroll-from-top offset
     logs_scroll: Option<usize>,
     logs_overlay_area: Cell<ratatui::layout::Rect>,
@@ -553,6 +562,7 @@ struct App {
     /// Terminal image-protocol picker, queried once at startup. Querying reads
     /// stdin, so it must NOT happen during draw — that races with key input.
     image_picker: Option<ratatui_image::picker::Picker>,
+    image_render_cache: RefCell<image_render::RenderCache>,
 }
 
 impl App {
@@ -567,6 +577,8 @@ impl App {
             config,
             current_folder_id: String::new(),
             main_listing_request_id: 0,
+            main_listing_loading: false,
+            main_listing_error: None,
             async_request_generation: 0,
             modal_request: None,
             offline_refresh_at: None,
@@ -602,8 +614,11 @@ impl App {
             cart: Vec::new(),
             cart_ids: HashSet::new(),
             cart_mutation_in_flight: false,
+            file_mutations_pending: 0,
+            background_writes: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             cart_selected: 0,
             download_state: dl_state,
+            active_upload: None,
             download_view_mode: DownloadViewMode::Collapsed,
             network_stats: NetworkStats::new(),
             last_network_update: Instant::now(),
@@ -616,6 +631,7 @@ impl App {
             last_click_time: Instant::now(),
             last_click_pos: (0, 0),
             preview_scroll: 0,
+            text_preview_page: Cell::new(1),
             logs_scroll: None,
             logs_overlay_area: Cell::new(ratatui::layout::Rect::default()),
             settings_area: Cell::new(ratatui::layout::Rect::default()),
@@ -633,6 +649,7 @@ impl App {
             share_creations_pending: 0,
             update_available: None,
             image_picker: None,
+            image_render_cache: RefCell::default(),
         };
         app.refresh();
         app.fetch_quota();
@@ -667,6 +684,8 @@ impl App {
             config,
             current_folder_id: String::new(),
             main_listing_request_id: 0,
+            main_listing_loading: false,
+            main_listing_error: None,
             async_request_generation: 0,
             modal_request: None,
             offline_refresh_at: None,
@@ -702,8 +721,11 @@ impl App {
             cart: Vec::new(),
             cart_ids: HashSet::new(),
             cart_mutation_in_flight: false,
+            file_mutations_pending: 0,
+            background_writes: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             cart_selected: 0,
             download_state: DownloadState::new(download_jobs),
+            active_upload: None,
             download_view_mode: DownloadViewMode::Collapsed,
             network_stats: NetworkStats::new(),
             last_network_update: Instant::now(),
@@ -716,6 +738,7 @@ impl App {
             last_click_time: Instant::now(),
             last_click_pos: (0, 0),
             preview_scroll: 0,
+            text_preview_page: Cell::new(1),
             logs_scroll: None,
             logs_overlay_area: Cell::new(ratatui::layout::Rect::default()),
             settings_area: Cell::new(ratatui::layout::Rect::default()),
@@ -733,7 +756,27 @@ impl App {
             share_creations_pending: 0,
             update_available: None,
             image_picker: None,
+            image_render_cache: RefCell::default(),
         }
+    }
+
+    fn copy_to_clipboard(&self, url: String) {
+        let tx = self.result_tx.clone();
+        std::thread::spawn(move || {
+            let result = handler::write_clipboard(&url).map(|()| url);
+            let _ = tx.send(OpResult::Clipboard(result));
+        });
+    }
+
+    fn has_active_work(&self) -> bool {
+        self.download_state.has_active()
+            || !self.download_state.active_ids.is_empty()
+            || self.active_upload.is_some()
+            || self.file_mutations_pending > 0
+            || self
+                .background_writes
+                .load(std::sync::atomic::Ordering::Relaxed)
+                > 0
     }
 
     fn run(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
@@ -769,7 +812,21 @@ impl App {
             terminal.draw(|f| self.draw(f))?;
             self.schedule_browser_loads();
 
-            if event::poll(Duration::from_millis(50))? {
+            // Consume a bounded burst before redrawing. Rendering every single
+            // repeat/wheel event made queued input lag behind image encoding.
+            let mut input_started = Instant::now();
+            let mut quit = false;
+            for index in 0..64 {
+                if !event::poll(if index == 0 {
+                    Duration::from_millis(50)
+                } else {
+                    Duration::ZERO
+                })? {
+                    break;
+                }
+                if index == 0 {
+                    input_started = Instant::now();
+                }
                 match event::read()? {
                     Event::Key(key) => {
                         if key.kind != KeyEventKind::Press {
@@ -778,6 +835,7 @@ impl App {
                         self.cursor_visible = true;
                         self.last_blink = Instant::now();
                         if self.handle_key(key.code, key.modifiers)? {
+                            quit = true;
                             break;
                         }
                     }
@@ -786,6 +844,12 @@ impl App {
                     }
                     _ => {}
                 }
+                if input_started.elapsed() >= Duration::from_millis(8) {
+                    break;
+                }
+            }
+            if quit {
+                break;
             }
         }
         download::save_download_state(&self.download_state.tasks);
@@ -793,7 +857,19 @@ impl App {
     }
 
     fn poll_results(&mut self) {
-        while let Ok(result) = self.result_rx.try_recv() {
+        if let InputMode::UploadInput { input } | InputMode::DownloadInput { input } =
+            &mut self.input
+        {
+            input.poll_candidates();
+        }
+        let started = Instant::now();
+        for _ in 0..32 {
+            if started.elapsed() >= Duration::from_millis(4) {
+                break;
+            }
+            let Ok(result) = self.result_rx.try_recv() else {
+                break;
+            };
             match result {
                 OpResult::Browser(request, result) => self.apply_browser_result(request, result),
                 OpResult::Ls(request_id, requested_folder_id, Ok(mut entries)) => {
@@ -805,6 +881,8 @@ impl App {
                     ) {
                         continue;
                     }
+                    self.main_listing_loading = false;
+                    self.main_listing_error = None;
                     self.finish_background_loading();
                     crate::config::sort_entries(
                         &mut entries,
@@ -836,6 +914,8 @@ impl App {
                     ) {
                         continue;
                     }
+                    self.main_listing_loading = false;
+                    self.main_listing_error = Some(format!("Listing failed: {e:#}"));
                     self.finish_background_loading();
                     self.push_log(format!("Refresh failed: {e:#}"));
                 }
@@ -984,14 +1064,21 @@ impl App {
                     self.preview_state = PreviewState::Empty;
                     self.push_log(format!("Preview info failed: {e:#}"));
                 }
-                OpResult::PreviewText(request, Ok((name, content, size, truncated))) => {
+                OpResult::PreviewText(
+                    request,
+                    Ok(PreparedTextPreview {
+                        name,
+                        lines,
+                        size,
+                        truncated,
+                    }),
+                ) => {
                     let is_modal = self.modal_request_matches(&request)
                         && matches!(self.input, InputMode::InfoLoading);
                     let is_preview = self.preview_request_matches(&request);
                     if !is_modal && !is_preview {
                         continue;
                     }
-                    let lines = highlight_content(&name, &content);
                     if is_modal {
                         self.modal_request = None;
                         self.finish_loading();
@@ -999,6 +1086,7 @@ impl App {
                             name: name.clone(),
                             lines: lines.clone(),
                             truncated,
+                            scroll: 0,
                         };
                         self.preview_state = PreviewState::FileTextPreview {
                             name,
@@ -1039,6 +1127,7 @@ impl App {
                         continue;
                     }
                     self.preview_request = None;
+                    self.image_render_cache.borrow_mut().clear();
                     self.browser
                         .failed
                         .remove(&browser::LoadKey::File(request.target.clone()));
@@ -1181,6 +1270,7 @@ impl App {
                     if *request_id != request.id || target_id != &request.target {
                         continue;
                     }
+                    self.image_render_cache.borrow_mut().clear();
                     *image = Some(img);
                     self.modal_request = None;
                 }
@@ -1245,23 +1335,32 @@ impl App {
                     self.push_log(format!("Quota fetch failed: {e:#}"));
                 }
                 OpResult::Upload(Ok(msg)) => {
-                    self.finish_background_loading();
+                    self.active_upload = None;
+                    if matches!(self.input, InputMode::UploadView) {
+                        self.input = InputMode::Normal;
+                    }
                     self.push_log(msg);
                     self.refresh();
                 }
                 OpResult::Upload(Err(e)) => {
-                    self.finish_background_loading();
-                    if self.report_mutation_error("Upload", &e) {
-                        self.refresh();
+                    self.active_upload = None;
+                    if matches!(self.input, InputMode::UploadView) {
+                        self.input = InputMode::Normal;
                     }
+                    self.report_mutation_error("Upload", &e);
+                    // A cancelled/failed folder may already contain completed
+                    // files or an accepted upload initialization.
+                    self.refresh();
                 }
                 OpResult::ShareCreated(request, title, result) => {
-                    if let Some(url) = self.record_share_created(request, title, result)
-                        && let Err(error) = handler::write_clipboard(&url)
-                    {
-                        self.push_log(format!("Clipboard failed: {error:#}"));
+                    if let Some(url) = self.record_share_created(request, title, result) {
+                        self.copy_to_clipboard(url);
                     }
                 }
+                OpResult::Clipboard(result) => match result {
+                    Ok(url) => self.push_log(format!("Copied URL: {url}")),
+                    Err(error) => self.push_log(format!("Clipboard failed: {error:#}")),
+                },
                 OpResult::MyShares(request, result) => self.apply_my_shares(request, result),
                 OpResult::UpdateAvailable(Some(version)) => {
                     self.push_log(format!(
@@ -1511,6 +1610,7 @@ impl App {
     }
 
     fn refresh(&mut self) {
+        self.image_render_cache.borrow_mut().clear();
         self.browser.invalidate();
         self.clear_preview();
         self.loading = true;
@@ -1523,16 +1623,22 @@ impl App {
     fn request_main_listing(&mut self, folder_id: String) {
         self.browser.cancel_directory_loads(&folder_id);
         self.invalidate_main_listing();
+        self.main_listing_loading = true;
+        self.main_listing_error = None;
         let request_id = self.main_listing_request_id;
         let client = Arc::clone(&self.client);
         let tx = self.result_tx.clone();
         std::thread::spawn(move || {
-            let result = client.ls(&folder_id);
+            let result = crate::pikpak::interactive::with_deadline(Duration::from_secs(15), || {
+                client.ls(&folder_id)
+            });
             let _ = tx.send(OpResult::Ls(request_id, folder_id, result));
         });
     }
 
     fn invalidate_main_listing(&mut self) {
+        self.main_listing_loading = false;
+        self.main_listing_error = None;
         self.main_listing_request_id = self.main_listing_request_id.wrapping_add(1);
     }
 
@@ -1705,6 +1811,13 @@ impl App {
             Some(e) => e.clone(),
             None => return,
         };
+        if self
+            .preview_request
+            .as_ref()
+            .is_some_and(|request| request.target == entry.id)
+        {
+            return;
+        }
         self.preview_target_id = Some(entry.id.clone());
         self.preview_state = PreviewState::Loading;
         let client = Arc::clone(&self.client);
@@ -1717,7 +1830,12 @@ impl App {
                     self.begin_preview_request(AsyncRequestKind::FolderPreview, eid.clone());
                 // Folders always show content listing, never thumbnails
                 std::thread::spawn(move || {
-                    let _ = tx.send(OpResult::PreviewLs(request, client.ls(&eid)));
+                    let _ = tx.send(OpResult::PreviewLs(
+                        request,
+                        crate::pikpak::interactive::with_deadline(Duration::from_secs(15), || {
+                            client.ls(&eid)
+                        }),
+                    ));
                 });
             }
             EntryKind::File => {
@@ -1729,7 +1847,10 @@ impl App {
                     std::thread::spawn(move || {
                         let _ = tx.send(OpResult::PreviewThumbnail(
                             request,
-                            fetch_entry_thumbnail(&entry, &client),
+                            crate::pikpak::interactive::with_deadline(
+                                Duration::from_secs(5),
+                                || fetch_entry_thumbnail(&entry, &client),
+                            ),
                         ));
                     });
                     return;
@@ -1741,14 +1862,20 @@ impl App {
                     std::thread::spawn(move || {
                         let _ = tx.send(OpResult::PreviewText(
                             request,
-                            client.fetch_text_preview(&eid, max_bytes),
+                            prepare_text_preview(&client, &eid, max_bytes),
                         ));
                     });
                 } else {
                     let request =
                         self.begin_preview_request(AsyncRequestKind::FilePreview, eid.clone());
                     std::thread::spawn(move || {
-                        let _ = tx.send(OpResult::PreviewInfo(request, client.file_info(&eid)));
+                        let _ = tx.send(OpResult::PreviewInfo(
+                            request,
+                            crate::pikpak::interactive::with_deadline(
+                                Duration::from_secs(5),
+                                || client.file_info(&eid),
+                            ),
+                        ));
                     });
                 }
             }
@@ -1785,6 +1912,29 @@ static SYNTAX_SET: LazyLock<syntect::parsing::SyntaxSet> =
     LazyLock::new(syntect::parsing::SyntaxSet::load_defaults_newlines);
 static THEME_SET: LazyLock<syntect::highlighting::ThemeSet> =
     LazyLock::new(syntect::highlighting::ThemeSet::load_defaults);
+
+struct PreparedTextPreview {
+    name: String,
+    lines: Vec<ratatui::text::Line<'static>>,
+    size: u64,
+    truncated: bool,
+}
+
+fn prepare_text_preview(client: &PikPak, id: &str, max_bytes: u64) -> Result<PreparedTextPreview> {
+    crate::pikpak::interactive::with_deadline(Duration::from_secs(5), || {
+        client
+            .fetch_text_preview(id, max_bytes)
+            .map(|(name, content, size, truncated)| {
+                let lines = highlight_content(&name, &content);
+                PreparedTextPreview {
+                    name,
+                    lines,
+                    size,
+                    truncated,
+                }
+            })
+    })
+}
 
 fn highlight_content(name: &str, content: &str) -> Vec<ratatui::text::Line<'static>> {
     use ratatui::style::{Color, Style};
@@ -2673,7 +2823,7 @@ fn fetch_and_render_thumbnail(
     let response = client
         .http()
         .get(url)
-        .timeout(Duration::from_secs(30))
+        .timeout(crate::pikpak::interactive::remaining().unwrap_or(Duration::from_secs(5)))
         .send()
         .context("failed to download thumbnail")?;
 
@@ -2705,7 +2855,11 @@ fn fetch_and_render_thumbnail(
         .decode()
         .context("failed to decode thumbnail image")?;
 
-    Ok(img)
+    Ok(if img.width() > 512 || img.height() > 512 {
+        img.thumbnail(512, 512)
+    } else {
+        img
+    })
 }
 
 /// Wrap a string into visual lines based on display width.

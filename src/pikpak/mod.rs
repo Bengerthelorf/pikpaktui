@@ -4,6 +4,7 @@ mod download;
 mod drive;
 mod file_info;
 mod files;
+pub(crate) mod interactive;
 mod models;
 mod mutation;
 mod offline;
@@ -12,6 +13,7 @@ mod parity_tests;
 mod responses;
 mod share;
 mod upload;
+pub(crate) use upload::UploadControl;
 
 use auth::{CaptchaInitResponse, SigninResponse};
 #[cfg(test)]
@@ -146,7 +148,7 @@ impl PikPak {
     }
 
     fn save_session(&self, token: &SessionToken) -> Result<()> {
-        let _guard = self.session_lock.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = interactive::lock(&self.session_lock)?;
         let _file_guard = self.lock_session_file()?;
         self.save_session_unlocked(token)
     }
@@ -186,7 +188,7 @@ impl PikPak {
     }
 
     fn update_session(&self, update: impl FnOnce(&mut SessionToken)) -> Result<()> {
-        let _guard = self.session_lock.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = interactive::lock(&self.session_lock)?;
         let _file_guard = self.lock_session_file()?;
         if let Some(mut session) = self.load_session()? {
             update(&mut session);
@@ -328,7 +330,7 @@ impl PikPak {
         // Refresh proactively if the token expires within 5 minutes.
         if session.is_expired(now_unix() + 300) {
             // Serialize refresh attempts — only one thread refreshes at a time.
-            let _guard = self.refresh_lock.lock().unwrap_or_else(|e| e.into_inner());
+            let _guard = interactive::lock(&self.refresh_lock)?;
             // Re-check after acquiring lock: another thread may have refreshed already.
             let session = self
                 .load_session()?
@@ -357,7 +359,7 @@ impl PikPak {
     }
 
     fn refresh_rejected_token(&self, rejected: &str) -> Result<String> {
-        let _guard = self.refresh_lock.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = interactive::lock(&self.refresh_lock)?;
         self.refresh_session_inner(Some(rejected))
     }
 
@@ -365,7 +367,7 @@ impl PikPak {
         // Hold both locks through the HTTP exchange. A second process then
         // reloads the newly rotated refresh token instead of submitting the
         // stale one it observed before waiting.
-        let _guard = self.session_lock.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = interactive::lock(&self.session_lock)?;
         let _file_guard = self.lock_session_file()?;
         let mut session = self
             .load_session()?
@@ -389,7 +391,9 @@ impl PikPak {
         if !self.device_id.is_empty() {
             rb = rb.header("x-device-id", &self.device_id);
         }
-        let response = rb.send().context("token refresh request failed")?;
+        let response = interactive::bound(rb)
+            .send()
+            .context("token refresh request failed")?;
 
         let status = response.status();
         if !status.is_success() {
@@ -458,10 +462,7 @@ impl PikPak {
         if !self.captcha_needs_refresh() {
             return Ok(());
         }
-        let _guard = self
-            .captcha_refresh_lock
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let _guard = interactive::lock(&self.captcha_refresh_lock)?;
         // Another request may have refreshed while this one waited.
         if self.captcha_needs_refresh() {
             self.refresh_captcha_for_action_locked(action)
@@ -522,6 +523,9 @@ impl PikPak {
                         .context("invalid bearer token")?,
                 );
             }
+            if let Some(timeout) = interactive::remaining() {
+                *attempt.timeout_mut() = Some(timeout);
+            }
             // Only explicit credential rejection is retried. Transport errors
             // may follow an accepted mutation and must not be blindly replayed.
             let response = self
@@ -552,10 +556,7 @@ impl PikPak {
             }
             if api_error_requires_captcha_refresh(&body) && !refreshed_captcha {
                 refreshed_captcha = true;
-                let _guard = self
-                    .captcha_refresh_lock
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner());
+                let _guard = interactive::lock(&self.captcha_refresh_lock)?;
                 let current = self
                     .captcha_token
                     .lock()
@@ -638,7 +639,9 @@ impl PikPak {
         if !self.device_id.is_empty() {
             rb = rb.header("x-device-id", &self.device_id);
         }
-        let response = rb.send().context("captcha refresh failed")?;
+        let response = interactive::bound(rb)
+            .send()
+            .context("captcha refresh failed")?;
         let status = response.status();
         if !status.is_success() {
             let body = response.text().unwrap_or_default();

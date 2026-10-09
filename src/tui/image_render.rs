@@ -1,6 +1,69 @@
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
+use std::collections::HashMap;
+use std::time::Instant;
+
+type LineKey = (String, u16, u16, bool);
+
+#[derive(Default)]
+pub(super) struct RenderCache {
+    lines: HashMap<LineKey, (Instant, Vec<Line<'static>>)>,
+    pub modal_protocol: Option<(String, InlineImageProtocol)>,
+}
+
+impl RenderCache {
+    pub fn clear(&mut self) {
+        self.lines.clear();
+        self.modal_protocol = None;
+    }
+
+    pub fn lines(
+        &mut self,
+        id: &str,
+        image: &image::DynamicImage,
+        width: u32,
+        height: u32,
+        grayscale: bool,
+    ) -> Vec<Line<'static>> {
+        let key = (id.to_owned(), width as u16, height as u16, grayscale);
+        if let Some((used, lines)) = self.lines.get_mut(&key) {
+            *used = Instant::now();
+            return lines.clone();
+        }
+        if self.lines.len() >= 64
+            && let Some(oldest) = self
+                .lines
+                .iter()
+                .min_by_key(|(_, (used, _))| *used)
+                .map(|(key, _)| key.clone())
+        {
+            self.lines.remove(&oldest);
+        }
+        let lines = if grayscale {
+            render_image_to_grayscale_lines(image, width, height)
+        } else {
+            render_image_to_colored_lines(image, width, height)
+        };
+        self.lines.insert(key, (Instant::now(), lines.clone()));
+        lines
+    }
+}
+
+impl super::App {
+    pub(super) fn cached_image_lines(
+        &self,
+        id: &str,
+        image: &image::DynamicImage,
+        width: u32,
+        height: u32,
+        grayscale: bool,
+    ) -> Vec<Line<'static>> {
+        self.image_render_cache
+            .borrow_mut()
+            .lines(id, image, width, height, grayscale)
+    }
+}
 
 /// Keep the same terminal image id/encoding across frames and list selections.
 pub(super) struct InlineImageProtocol {

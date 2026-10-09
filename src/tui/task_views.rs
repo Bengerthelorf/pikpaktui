@@ -87,7 +87,9 @@ impl App {
                     self.input = InputMode::InfoLoading;
                     self.loading = true;
                     self.loading_label = Some("Retrying task...".into());
+                    let guard = super::operations::WriteGuard::new(&self.background_writes);
                     std::thread::spawn(move || {
+                        let _guard = guard;
                         let result = client
                             .offline_task_retry(&task_id)
                             .map(|()| format!("Retrying task: {}", task_name));
@@ -115,7 +117,9 @@ impl App {
                     self.input = InputMode::InfoLoading;
                     self.loading = true;
                     self.loading_label = Some("Deleting task...".into());
+                    let guard = super::operations::WriteGuard::new(&self.background_writes);
                     std::thread::spawn(move || {
+                        let _guard = guard;
                         let result = client
                             .delete_tasks(&[task_id.as_str()], false)
                             .map(|()| format!("Deleted task: {}", task_name));
@@ -243,7 +247,9 @@ impl App {
                     self.loading = true;
                     self.loading_label = Some("Restoring...".into());
                     let request = self.begin_modal_request(AsyncRequestKind::TrashOp, eid.clone());
+                    let guard = super::operations::WriteGuard::new(&self.background_writes);
                     std::thread::spawn(move || {
+                        let _guard = guard;
                         let result = client
                             .untrash(&[eid.as_str()])
                             .map(|()| format!("Restored '{}'", name));
@@ -274,7 +280,9 @@ impl App {
                     self.loading = true;
                     self.loading_label = Some("Deleting...".into());
                     let request = self.begin_modal_request(AsyncRequestKind::TrashOp, eid.clone());
+                    let guard = super::operations::WriteGuard::new(&self.background_writes);
                     std::thread::spawn(move || {
+                        let _guard = guard;
                         let result = client
                             .delete_permanent(&[eid.as_str()])
                             .map(|()| format!("Permanently deleted '{}'", name));

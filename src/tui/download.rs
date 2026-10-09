@@ -206,7 +206,15 @@ impl DownloadState {
     /// Poll messages and update task states. Returns log messages.
     pub fn poll(&mut self, client: &Arc<PikPak>) -> Vec<String> {
         let mut logs = Vec::new();
-        while let Ok(msg) = self.msg_rx.try_recv() {
+        let started = Instant::now();
+        for _ in 0..64 {
+            if started.elapsed() >= std::time::Duration::from_millis(4) {
+                break;
+            }
+            let Ok(msg) = self.msg_rx.try_recv() else {
+                break;
+            };
+
             match msg {
                 DownloadMsg::Started { id, total_size } => {
                     if let Some(task) = self.tasks.iter_mut().find(|t| t.id == id) {

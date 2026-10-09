@@ -344,7 +344,23 @@ impl BrowserState {
     }
 
     fn begin_load(&mut self, key: LoadKey, name: String) -> Option<BrowserRequest> {
-        if self.in_flight.len() >= MAX_LOADS || !self.needs_load(&key) {
+        self.begin_load_with_priority(key, name, false)
+    }
+
+    fn begin_load_with_priority(
+        &mut self,
+        key: LoadKey,
+        name: String,
+        current_preview: bool,
+    ) -> Option<BrowserRequest> {
+        // Reserve a slot for directory/current-file previews; speculative row
+        // thumbnails must not occupy the entire worker budget.
+        if self.in_flight.len() >= MAX_LOADS
+            || (matches!(key, LoadKey::InlineImage(_))
+                && !current_preview
+                && self.in_flight.len() >= MAX_LOADS - 1)
+            || !self.needs_load(&key)
+        {
             return None;
         }
         self.next_request = self.next_request.wrapping_add(1);
@@ -844,51 +860,74 @@ impl App {
     pub(super) fn schedule_browser_loads(&mut self) {
         self.browser.trim();
         for (key, name, entry) in self.browser_load_candidates() {
-            let Some(request) = self.browser.begin_load(key, name) else {
+            // Current images share an InlineImage key with their row, but
+            // deserve the reserved slot just like a text/file preview.
+            let current_preview = entry.as_ref().is_some_and(|entry| {
+                self.entries
+                    .get(self.selected)
+                    .is_some_and(|selected| selected.id == entry.id)
+            });
+            let request = if current_preview {
+                self.browser.begin_load_with_priority(key, name, true)
+            } else {
+                self.browser.begin_load(key, name)
+            };
+            let Some(request) = request else {
                 continue;
             };
             let client = Arc::clone(&self.client);
             let tx = self.result_tx.clone();
             let max_size = self.config.preview_max_size;
             std::thread::spawn(move || {
-                let result = match &request.key {
-                    LoadKey::Directory(id) => client.ls(id).map(BrowserPayload::Directory),
-                    LoadKey::InlineImage(url) => {
-                        let image = match entry.as_ref() {
-                            Some(entry) => super::fetch_entry_thumbnail(entry, &client),
-                            None => fetch_and_render_thumbnail(url, &client),
-                        };
-                        image.map(|image| BrowserPayload::InlineImage(image.thumbnail(512, 512)))
-                    }
-                    LoadKey::File(id) => {
-                        let entry = entry.expect("file load has an entry");
-                        if inline_thumbnail_url(&entry).is_some()
-                            || theme::categorize(&entry) == FileCategory::Image
-                        {
-                            super::fetch_entry_thumbnail(&entry, &client).map(|image| {
-                                BrowserPayload::File(Box::new(PreviewState::ThumbnailImage {
-                                    image: image.thumbnail(512, 512),
-                                }))
-                            })
-                        } else if theme::is_text_previewable(&entry) {
-                            client.fetch_text_preview(id, max_size).map(
-                                |(name, content, size, truncated)| {
-                                    let lines = highlight_content(&name, &content);
-                                    BrowserPayload::File(Box::new(PreviewState::FileTextPreview {
-                                        name,
-                                        lines,
-                                        size,
-                                        truncated,
-                                    }))
-                                },
-                            )
-                        } else {
-                            client.file_info(id).map(|info| {
-                                BrowserPayload::File(Box::new(PreviewState::FileDetailedInfo(info)))
-                            })
+                let result =
+                    crate::pikpak::interactive::with_deadline(Duration::from_secs(5), || {
+                        match &request.key {
+                            LoadKey::Directory(id) => client.ls(id).map(BrowserPayload::Directory),
+                            LoadKey::InlineImage(url) => {
+                                let image = match entry.as_ref() {
+                                    Some(entry) => super::fetch_entry_thumbnail(entry, &client),
+                                    None => fetch_and_render_thumbnail(url, &client),
+                                };
+                                image.map(|image| {
+                                    BrowserPayload::InlineImage(image.thumbnail(512, 512))
+                                })
+                            }
+                            LoadKey::File(id) => {
+                                let entry = entry.expect("file load has an entry");
+                                if inline_thumbnail_url(&entry).is_some()
+                                    || theme::categorize(&entry) == FileCategory::Image
+                                {
+                                    super::fetch_entry_thumbnail(&entry, &client).map(|image| {
+                                        BrowserPayload::File(Box::new(
+                                            PreviewState::ThumbnailImage {
+                                                image: image.thumbnail(512, 512),
+                                            },
+                                        ))
+                                    })
+                                } else if theme::is_text_previewable(&entry) {
+                                    client.fetch_text_preview(id, max_size).map(
+                                        |(name, content, size, truncated)| {
+                                            let lines = highlight_content(&name, &content);
+                                            BrowserPayload::File(Box::new(
+                                                PreviewState::FileTextPreview {
+                                                    name,
+                                                    lines,
+                                                    size,
+                                                    truncated,
+                                                },
+                                            ))
+                                        },
+                                    )
+                                } else {
+                                    client.file_info(id).map(|info| {
+                                        BrowserPayload::File(Box::new(
+                                            PreviewState::FileDetailedInfo(info),
+                                        ))
+                                    })
+                                }
+                            }
                         }
-                    }
-                };
+                    });
                 let _ = tx.send(OpResult::Browser(request, result));
             });
         }
@@ -930,6 +969,7 @@ impl App {
                 }
             }
             Ok(BrowserPayload::InlineImage(image)) => {
+                self.image_render_cache.borrow_mut().clear();
                 if let LoadKey::InlineImage(url) = request.key {
                     if let Some(entry) = self.browser.thumbnail_entries.borrow().get(&url) {
                         self.browser
@@ -956,6 +996,7 @@ impl App {
                 }
             }
             Ok(BrowserPayload::File(state)) => {
+                self.image_render_cache.borrow_mut().clear();
                 if let LoadKey::File(id) = request.key {
                     self.browser.preview_protocols.borrow_mut().remove(&id);
                     self.browser.file_previews.insert(
@@ -1376,6 +1417,39 @@ mod tests {
         app.apply_browser_result(next, Ok(BrowserPayload::Directory(vec![folder("fresh")])));
         assert_eq!(app.browser.directories["new"].entries[0].id, "fresh");
         assert!(app.entries.is_empty());
+    }
+
+    #[test]
+    fn speculative_thumbnails_leave_a_slot_for_current_preview() {
+        let mut browser = BrowserState::default();
+        for i in 0..MAX_LOADS - 1 {
+            assert!(
+                browser
+                    .begin_load(LoadKey::InlineImage(format!("url-{i}")), "image".into())
+                    .is_some()
+            );
+        }
+        assert!(
+            browser
+                .begin_load(LoadKey::InlineImage("more".into()), "image".into())
+                .is_none()
+        );
+        assert!(
+            browser
+                .begin_load_with_priority(
+                    LoadKey::InlineImage("selected".into()),
+                    "selected".into(),
+                    true
+                )
+                .is_some()
+        );
+        browser.invalidate();
+        assert!(
+            browser
+                .begin_load(LoadKey::File("new".into()), "new".into())
+                .is_none(),
+            "running workers still count after refresh"
+        );
     }
 
     #[test]

@@ -49,6 +49,18 @@ impl App {
                         Some(_) => format!("{count} cols · active {}", plan.active + 1),
                         None => format!("auto {count} · active {}", plan.active + 1),
                     };
+                    let status = if let Some(control) = &self.active_upload {
+                        let progress = control.snapshot();
+                        format!(
+                            "↑ {} {} · U status",
+                            progress.stage,
+                            format_size(progress.bytes)
+                        )
+                    } else if self.main_listing_error.is_some() {
+                        "Listing failed · r retry".to_owned()
+                    } else {
+                        status
+                    };
                     let (offset, hits) = self.draw_browser_list(
                         f,
                         pane_area,
@@ -317,6 +329,21 @@ impl App {
             })
             .highlight_symbol(if marker_width > 0 { "› " } else { "" });
         f.render_stateful_widget(list, area, &mut state);
+        if active && entries.is_empty() {
+            let message = if self.main_listing_loading {
+                "Loading folder… You can keep navigating".to_owned()
+            } else if let Some(error) = &self.main_listing_error {
+                format!("{}\n\nr: retry · Backspace: go back", error)
+            } else {
+                "This folder is empty".to_owned()
+            };
+            f.render_widget(
+                Paragraph::new(message)
+                    .wrap(Wrap { trim: true })
+                    .style(Style::default().fg(Color::DarkGray)),
+                inner,
+            );
+        }
         let mut rows = Vec::new();
         let mut y = inner.y;
         for (index, entry) in entries.iter().enumerate().take(end).skip(offset) {
@@ -416,7 +443,8 @@ impl App {
         }
         // Draw after List applies the selection style, so selecting a row
         // preserves thumbnail colors. Half blocks work on ordinary terminals.
-        let lines = render_image_to_colored_lines(image, area.width as u32, area.height as u32);
+        let lines =
+            self.cached_image_lines(url, image, area.width as u32, area.height as u32, false);
         f.render_widget(Paragraph::new(Text::from(lines)), area);
     }
 

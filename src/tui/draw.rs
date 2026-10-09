@@ -11,10 +11,7 @@ use crate::pikpak::{Entry, EntryKind};
 use crate::theme;
 
 use super::completion::PathInput;
-use super::image_render::{
-    center_image_rect, render_image_to_colored_lines, render_image_to_grayscale_lines,
-    upscale_for_rect,
-};
+use super::image_render::{center_image_rect, upscale_for_rect};
 use super::local_completion::LocalPathInput;
 use super::widgets;
 use super::{
@@ -1290,29 +1287,35 @@ impl App {
                         }
                         // Fallback to halfblock when no protocol is available
                         if !used_protocol {
-                            let colored_lines = render_image_to_colored_lines(
+                            let colored_lines = self.cached_image_lines(
+                                entry.map_or("manual-preview", |entry| entry.id.as_str()),
                                 image,
                                 image_area.width as u32,
                                 image_area.height as u32,
+                                false,
                             );
                             let colored_para = Paragraph::new(Text::from(colored_lines));
                             f.render_widget(colored_para, image_area);
                         }
                     }
                     ThumbnailRenderMode::ColoredHalf => {
-                        let colored_lines = render_image_to_colored_lines(
+                        let colored_lines = self.cached_image_lines(
+                            entry.map_or("manual-preview", |entry| entry.id.as_str()),
                             image,
                             image_area.width as u32,
                             image_area.height as u32,
+                            false,
                         );
                         let colored_para = Paragraph::new(Text::from(colored_lines));
                         f.render_widget(colored_para, image_area);
                     }
                     ThumbnailRenderMode::Grayscale => {
-                        let ascii_lines = render_image_to_grayscale_lines(
+                        let ascii_lines = self.cached_image_lines(
+                            entry.map_or("manual-preview", |entry| entry.id.as_str()),
                             image,
                             image_area.width as u32,
                             image_area.height as u32,
+                            true,
                         );
                         let ascii_para = Paragraph::new(Text::from(ascii_lines))
                             .style(Style::default().fg(Color::DarkGray));
@@ -1471,7 +1474,7 @@ impl App {
                     ("Enter", "open"),
                     ("Bksp", "back"),
                     (":", "goto"),
-                    ("u", "upload"),
+                    ("u/U", "upload/status"),
                     ("r", "refresh"),
                     ("?", "actions"),
                     ("h", "help"),
@@ -1544,6 +1547,7 @@ impl App {
                 ("r", "retry"),
                 ("Esc", "back"),
             ],
+            InputMode::UploadView => vec![("x", "cancel upload"), ("Esc", "background")],
             InputMode::OfflineInput { .. } => vec![("Enter", "submit"), ("Esc", "cancel")],
             InputMode::OfflineTasksView { .. } => vec![
                 ("j/k", "nav"),
@@ -1576,9 +1580,12 @@ impl App {
                 }
             }
             InputMode::InfoLoading => vec![("Esc", "cancel")],
-            InputMode::InfoView { .. }
-            | InputMode::InfoFolderView { .. }
-            | InputMode::TextPreviewView { .. } => vec![("any key", "close")],
+            InputMode::InfoView { .. } | InputMode::InfoFolderView { .. } => {
+                vec![("any key", "close")]
+            }
+            InputMode::TextPreviewView { .. } => {
+                vec![("j/k", "scroll"), ("PgUp/PgDn", "page"), ("Esc/q", "close")]
+            }
             InputMode::Settings { editing, .. } => {
                 if *editing {
                     vec![
@@ -1757,6 +1764,7 @@ impl App {
             InputMode::GotoPath { query } => {
                 self.draw_goto_overlay(f, query, cur);
             }
+            InputMode::UploadView => self.draw_upload_progress_overlay(f),
             InputMode::ConfirmQuit => {
                 self.draw_confirm_quit_overlay(f);
             }
@@ -1813,8 +1821,9 @@ impl App {
                 name,
                 lines,
                 truncated,
+                scroll,
             } => {
-                self.draw_text_preview_overlay(f, name, lines, *truncated);
+                self.draw_text_preview_overlay(f, name, lines, *truncated, *scroll);
             }
             InputMode::Settings {
                 selected,
@@ -1981,10 +1990,59 @@ impl App {
         body: Vec<Line<'_>>,
         base_color: Color,
     ) {
-        let area = self.prepare_overlay(f, 60, 20);
+        let width = (f.area().width as usize * 60 / 100)
+            .saturating_sub(2)
+            .max(1);
+        let rows: usize = body
+            .iter()
+            .map(|line| line.width().div_ceil(width).max(1))
+            .sum();
+        let height = ((rows + 2) * 100)
+            .div_ceil(f.area().height.max(1) as usize)
+            .clamp(20, 95) as u16;
+        let area = self.prepare_overlay(f, 60, height);
         let (bc, tc) = self.themed_colors(base_color);
         f.render_widget(
-            Paragraph::new(body).block(self.overlay_block(title, bc, tc)),
+            Paragraph::new(body)
+                .wrap(Wrap { trim: true })
+                .block(self.overlay_block(title, bc, tc)),
+            area,
+        );
+    }
+
+    fn draw_upload_progress_overlay(&self, f: &mut Frame) {
+        let height = 1000u16.div_ceil(f.area().height.max(1)).clamp(30, 95);
+        let area = self.prepare_overlay(f, 85, height);
+        let Some(control) = &self.active_upload else {
+            return;
+        };
+        let progress = control.snapshot();
+        let width = area.width.saturating_sub(4) as usize;
+        let phase = if control.is_cancelled() {
+            "Stopping after current step…"
+        } else if progress.stage.is_empty() {
+            "Starting upload…"
+        } else {
+            &progress.stage
+        };
+        let lines = vec![
+            Line::from(""),
+            Line::from(truncate_name(&progress.name, width)),
+            Line::from(truncate_name(phase, width)),
+            Line::from(format!(
+                "  {} / {}",
+                format_size(progress.bytes),
+                format_size(progress.total)
+            )),
+            Line::from(format!(
+                "  {} complete · {} failed",
+                progress.completed, progress.failed
+            )),
+            Line::from(""),
+            Self::hint_line(&[("x", "cancel"), ("Esc", "background")]),
+        ];
+        f.render_widget(
+            Paragraph::new(lines).block(self.overlay_block("Upload", Color::Yellow, Color::Yellow)),
             area,
         );
     }
@@ -2000,7 +2058,8 @@ impl App {
                     super::download::TaskStatus::Downloading | super::download::TaskStatus::Pending
                 )
             })
-            .count();
+            .count()
+            .max(self.download_state.active_ids.len());
         self.draw_simple_confirm(
             f,
             "Confirm Quit",
@@ -2009,7 +2068,15 @@ impl App {
                 Line::from(vec![
                     Span::styled("  ", Style::default()),
                     Span::styled(
-                        format!("{} download(s) still active.", active),
+                        format!(
+                            "{} download(s), {} upload(s), {} operation(s) active.",
+                            active,
+                            usize::from(self.active_upload.is_some()),
+                            self.file_mutations_pending
+                                + self
+                                    .background_writes
+                                    .load(std::sync::atomic::Ordering::Relaxed)
+                        ),
                         Style::default()
                             .fg(Color::Yellow)
                             .add_modifier(Modifier::BOLD),
@@ -2865,7 +2932,11 @@ impl App {
     }
 
     fn draw_download_input_overlay(&self, f: &mut Frame, input: &LocalPathInput, _cur: &str) {
-        let candidate_lines = input.candidates.len().min(8);
+        let candidate_lines = input
+            .candidates
+            .len()
+            .min(8)
+            .max(usize::from(input.completion_loading()));
         let base_height = 6;
         let total_lines = base_height
             + if candidate_lines > 0 {
@@ -2886,6 +2957,9 @@ impl App {
             ]),
         ];
 
+        if input.completion_loading() {
+            lines.push(Line::from("  Finding paths… Esc to cancel"));
+        }
         self.draw_candidate_list(&mut lines, &input.candidates, input.candidate_idx);
 
         lines.push(Line::from(""));
@@ -2912,7 +2986,11 @@ impl App {
     }
 
     fn draw_upload_input_overlay(&self, f: &mut Frame, input: &LocalPathInput, _cur: &str) {
-        let candidate_lines = input.candidates.len().min(8);
+        let candidate_lines = input
+            .candidates
+            .len()
+            .min(8)
+            .max(usize::from(input.completion_loading()));
         let base_height = 7;
         let total_lines = base_height
             + if candidate_lines > 0 {
@@ -2938,6 +3016,9 @@ impl App {
             ]),
         ];
 
+        if input.completion_loading() {
+            lines.push(Line::from("  Finding paths… Esc to cancel"));
+        }
         self.draw_candidate_list(&mut lines, &input.candidates, input.candidate_idx);
 
         lines.push(Line::from(""));
@@ -3368,36 +3449,69 @@ impl App {
                     ThumbnailRenderMode::Auto => {
                         if let Some(picker) = auto_picker {
                             let render_rect = center_image_rect(img, img_rect);
-                            let img_display =
-                                upscale_for_rect(img, render_rect, picker.font_size());
-                            let mut protocol = picker.new_resize_protocol(img_display);
+                            let key = match &self.input {
+                                InputMode::InfoView {
+                                    request_id,
+                                    target_id,
+                                    ..
+                                } => format!("{request_id}:{target_id}"),
+                                _ => info.id.clone().unwrap_or_default(),
+                            };
+                            let mut cache = self.image_render_cache.borrow_mut();
+                            let cells = (render_rect.width, render_rect.height);
+                            if cache.modal_protocol.as_ref().is_none_or(|(id, cached)| {
+                                id != &key
+                                    || cached.cells != cells
+                                    || cached.font_size != picker.font_size()
+                                    || cached.protocol_type != picker.protocol_type()
+                            }) {
+                                cache.modal_protocol = Some((
+                                    key,
+                                    super::image_render::InlineImageProtocol {
+                                        cells,
+                                        font_size: picker.font_size(),
+                                        protocol_type: picker.protocol_type(),
+                                        protocol: picker.new_resize_protocol(upscale_for_rect(
+                                            img,
+                                            render_rect,
+                                            picker.font_size(),
+                                        )),
+                                    },
+                                ));
+                            }
                             f.render_stateful_widget(
                                 StatefulImage::default(),
                                 render_rect,
-                                &mut protocol,
+                                &mut cache.modal_protocol.as_mut().unwrap().1.protocol,
                             );
                         } else {
-                            let colored_lines = render_image_to_colored_lines(
+                            let colored_lines = self.cached_image_lines(
+                                info.id.as_deref().unwrap_or("info"),
                                 img,
                                 thumb_col_w as u32,
                                 image_rows as u32,
+                                false,
                             );
                             f.render_widget(Paragraph::new(Text::from(colored_lines)), img_rect);
                         }
                     }
                     ThumbnailRenderMode::ColoredHalf => {
-                        let colored_lines = render_image_to_colored_lines(
+                        let colored_lines = self.cached_image_lines(
+                            info.id.as_deref().unwrap_or("info"),
                             img,
                             thumb_col_w as u32,
                             image_rows as u32,
+                            false,
                         );
                         f.render_widget(Paragraph::new(Text::from(colored_lines)), img_rect);
                     }
                     ThumbnailRenderMode::Grayscale => {
-                        let ascii_lines = render_image_to_grayscale_lines(
+                        let ascii_lines = self.cached_image_lines(
+                            info.id.as_deref().unwrap_or("info"),
                             img,
                             thumb_col_w as u32,
                             image_rows as u32,
+                            true,
                         );
                         f.render_widget(
                             Paragraph::new(Text::from(ascii_lines))
@@ -3448,12 +3562,20 @@ impl App {
         name: &str,
         highlighted: &[Line],
         truncated: bool,
+        scroll: usize,
     ) {
-        let area = self.prepare_overlay(f, 60, 70);
+        let area = self.prepare_overlay(f, 85, 85);
 
         let inner_height = area.height.saturating_sub(2) as usize;
         let max_lines = inner_height.saturating_sub(if truncated { 2 } else { 1 });
-        let mut lines: Vec<Line> = highlighted.iter().take(max_lines).cloned().collect();
+        self.text_preview_page.set(max_lines.max(1));
+        let scroll = scroll.min(highlighted.len().saturating_sub(max_lines.max(1)));
+        let mut lines: Vec<Line> = highlighted
+            .iter()
+            .skip(scroll)
+            .take(max_lines)
+            .cloned()
+            .collect();
 
         if truncated {
             lines.push(Line::from(Span::styled(
@@ -3466,7 +3588,11 @@ impl App {
         }
 
         lines.push(Line::from(Span::styled(
-            "  Press any key to close",
+            format!(
+                "  {}/{} · j/k · Esc",
+                (scroll + max_lines).min(highlighted.len()),
+                highlighted.len()
+            ),
             Style::default().fg(Color::DarkGray),
         )));
 

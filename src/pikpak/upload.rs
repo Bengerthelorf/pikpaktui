@@ -6,9 +6,78 @@ use sha1::Sha1;
 use std::fs;
 use std::io::Read as _;
 use std::path::Path;
+use std::sync::{
+    Mutex,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::{PikPak, sanitize};
+
+#[derive(Clone, Default)]
+pub(crate) struct UploadProgress {
+    pub name: String,
+    pub stage: String,
+    pub bytes: u64,
+    pub total: u64,
+    pub completed: usize,
+    pub failed: usize,
+}
+
+#[derive(Default)]
+pub(crate) struct UploadControl {
+    cancelled: AtomicBool,
+    progress: Mutex<UploadProgress>,
+}
+
+impl UploadControl {
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Relaxed);
+    }
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Relaxed)
+    }
+    pub fn snapshot(&self) -> UploadProgress {
+        self.progress
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+    fn check(&self) -> Result<()> {
+        anyhow::ensure!(
+            !self.is_cancelled(),
+            "Upload cancelled; files already completed remain in the destination"
+        );
+        Ok(())
+    }
+    fn update(&self, name: &str, stage: &str, bytes: u64, total: u64) {
+        let mut progress = self.progress.lock().unwrap_or_else(|e| e.into_inner());
+        progress.name = name.to_owned();
+        progress.stage = stage.to_owned();
+        progress.bytes = bytes;
+        progress.total = total;
+    }
+    fn record_file(&self, ok: bool) {
+        let mut progress = self.progress.lock().unwrap_or_else(|e| e.into_inner());
+        if ok {
+            progress.completed += 1;
+        } else {
+            progress.failed += 1;
+        }
+    }
+}
+
+fn check_upload(control: Option<&UploadControl>) -> Result<()> {
+    if let Some(control) = control {
+        control.check()?;
+    }
+    Ok(())
+}
+fn report_upload(control: Option<&UploadControl>, name: &str, stage: &str, bytes: u64, total: u64) {
+    if let Some(control) = control {
+        control.update(name, stage, bytes, total);
+    }
+}
 
 impl PikPak {
     pub fn upload_file(
@@ -16,6 +85,16 @@ impl PikPak {
         parent_id: Option<&str>,
         local_path: &Path,
     ) -> Result<(String, bool)> {
+        self.upload_file_controlled(parent_id, local_path, None)
+    }
+
+    fn upload_file_controlled(
+        &self,
+        parent_id: Option<&str>,
+        local_path: &Path,
+        control: Option<&UploadControl>,
+    ) -> Result<(String, bool)> {
+        check_upload(control)?;
         let file_name = local_path
             .file_name()
             .ok_or_else(|| anyhow!("invalid file path"))?
@@ -35,7 +114,13 @@ impl PikPak {
         }
         let file_size = meta.len();
 
-        let hash = pikpak_hash(local_path)?;
+        report_upload(control, &file_name, "Hashing", 0, file_size);
+        let hash = match control {
+            Some(control) => pikpak_hash_controlled(local_path, Some(control))?,
+            None => pikpak_hash(local_path)?,
+        };
+        check_upload(control)?;
+        report_upload(control, &file_name, "Preparing upload", 0, file_size);
 
         let url = self.drive_url("drive/v1/files");
         let mut payload = serde_json::json!({
@@ -95,7 +180,16 @@ impl PikPak {
         };
 
         let upload_id = self.oss_initiate_multipart(&oss_args)?;
-        let etags = self.oss_upload_chunks(&oss_args, &upload_id, local_path, file_size)?;
+        let etags =
+            self.oss_upload_chunks(&oss_args, &upload_id, local_path, file_size, control)?;
+        check_upload(control)?;
+        report_upload(
+            control,
+            &file_name,
+            "Finalizing on server",
+            file_size,
+            file_size,
+        );
         self.oss_complete_multipart(&oss_args, &upload_id, &etags)?;
 
         self.clear_ls_cache();
@@ -105,7 +199,48 @@ impl PikPak {
         Ok((file_name, false))
     }
 
+    #[cfg(test)]
     pub fn upload_dir(&self, parent_id: &str, local_dir: &Path) -> Result<(usize, usize)> {
+        self.upload_dir_controlled(parent_id, local_dir, None)
+    }
+
+    pub(crate) fn upload_path_controlled(
+        &self,
+        parent_id: &str,
+        path: &Path,
+        control: &UploadControl,
+    ) -> Result<String> {
+        control.check()?;
+        control.update(&path.display().to_string(), "Inspecting path", 0, 0);
+        let meta = fs::symlink_metadata(path)
+            .with_context(|| format!("cannot stat '{}'", path.display()))?;
+        if meta.is_dir() {
+            let (ok, failed) = self.upload_dir_controlled(parent_id, path, Some(control))?;
+            Ok(format!(
+                "Uploaded folder '{}' ({} ok, {} failed)",
+                path.display(),
+                ok,
+                failed
+            ))
+        } else {
+            let (name, dedup) =
+                self.upload_file_controlled(Some(parent_id), path, Some(control))?;
+            control.record_file(true);
+            Ok(format!(
+                "Uploaded '{}'{}",
+                name,
+                if dedup { " (instant, dedup)" } else { "" }
+            ))
+        }
+    }
+
+    fn upload_dir_controlled(
+        &self,
+        parent_id: &str,
+        local_dir: &Path,
+        control: Option<&UploadControl>,
+    ) -> Result<(usize, usize)> {
+        check_upload(control)?;
         let local_meta = fs::symlink_metadata(local_dir)
             .with_context(|| format!("cannot stat '{}'", local_dir.display()))?;
         if local_meta.file_type().is_symlink() {
@@ -122,47 +257,95 @@ impl PikPak {
             .ok_or_else(|| anyhow!("directory has no name"))?
             .to_string_lossy();
         let folder = self.mkdir(parent_id, &name)?;
-        self.upload_dir_inner(&folder.id, local_dir)
+        self.upload_dir_inner(&folder.id, local_dir, control)
     }
 
-    fn upload_dir_inner(&self, parent_id: &str, local_dir: &Path) -> Result<(usize, usize)> {
+    fn upload_dir_inner(
+        &self,
+        parent_id: &str,
+        local_dir: &Path,
+        control: Option<&UploadControl>,
+    ) -> Result<(usize, usize)> {
         let mut ok = 0usize;
         let mut failed = 0usize;
         let entries = std::fs::read_dir(local_dir)
             .with_context(|| format!("cannot read dir: {}", local_dir.display()))?;
-        for entry in entries.flatten() {
+        for entry in entries {
+            check_upload(control)?;
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(e) => {
+                    if control.is_none() {
+                        eprintln!("  [error] cannot read directory entry: {e}");
+                    }
+                    if let Some(control) = control {
+                        control.record_file(false);
+                    }
+                    failed += 1;
+                    continue;
+                }
+            };
             let path = entry.path();
             let file_type = match entry.file_type() {
                 Ok(file_type) => file_type,
                 Err(e) => {
-                    eprintln!("  [error] cannot inspect '{}': {e}", path.display());
+                    if control.is_none() {
+                        eprintln!("  [error] cannot inspect '{}': {e}", path.display());
+                    }
+                    if let Some(control) = control {
+                        control.record_file(false);
+                    }
                     failed += 1;
                     continue;
                 }
             };
             if file_type.is_symlink() {
-                eprintln!("  [skip] symbolic link '{}'", path.display());
+                if control.is_none() {
+                    eprintln!("  [skip] symbolic link '{}'", path.display());
+                }
+                if let Some(control) = control {
+                    control.record_file(false);
+                }
                 failed += 1;
             } else if file_type.is_dir() {
                 let name = path.file_name().unwrap_or_default().to_string_lossy();
                 match self.mkdir(parent_id, &name) {
                     Ok(sub) => {
-                        let (sub_ok, sub_fail) = self.upload_dir_inner(&sub.id, &path)?;
+                        let (sub_ok, sub_fail) = self.upload_dir_inner(&sub.id, &path, control)?;
                         ok += sub_ok;
                         failed += sub_fail;
                     }
                     Err(e) => {
                         // The whole subtree is skipped, so count its files —
                         // "1 failed" for a folder of 200 would misreport badly.
-                        eprintln!("  [error] mkdir '{}': {:#}", name, e);
-                        failed += Self::count_files_in(&path).max(1);
+                        if control.is_none() {
+                            eprintln!("  [error] mkdir '{}': {:#}", name, e);
+                        }
+                        let skipped = Self::count_files_in(&path).max(1);
+                        if let Some(control) = control {
+                            let mut progress =
+                                control.progress.lock().unwrap_or_else(|e| e.into_inner());
+                            progress.failed += skipped;
+                        }
+                        failed += skipped;
                     }
                 }
             } else if file_type.is_file() {
-                match self.upload_file(Some(parent_id), &path) {
-                    Ok(_) => ok += 1,
+                match self.upload_file_controlled(Some(parent_id), &path, control) {
+                    Ok(_) => {
+                        ok += 1;
+                        if let Some(control) = control {
+                            control.record_file(true);
+                        }
+                    }
                     Err(e) => {
-                        eprintln!("  [error] '{}': {:#}", path.display(), e);
+                        check_upload(control)?;
+                        if control.is_none() {
+                            eprintln!("  [error] '{}': {:#}", path.display(), e);
+                        }
+                        if let Some(control) = control {
+                            control.record_file(false);
+                        }
                         failed += 1;
                     }
                 }
@@ -233,6 +416,7 @@ impl PikPak {
         upload_id: &str,
         local_path: &Path,
         file_size: u64,
+        control: Option<&UploadControl>,
     ) -> Result<Vec<String>> {
         const CHUNK_SIZE: u64 = 10 * 1024 * 1024;
 
@@ -247,7 +431,10 @@ impl PikPak {
 
         let mut etags = Vec::new();
 
+        let name = local_path.file_name().unwrap_or_default().to_string_lossy();
+        report_upload(control, &name, "Uploading", 0, file_size);
         for part_num in 1..=num_parts {
+            check_upload(control)?;
             let remaining = if file_size == 0 {
                 0
             } else {
@@ -310,6 +497,13 @@ impl PikPak {
                 .to_string();
 
             etags.push(etag);
+            report_upload(
+                control,
+                &name,
+                "Uploading",
+                (part_num * CHUNK_SIZE).min(file_size),
+                file_size,
+            );
         }
 
         Ok(etags)
@@ -387,6 +581,10 @@ fn gcid_block_size(size: u64) -> usize {
 }
 
 pub fn pikpak_hash(path: &Path) -> Result<String> {
+    pikpak_hash_controlled(path, None)
+}
+
+fn pikpak_hash_controlled(path: &Path, control: Option<&UploadControl>) -> Result<String> {
     use sha1::Digest;
     let size = fs::metadata(path)
         .with_context(|| format!("cannot stat '{}'", path.display()))?
@@ -396,12 +594,16 @@ pub fn pikpak_hash(path: &Path) -> Result<String> {
     let mut final_hasher = Sha1::new();
     let mut buf = vec![0; gcid_block_size(size)];
     let mut remaining = size;
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
     while remaining > 0 {
+        check_upload(control)?;
         let len = (remaining.min(buf.len() as u64)) as usize;
         file.read_exact(&mut buf[..len])?;
         final_hasher.update(Sha1::digest(&buf[..len]));
         remaining -= len as u64;
+        report_upload(control, &name, "Hashing", size - remaining, size);
     }
+    check_upload(control)?;
     Ok(format!("{:X}", final_hasher.finalize()))
 }
 
@@ -574,6 +776,52 @@ mod tests {
         ));
         fs::create_dir_all(&path).unwrap();
         path
+    }
+
+    #[test]
+    fn hashing_reports_progress_and_acknowledges_cancellation_between_blocks() {
+        use std::sync::Arc;
+        let root = temp_dir("cancel-hash");
+        let path = root.join("large.bin");
+        fs::File::create(&path)
+            .unwrap()
+            .set_len(64 * 1024 * 1024)
+            .unwrap();
+        let control = Arc::new(UploadControl::default());
+        let worker_control = Arc::clone(&control);
+        let worker_path = path.clone();
+        let worker =
+            std::thread::spawn(move || pikpak_hash_controlled(&worker_path, Some(&worker_control)));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while control.snapshot().bytes == 0 && std::time::Instant::now() < deadline {
+            std::thread::yield_now();
+        }
+        let progress = control.snapshot();
+        assert_eq!(progress.stage, "Hashing");
+        assert_eq!(progress.total, 64 * 1024 * 1024);
+        assert!(progress.bytes > 0);
+        control.cancel();
+        let error = worker.join().unwrap().unwrap_err();
+        assert!(error.to_string().contains("cancelled"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn controlled_upload_reports_confirmed_dedup_completion() {
+        let root = temp_dir("controlled-dedup");
+        let path = root.join("file.txt");
+        fs::write(&path, b"upload fixture").unwrap();
+        let (base, server) = start_upload_captcha_server(true);
+        let client = upload_test_client(base, &root.join("session.json"));
+        let control = UploadControl::default();
+        let message = client
+            .upload_path_controlled("parent", &path, &control)
+            .unwrap();
+        assert!(message.contains("instant, dedup"));
+        assert_eq!(control.snapshot().completed, 1);
+        assert_eq!(control.snapshot().failed, 0);
+        server.join().unwrap();
+        fs::remove_dir_all(root).unwrap();
     }
 
     fn upload_test_client(base_url: String, session_path: &Path) -> PikPak {
@@ -763,7 +1011,7 @@ mod tests {
 
         let mut client = PikPak::new().unwrap();
         client.session_path = root.join("missing-session.json");
-        let result = client.upload_dir_inner("parent", &root).unwrap();
+        let result = client.upload_dir_inner("parent", &root, None).unwrap();
 
         assert_eq!(result, (0, 1));
         fs::remove_dir_all(root).unwrap();

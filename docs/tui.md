@@ -48,6 +48,7 @@ restores its cursor and scroll position.
 | `s` | Star / unstar current file |
 | `y` | Copy direct download URL to clipboard (files only) |
 | `u` | Upload a local file to the current folder |
+| `U` | Reopen active upload status |
 | `a` | Toggle current item in/out of cart |
 | `S` | Cycle sort field: name → size → created → type → extension → none |
 | `R` | Toggle reverse sort order |
@@ -66,11 +67,15 @@ restores its cursor and scroll position.
 | `,` | Settings panel |
 | `h` | Help sheet |
 | `?` | Actions menu |
-| `q` | Quit (confirms if downloads are active) |
-| `Ctrl+C` | Quit (confirms if downloads are active) |
+| `q` | Quit (confirms if transfers or file operations are active) |
+| `Ctrl+C` | Quit (confirms if transfers or file operations are active) |
 
 Recent operation results appear as a short-lived status message without
 opening the log overlay. The same messages remain available in the log.
+
+Uploads run in the background with hashing, transfer and server-finalization status. Press `U` to reopen upload status, `x` in that view to request cancellation, or `Esc` to keep browsing. Cancellation waits for the current blocking network step to return; files already completed remain in the destination. Quitting also checks pending file operations and share creation.
+
+Text preview popups support `j/k`, arrow keys, mouse scrolling, `PageUp/PageDown`, `Home/End` and `Esc/q` to close. Local path completion runs in the background. Empty, loading and failed folders have distinct messages; press `r` to retry a failed listing or preview.
 
 ### Inline thumbnails
 

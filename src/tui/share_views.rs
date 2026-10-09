@@ -1,4 +1,3 @@
-use super::handler::write_clipboard;
 use super::{App, AsyncRequest, AsyncRequestKind, InputMode, OpResult, StatusKind};
 use crate::pikpak::{CreateShareResponse, MyShare};
 use anyhow::Result;
@@ -60,10 +59,7 @@ impl App {
             }
             KeyCode::Char('y') => {
                 if let Some((_, url, _)) = shares.last() {
-                    match write_clipboard(url) {
-                        Ok(()) => self.push_log(format!("Copied URL: {url}")),
-                        Err(e) => self.push_log(format!("Clipboard failed: {e:#}")),
-                    }
+                    self.copy_to_clipboard(url.clone());
                 }
                 let owned = std::mem::take(shares);
                 self.input = InputMode::ShareCreatedView { shares: owned };
@@ -93,7 +89,9 @@ impl App {
             .collect();
         let client = Arc::clone(&self.client);
         let tx = self.result_tx.clone();
+        let guard = super::operations::WriteGuard::new(&self.background_writes);
         std::thread::spawn(move || {
+            let _guard = guard;
             for (file_id, title) in jobs {
                 let result = client.create_share(&[file_id.as_str()], need_password, 0);
                 let _ = tx.send(OpResult::ShareCreated(request.clone(), title, result));
@@ -138,7 +136,9 @@ impl App {
                         confirm_delete: None,
                     };
                     let request = self.begin_modal_request(AsyncRequestKind::MyShares, "my-shares");
+                    let guard = super::operations::WriteGuard::new(&self.background_writes);
                     std::thread::spawn(move || {
+                        let _guard = guard;
                         let result = client
                             .delete_shares(&[share_id.as_str()])
                             .and_then(|()| client.list_shares());
@@ -192,16 +192,7 @@ impl App {
             KeyCode::Char('y') => {
                 if let Some(share) = shares.get(*selected) {
                     let url = share.share_url.clone();
-                    match write_clipboard(&url) {
-                        Ok(()) => {
-                            self.push_log(format!("Copied: {url}"));
-                            self.show_logs_overlay = true;
-                        }
-                        Err(e) => {
-                            self.push_log(format!("Clipboard failed: {e:#}"));
-                            self.show_logs_overlay = true;
-                        }
-                    }
+                    self.copy_to_clipboard(url);
                 }
                 let owned = std::mem::take(shares);
                 let sel = *selected;

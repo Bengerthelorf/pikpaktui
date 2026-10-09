@@ -103,7 +103,7 @@ impl App {
         }
 
         if code == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL) {
-            if self.download_state.has_active() {
+            if self.has_active_work() {
                 self.input = InputMode::ConfirmQuit;
                 return Ok(false);
             } else {
@@ -245,6 +245,19 @@ impl App {
                     }
                 } else {
                     self.input = InputMode::Mkdir { value };
+                }
+                Ok(false)
+            }
+            InputMode::UploadView => {
+                match code {
+                    KeyCode::Esc | KeyCode::Char('q') => {}
+                    KeyCode::Char('x') => {
+                        if let Some(control) = &self.active_upload {
+                            control.cancel();
+                        }
+                        self.input = InputMode::UploadView;
+                    }
+                    _ => self.input = InputMode::UploadView,
                 }
                 Ok(false)
             }
@@ -501,7 +514,32 @@ impl App {
                 self.preview_state = PreviewState::FolderListing(entries);
                 Ok(false)
             }
-            InputMode::TextPreviewView { .. } => Ok(false),
+            InputMode::TextPreviewView {
+                name,
+                lines,
+                truncated,
+                mut scroll,
+            } => {
+                let page = self.text_preview_page.get().max(1);
+                let max = lines.len().saturating_sub(page);
+                match code {
+                    KeyCode::Esc | KeyCode::Char('q') => return Ok(false),
+                    KeyCode::Down | KeyCode::Char('j') => scroll = (scroll + 1).min(max),
+                    KeyCode::Up | KeyCode::Char('k') => scroll = scroll.saturating_sub(1),
+                    KeyCode::PageDown | KeyCode::Char(' ') => scroll = (scroll + page).min(max),
+                    KeyCode::PageUp => scroll = scroll.saturating_sub(page),
+                    KeyCode::Home | KeyCode::Char('g') => scroll = 0,
+                    KeyCode::End | KeyCode::Char('G') => scroll = max,
+                    _ => {}
+                }
+                self.input = InputMode::TextPreviewView {
+                    name,
+                    lines,
+                    truncated,
+                    scroll,
+                };
+                Ok(false)
+            }
             InputMode::Settings {
                 mut selected,
                 mut editing,
@@ -623,7 +661,7 @@ impl App {
     fn handle_normal_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> Result<bool> {
         match code {
             KeyCode::Char('q') => {
-                if self.download_state.has_active() {
+                if self.has_active_work() {
                     self.input = InputMode::ConfirmQuit;
                 } else {
                     return Ok(true);
@@ -786,16 +824,21 @@ impl App {
                     let client = Arc::clone(&self.client);
                     let tx = self.result_tx.clone();
                     let eid = entry.id;
-                    let ename = entry.name;
                     std::thread::spawn(move || {
-                        let _ = tx.send(match client.download_url(&eid) {
-                            Ok((url, _)) => match write_clipboard(&url) {
-                                Ok(()) => OpResult::Ok(format!("Copied link: '{}'", ename)),
-                                Err(e) => OpResult::Err(format!("Clipboard failed: {e:#}")),
-                            },
-                            Err(e) => OpResult::Err(format!("Link failed: {e:#}")),
-                        });
+                        let result = crate::pikpak::interactive::with_deadline(
+                            Duration::from_secs(5),
+                            || client.download_url(&eid),
+                        )
+                        .and_then(|(url, _)| write_clipboard(&url).map(|()| url));
+                        let _ = tx.send(OpResult::Clipboard(result));
                     });
+                }
+            }
+            KeyCode::Char('U') => {
+                if self.active_upload.is_some() {
+                    self.input = InputMode::UploadView;
+                } else {
+                    self.push_log("No upload running".into());
                 }
             }
             KeyCode::Char('u') => {
@@ -872,7 +915,7 @@ impl App {
                         std::thread::spawn(move || {
                             let _ = tx.send(OpResult::PreviewText(
                                 request,
-                                client.fetch_text_preview(&eid, max_bytes),
+                                super::prepare_text_preview(&client, &eid, max_bytes),
                             ));
                         });
                     }
@@ -1262,14 +1305,16 @@ impl App {
     pub(super) fn spawn_rename(&mut self, entry: Entry, new_name: String) {
         let client = Arc::clone(&self.client);
         let tx = self.result_tx.clone();
-        let eid = entry.id;
-        let old = entry.name;
+        self.file_mutations_pending += 1;
         self.loading = true;
         std::thread::spawn(move || {
-            let _ = tx.send(match client.rename(&eid, &new_name) {
-                Ok(()) => OpResult::Ok(format!("Renamed '{}' -> '{}'", old, new_name)),
-                Err(e) => OpResult::Err(format!("Rename failed: {e:#}")),
-            });
+            let result = client.rename(&entry.id, &new_name);
+            let _ = tx.send(OpResult::Mutation(super::operations::MutationReport {
+                op: "Rename",
+                success: format!("Renamed '{}' -> '{}'", entry.name, new_name),
+                result,
+                cart_ids: None,
+            }));
         });
     }
 
@@ -1277,12 +1322,16 @@ impl App {
         let client = Arc::clone(&self.client);
         let tx = self.result_tx.clone();
         let fid = self.current_folder_id.clone();
+        self.file_mutations_pending += 1;
         self.loading = true;
         std::thread::spawn(move || {
-            let _ = tx.send(match client.mkdir(&fid, &name) {
-                Ok(created) => OpResult::Ok(format!("Created folder '{}'", created.name)),
-                Err(e) => OpResult::Err(format!("Mkdir failed: {e:#}")),
-            });
+            let result = client.mkdir(&fid, &name).map(|_| ());
+            let _ = tx.send(OpResult::Mutation(super::operations::MutationReport {
+                op: "Mkdir",
+                success: format!("Created folder '{}'", name),
+                result,
+                cart_ids: None,
+            }));
         });
     }
 
@@ -1490,7 +1539,7 @@ impl App {
     ) -> LocalPathInputResult {
         match code {
             KeyCode::Esc => {
-                if !input.candidates.is_empty() {
+                if input.completion_open {
                     input.clear_candidates();
                     LocalPathInputResult::Updated
                 } else {
@@ -1532,7 +1581,7 @@ impl App {
             _ => {
                 let old = input.value.clone();
                 let _ = handle_text_input(&mut input.value, &mut self.text_cursor, code, modifiers);
-                if input.value != old && !input.candidates.is_empty() {
+                if input.value != old && input.completion_open {
                     input.open_candidates();
                 }
                 LocalPathInputResult::Updated
@@ -1582,65 +1631,24 @@ impl App {
         match self.apply_local_path_input_key(code, modifiers, input) {
             LocalPathInputResult::Updated => self.restore_upload_input(input),
             LocalPathInputResult::Confirmed(path_str) => {
-                let local_path = std::path::PathBuf::from(&path_str);
-                if !local_path.exists() {
-                    self.push_log(format!("File not found: {}", local_path.display()));
+                if path_str.is_empty() {
+                    self.push_log("No upload path specified".into());
                     self.restore_upload_input(input);
-                } else if local_path.is_dir() {
-                    let folder_id = self.current_folder_id.clone();
-                    let client = Arc::clone(&self.client);
-                    let tx = self.result_tx.clone();
-                    let name = local_path
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .to_string();
-                    self.loading = true;
-                    self.loading_label = Some(format!("Uploading folder {}…", name));
-                    self.input = InputMode::Normal;
-                    std::thread::spawn(move || {
-                        let result =
-                            client
-                                .upload_dir(&folder_id, &local_path)
-                                .map(|(ok, failed)| {
-                                    if failed == 0 {
-                                        format!("Uploaded folder '{}' ({} files)", name, ok)
-                                    } else {
-                                        format!(
-                                            "Uploaded folder '{}' ({} ok, {} failed)",
-                                            name, ok, failed
-                                        )
-                                    }
-                                });
-                        let _ = tx.send(OpResult::Upload(result));
-                    });
-                } else if local_path.is_file() {
-                    let folder_id = self.current_folder_id.clone();
-                    let client = Arc::clone(&self.client);
-                    let tx = self.result_tx.clone();
-                    let name = local_path
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .to_string();
-                    self.loading = true;
-                    self.loading_label = Some(format!("Uploading {}…", name));
-                    self.input = InputMode::Normal;
-                    std::thread::spawn(move || {
-                        let result = client.upload_file(Some(&folder_id), &local_path).map(
-                            |(name, dedup)| {
-                                if dedup {
-                                    format!("Uploaded '{}' (instant, dedup)", name)
-                                } else {
-                                    format!("Uploaded '{}'", name)
-                                }
-                            },
-                        );
-                        let _ = tx.send(OpResult::Upload(result));
-                    });
+                } else if self.active_upload.is_some() {
+                    self.push_log("An upload is already running; press U to view it".into());
+                    self.input = InputMode::UploadView;
                 } else {
-                    self.push_log(format!("Not a file or directory: {}", local_path.display()));
-                    self.restore_upload_input(input);
+                    let path = PathBuf::from(path_str);
+                    let folder_id = self.current_folder_id.clone();
+                    let client = Arc::clone(&self.client);
+                    let tx = self.result_tx.clone();
+                    let control = Arc::new(crate::pikpak::UploadControl::default());
+                    self.active_upload = Some(Arc::clone(&control));
+                    self.input = InputMode::UploadView;
+                    std::thread::spawn(move || {
+                        let result = client.upload_path_controlled(&folder_id, &path, &control);
+                        let _ = tx.send(OpResult::Upload(result));
+                    });
                 }
             }
             LocalPathInputResult::Cancelled => {
@@ -1856,7 +1864,9 @@ impl App {
             Some(self.current_folder_id.clone())
         };
         self.loading = true;
+        let guard = super::operations::WriteGuard::new(&self.background_writes);
         std::thread::spawn(move || {
+            let _guard = guard;
             let result = client.offline_download(&url, parent_id.as_deref(), None);
             let _ = tx.send(match result {
                 Ok(resp) => {
@@ -1973,6 +1983,17 @@ impl App {
     }
 
     fn handle_mouse_scroll(&mut self, col: u16, row: u16, up: bool) {
+        if let InputMode::TextPreviewView { lines, scroll, .. } = &mut self.input {
+            let max = lines
+                .len()
+                .saturating_sub(self.text_preview_page.get().max(1));
+            *scroll = if up {
+                scroll.saturating_sub(3)
+            } else {
+                (*scroll + 3).min(max)
+            };
+            return;
+        }
         if matches!(self.input, InputMode::Normal) {
             if self.show_logs_overlay && self.is_in_rect(col, row, self.logs_overlay_area.get()) {
                 let area = self.logs_overlay_area.get();
@@ -3060,11 +3081,26 @@ pub(super) fn write_clipboard(text: &str) -> anyhow::Result<()> {
         let Ok(mut child) = Command::new(cmd).args(args).stdin(Stdio::piped()).spawn() else {
             continue;
         };
-        if let Some(stdin) = child.stdin.as_mut() {
-            let _ = stdin.write_all(text.as_bytes());
+        if let Some(mut stdin) = child.stdin.take()
+            && let Err(error) = stdin.write_all(text.as_bytes())
+        {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(error.into());
         }
-        child.wait()?;
-        return Ok(());
+        let started = Instant::now();
+        loop {
+            if let Some(status) = child.try_wait()? {
+                anyhow::ensure!(status.success(), "clipboard command failed: {status}");
+                return Ok(());
+            }
+            if started.elapsed() >= Duration::from_secs(3) {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(anyhow::anyhow!("clipboard command timed out"));
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     Err(anyhow::anyhow!(

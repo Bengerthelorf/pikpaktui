@@ -5,6 +5,180 @@ use operations::MutationReport;
 fn app() -> App {
     App::new_login(PikPak::new().unwrap(), None, TuiConfig::default())
 }
+
+#[test]
+fn text_preview_keeps_content_open_while_paging_and_scrolling() {
+    let mut app = app();
+    app.text_preview_page.set(10);
+    let request = app.begin_modal_request(AsyncRequestKind::FilePreview, "file");
+    app.input = InputMode::InfoLoading;
+    app.result_tx
+        .send(OpResult::PreviewText(
+            request,
+            Ok(PreparedTextPreview {
+                name: "notes.txt".into(),
+                lines: (0..100)
+                    .map(|i| ratatui::text::Line::from(i.to_string()))
+                    .collect(),
+                size: 1000,
+                truncated: true,
+            }),
+        ))
+        .unwrap();
+    app.poll_results();
+    app.handle_key(KeyCode::PageDown, KeyModifiers::NONE)
+        .unwrap();
+    assert!(matches!(
+        app.input,
+        InputMode::TextPreviewView { scroll: 10, .. }
+    ));
+    app.handle_mouse(crossterm::event::MouseEvent {
+        kind: crossterm::event::MouseEventKind::ScrollDown,
+        column: 5,
+        row: 5,
+        modifiers: KeyModifiers::NONE,
+    });
+    assert!(matches!(
+        app.input,
+        InputMode::TextPreviewView { scroll: 13, .. }
+    ));
+    app.handle_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    assert!(matches!(
+        app.input,
+        InputMode::TextPreviewView { scroll: 90, .. }
+    ));
+    app.handle_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    assert!(matches!(app.input, InputMode::Normal));
+}
+
+#[test]
+fn queued_results_leave_room_for_input() {
+    let mut app = app();
+    app.input = InputMode::Normal;
+    app.entries = vec![entry("a"), entry("b")];
+    for _ in 0..100 {
+        app.result_tx.send(OpResult::UpdateAvailable(None)).unwrap();
+    }
+    app.poll_results();
+    app.handle_key(KeyCode::Char('j'), KeyModifiers::NONE)
+        .unwrap();
+    assert_eq!(app.selected, 1);
+    assert!(
+        app.result_rx.try_recv().is_ok(),
+        "result flood must not be drained in one frame"
+    );
+}
+
+#[test]
+fn background_upload_and_cancellation_keep_quit_guard_until_worker_finishes() {
+    let mut app = app();
+    let control = Arc::new(crate::pikpak::UploadControl::default());
+    app.active_upload = Some(Arc::clone(&control));
+    app.input = InputMode::UploadView;
+    app.handle_key(KeyCode::Char('x'), KeyModifiers::NONE)
+        .unwrap();
+    assert!(control.is_cancelled());
+    app.handle_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    assert!(matches!(app.input, InputMode::Normal));
+    assert!(
+        !app.handle_key(KeyCode::Char('q'), KeyModifiers::NONE)
+            .unwrap()
+    );
+    assert!(matches!(app.input, InputMode::ConfirmQuit));
+    app.handle_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    assert!(
+        !app.handle_key(KeyCode::Char('c'), KeyModifiers::CONTROL)
+            .unwrap()
+    );
+    assert!(matches!(app.input, InputMode::ConfirmQuit));
+    app.active_upload = None;
+    app.handle_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    assert!(
+        app.handle_key(KeyCode::Char('q'), KeyModifiers::NONE)
+            .unwrap()
+    );
+}
+
+#[test]
+fn pending_file_mutations_require_quit_confirmation() {
+    let mut app = app();
+    app.input = InputMode::Normal;
+    app.file_mutations_pending = 1;
+    assert!(
+        !app.handle_key(KeyCode::Char('q'), KeyModifiers::NONE)
+            .unwrap()
+    );
+    assert!(matches!(app.input, InputMode::ConfirmQuit));
+    app.record_mutation_result(MutationReport {
+        op: "Rename",
+        success: "Renamed".into(),
+        result: Ok(()),
+        cart_ids: None,
+    });
+    assert_eq!(app.file_mutations_pending, 0);
+}
+
+#[test]
+fn detached_download_worker_and_closed_write_dialog_still_guard_quit() {
+    let mut app = app();
+    app.input = InputMode::Normal;
+    app.download_state.active_ids.insert(99);
+    assert!(
+        !app.handle_key(KeyCode::Char('q'), KeyModifiers::NONE)
+            .unwrap()
+    );
+    app.download_state.active_ids.clear();
+    app.handle_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    let guard = operations::WriteGuard::new(&app.background_writes);
+    app.invalidate_modal_request();
+    assert!(app.has_active_work());
+    drop(guard);
+    assert!(!app.has_active_work());
+    assert!(
+        app.handle_key(KeyCode::Char('q'), KeyModifiers::NONE)
+            .unwrap()
+    );
+}
+
+#[test]
+fn listing_error_survives_toast_and_rejects_stale_failure() {
+    let mut app = app();
+    app.input = InputMode::Normal;
+    app.current_folder_id = "current".into();
+    app.main_listing_request_id = 2;
+    app.main_listing_loading = true;
+    app.result_tx
+        .send(OpResult::Ls(
+            1,
+            "older".into(),
+            Err(anyhow::anyhow!("stale")),
+        ))
+        .unwrap();
+    app.poll_results();
+    assert!(app.main_listing_loading);
+    assert!(app.main_listing_error.is_none());
+    app.result_tx
+        .send(OpResult::Ls(
+            2,
+            "current".into(),
+            Err(anyhow::anyhow!("timeout")),
+        ))
+        .unwrap();
+    app.poll_results();
+    assert!(!app.main_listing_loading);
+    app.status_message = None;
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+    terminal.draw(|f| app.draw(f)).unwrap();
+    let text: String = terminal
+        .backend()
+        .buffer()
+        .content
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect();
+    assert!(text.contains("Listing failed"));
+    assert!(text.contains("retry"));
+}
 fn entry(id: &str) -> Entry {
     Entry {
         id: id.into(),

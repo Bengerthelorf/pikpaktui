@@ -2,7 +2,23 @@
 use super::{App, InputMode, OpResult, StatusKind};
 use crate::pikpak::{PikPak, mutation_progress};
 use anyhow::Result;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{collections::HashSet, sync::Arc};
+
+/// Account for writes until the worker actually exits, even if its dialog
+/// closed and its eventual result no longer belongs to the current view.
+pub(super) struct WriteGuard(Arc<AtomicUsize>);
+impl WriteGuard {
+    pub fn new(count: &Arc<AtomicUsize>) -> Self {
+        count.fetch_add(1, Ordering::Relaxed);
+        Self(Arc::clone(count))
+    }
+}
+impl Drop for WriteGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
+    }
+}
 
 pub(super) enum Destination {
     Folder { id: String, path: String },
@@ -92,6 +108,7 @@ impl App {
         if from_cart {
             self.cart_mutation_in_flight = true;
         }
+        self.file_mutations_pending += 1;
         self.loading = true;
         let client = Arc::clone(&self.client);
         let tx = self.result_tx.clone();
@@ -131,6 +148,7 @@ impl App {
     }
 
     pub(super) fn record_mutation_result(&mut self, report: MutationReport) -> bool {
+        self.file_mutations_pending = self.file_mutations_pending.saturating_sub(1);
         let progress = report
             .result
             .as_ref()
