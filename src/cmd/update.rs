@@ -99,7 +99,7 @@ pub fn run() -> Result<()> {
         .find(|a| a.name == "sha256sums.txt")
         .ok_or_else(|| anyhow!("release has no sha256sums.txt; refusing to update unverified"))?;
     let mut sums = Vec::new();
-    self_update::Download::from_url(&sums_asset.download_url)
+    release_asset_download(&sums_asset.download_url)
         .download_to(&mut sums)
         .context("failed to download sha256sums.txt")?;
     let sums = String::from_utf8_lossy(&sums);
@@ -116,7 +116,7 @@ pub fn run() -> Result<()> {
     {
         let archive = std::fs::File::create(&archive_path)
             .with_context(|| format!("cannot create '{}'", archive_path.display()))?;
-        self_update::Download::from_url(&asset.download_url)
+        release_asset_download(&asset.download_url)
             .show_progress(true)
             .download_to(archive)
             .context("failed to download release archive")?;
@@ -148,6 +148,15 @@ pub fn run() -> Result<()> {
     Ok(())
 }
 
+fn release_asset_download(url: &str) -> self_update::Download {
+    use reqwest::header::{ACCEPT, HeaderValue};
+
+    // GitHub asset URLs serve JSON metadata unless this media type is requested.
+    let mut download = self_update::Download::from_url(url);
+    download.set_header(ACCEPT, HeaderValue::from_static("application/octet-stream"));
+    download
+}
+
 fn sha256_file(path: &std::path::Path) -> Result<String> {
     use anyhow::Context;
     use sha2::{Digest, Sha256};
@@ -170,6 +179,69 @@ fn hex_lower(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::version_newer;
+
+    // GitHub's asset API returns metadata unless the request asks for bytes.
+    fn asset_server(body: &'static [u8]) -> (String, std::thread::JoinHandle<()>) {
+        use std::{io::Write, net::TcpListener, time::Duration};
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!(
+            "http://{}/releases/assets/1",
+            listener.local_addr().unwrap()
+        );
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let request = crate::pikpak::read_test_http_request(&mut stream).unwrap();
+            let wants_bytes = request.lines().any(|line| {
+                line.split_once(':').is_some_and(|(name, value)| {
+                    name.eq_ignore_ascii_case("accept")
+                        && value.trim() == "application/octet-stream"
+                })
+            });
+            let response = if wants_bytes {
+                body
+            } else {
+                br#"{"name":"asset","size":123,"browser_download_url":"https://example.invalid/asset"}"#
+            };
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                response.len()
+            )
+            .unwrap();
+            stream.write_all(response).unwrap();
+        });
+        (url, server)
+    }
+
+    #[test]
+    fn checksum_download_receives_manifest_instead_of_api_metadata() {
+        let manifest = b"a69cde963cb0191b05816b1307c38eb78489e7e889d0e4c6e4ffb6346964de4f  pikpaktui-aarch64-macos.tar.gz\n";
+        let (url, server) = asset_server(manifest);
+        let mut downloaded = Vec::new();
+        super::release_asset_download(&url)
+            .download_to(&mut downloaded)
+            .unwrap();
+        server.join().unwrap();
+        assert_eq!(downloaded, manifest);
+    }
+
+    #[test]
+    fn archive_download_receives_binary_bytes_instead_of_api_metadata() {
+        let archive = b"\x1f\x8b\x08\x00release-archive\xff";
+        let (url, server) = asset_server(archive);
+        let dir = self_update::TempDir::new().unwrap();
+        let path = dir.path().join("pikpaktui-aarch64-macos.tar.gz");
+        super::release_asset_download(&url)
+            .show_progress(true)
+            .download_to(std::fs::File::create(&path).unwrap())
+            .unwrap();
+        server.join().unwrap();
+        assert_eq!(std::fs::read(path).unwrap(), archive);
+    }
 
     #[test]
     fn plain_numeric_comparison() {
