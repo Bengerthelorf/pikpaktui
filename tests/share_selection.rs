@@ -139,7 +139,8 @@ impl Fixture {
     }
 
     fn run(&self, args: &[&str]) -> Output {
-        Command::new(env!("CARGO_BIN_EXE_pikpaktui"))
+        let mut command = Command::new(env!("CARGO_BIN_EXE_pikpaktui"));
+        command
             .arg("share")
             .args(args)
             .env_clear()
@@ -154,9 +155,16 @@ impl Fixture {
             .env("ALL_PROXY", "http://127.0.0.1:9")
             .env("NO_PROXY", "127.0.0.1,localhost")
             .env("PIKPAK_DRIVE_BASE_URL", &self.base)
-            .env("PIKPAK_AUTH_BASE_URL", &self.base)
-            .output()
-            .unwrap()
+            .env("PIKPAK_AUTH_BASE_URL", &self.base);
+        // Winsock provider DLL paths can contain these Windows variables.
+        // Preserve only the runtime allowlist, not the parent's account env.
+        #[cfg(windows)]
+        for name in ["SystemRoot", "WINDIR"] {
+            if let Some(value) = std::env::var_os(name) {
+                command.env(name, value);
+            }
+        }
+        command.output().unwrap()
     }
 
     fn output_json(output: Output) -> Value {

@@ -34,7 +34,8 @@ impl Sandbox {
 
     fn run(&self, args: &[&str]) -> Output {
         let home = self.0.join("home");
-        let mut child = Command::new(env!("CARGO_BIN_EXE_pikpaktui"))
+        let mut command = Command::new(env!("CARGO_BIN_EXE_pikpaktui"));
+        command
             .args(args)
             .current_dir(&self.0)
             .env_clear()
@@ -50,9 +51,16 @@ impl Sandbox {
             .env("ALL_PROXY", "http://127.0.0.1:9")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
+            .stderr(Stdio::piped());
+        // Keep Windows DLL/provider initialization available while isolating
+        // account configuration and all other parent environment variables.
+        #[cfg(windows)]
+        for name in ["SystemRoot", "WINDIR"] {
+            if let Some(value) = std::env::var_os(name) {
+                command.env(name, value);
+            }
+        }
+        let mut child = command.spawn().unwrap();
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             if child.try_wait().unwrap().is_some() {
