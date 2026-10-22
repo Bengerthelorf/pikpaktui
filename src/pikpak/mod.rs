@@ -13,7 +13,7 @@ mod parity_tests;
 mod responses;
 mod share;
 mod upload;
-pub(crate) use upload::UploadControl;
+pub(crate) use upload::{UploadControl, pikpak_hash};
 
 use auth::{CaptchaInitResponse, SigninResponse};
 #[cfg(test)]

@@ -1,12 +1,14 @@
 use crossterm::event::KeyCode;
 
 use crate::config::PlaybackQuality;
+use crate::player::{self, PlayContext};
 
 use super::{App, InputMode, PlayOption};
 
 #[derive(Debug, Clone)]
 pub(super) struct PlaybackDialog {
     pub name: String,
+    pub context: PlayContext,
     pub medias: Vec<PlayOption>,
     pub selected: usize,
     /// A separate cursor allows Escape to cancel without changing the stream.
@@ -14,10 +16,11 @@ pub(super) struct PlaybackDialog {
 }
 
 impl PlaybackDialog {
-    pub fn new(name: String, medias: Vec<PlayOption>, preference: PlaybackQuality) -> Self {
+    pub fn new(context: PlayContext, medias: Vec<PlayOption>, preference: PlaybackQuality) -> Self {
         let selected = PlayOption::preferred_index(&medias, preference.height()).unwrap_or(0);
         Self {
-            name,
+            name: context.name.clone(),
+            context,
             medias,
             selected,
             quality_cursor: None,
@@ -64,7 +67,42 @@ pub(super) fn move_selection(medias: &[PlayOption], selected: usize, up: bool) -
 }
 
 impl App {
-    pub(super) fn launch_play_option(&mut self, option: &PlayOption) -> bool {
+    /// Snapshot only a main-pane cloud entry; synthetic views have no known path.
+    pub(super) fn playback_context(&self, id: &str) -> Option<PlayContext> {
+        let entry = self.current_entry().filter(|entry| entry.id == id)?;
+        let known_path = matches!(self.input, InputMode::Normal)
+            && (self.current_folder_id.is_empty() || !self.breadcrumb.is_empty())
+            && !entry.name.contains('/')
+            && self.breadcrumb.iter().all(|(_, name)| !name.contains('/'));
+        Some(PlayContext {
+            name: entry.name.clone(),
+            path: if known_path {
+                format!(
+                    "{}/{}",
+                    self.current_path_display().trim_end_matches('/'),
+                    entry.name
+                )
+            } else {
+                String::new()
+            },
+            id: entry.id.clone(),
+        })
+    }
+
+    pub(super) fn player_command(
+        &self,
+        player: &str,
+        url: &str,
+        context: &PlayContext,
+    ) -> anyhow::Result<std::process::Command> {
+        player::build_command(player, &self.config.player_args, url, context)
+    }
+
+    pub(super) fn launch_play_option(
+        &mut self,
+        option: &PlayOption,
+        context: &PlayContext,
+    ) -> bool {
         if !option.available || option.url.is_empty() {
             self.push_log(
                 option
@@ -75,11 +113,12 @@ impl App {
             return false;
         }
         if let Some(player) = self.config.player.clone() {
-            self.spawn_player(&player, &option.url);
+            self.spawn_player(&player, &option.url, context);
         } else {
             self.input = InputMode::PlayerInput {
                 value: String::new(),
                 pending_url: option.url.clone(),
+                context: context.clone(),
             };
         }
         true
@@ -116,7 +155,7 @@ impl App {
             match code {
                 KeyCode::Enter | KeyCode::Char('y') => {
                     if let Some(option) = dialog.option()
-                        && self.launch_play_option(option)
+                        && self.launch_play_option(option, &dialog.context)
                     {
                         return;
                     }
@@ -196,7 +235,11 @@ mod tests {
         let mut app = App::new_login(PikPak::new().unwrap(), None, TuiConfig::default());
         app.input = InputMode::ConfirmPlay {
             dialog: PlaybackDialog::new(
-                "sample-video.mp4".into(),
+                PlayContext {
+                    name: "sample-video.mp4".into(),
+                    path: "/sample-video.mp4".into(),
+                    id: "sample".into(),
+                },
                 options(),
                 PlaybackQuality::Original,
             ),
@@ -222,6 +265,155 @@ mod tests {
             panic!("confirmation closed")
         };
         dialog
+    }
+
+    // Catches reading a later selection / API rename instead of the requested file.
+    #[test]
+    fn playback_confirmation_keeps_the_file_name_captured_before_fetch() {
+        let mut app = app();
+        app.input = InputMode::Normal;
+        app.entries = vec![super::super::Entry {
+            id: "original-id".into(),
+            name: "--original 'film' {path}.mkv".into(),
+            kind: super::super::EntryKind::File,
+            size: 0,
+            created_time: String::new(),
+            modified_time: String::new(),
+            starred: false,
+            thumbnail_link: None,
+            phase: None,
+            audit: None,
+        }];
+        app.current_folder_id = "folder-id".into();
+        app.breadcrumb = vec![(String::new(), "TV Shows".into())];
+        let request = app.begin_modal_request(super::super::AsyncRequestKind::Play, "original-id");
+        app.entries[0].name = "later selection.mkv".into();
+        app.breadcrumb.clear();
+        let info: FileInfoResponse = serde_json::from_value(serde_json::json!({
+            "name":"renamed from server.mkv",
+            "web_content_link":"https://example.invalid/video"
+        }))
+        .unwrap();
+        app.result_tx
+            .send(super::super::OpResult::PlayInfo(request, Ok(info)))
+            .unwrap();
+        app.poll_results();
+        assert_eq!(dialog(&app).name, "--original 'film' {path}.mkv");
+    }
+
+    #[test]
+    fn confirmation_and_quick_picker_keep_context_through_first_player_prompt() {
+        for kind in [
+            super::super::AsyncRequestKind::Play,
+            super::super::AsyncRequestKind::PlayPicker,
+        ] {
+            let mut app = app();
+            app.input = InputMode::Normal;
+            app.entries = vec![super::super::Entry {
+                id: "original-id".into(),
+                name: "--original 'film' {path}.mkv".into(),
+                kind: super::super::EntryKind::File,
+                size: 0,
+                created_time: String::new(),
+                modified_time: String::new(),
+                starred: false,
+                thumbnail_link: None,
+                phase: None,
+                audit: None,
+            }];
+            app.current_folder_id = "folder-id".into();
+            app.breadcrumb = vec![(String::new(), "TV Shows".into())];
+            let request = app.begin_modal_request(kind, "original-id");
+            app.entries.clear();
+            app.breadcrumb = vec![(String::new(), "Other".into())];
+            let info: FileInfoResponse = serde_json::from_value(serde_json::json!({
+                "name":"renamed.mkv", "web_content_link":"https://example.invalid/video"
+            }))
+            .unwrap();
+            let result = if kind == super::super::AsyncRequestKind::Play {
+                super::super::OpResult::PlayInfo(request, Ok(info))
+            } else {
+                let options = info.play_options();
+                super::super::OpResult::PlayPickerInfo(request, Ok((info, options)))
+            };
+            app.result_tx.send(result).unwrap();
+            app.poll_results();
+            key(&mut app, KeyCode::Enter);
+            // Editing and empty submission must keep the same pending file.
+            key(&mut app, KeyCode::Char('x'));
+            key(&mut app, KeyCode::Backspace);
+            key(&mut app, KeyCode::Enter);
+            let InputMode::PlayerInput {
+                context,
+                pending_url,
+                ..
+            } = &app.input
+            else {
+                panic!("expected first-time player prompt");
+            };
+            assert_eq!(context.name, "--original 'film' {path}.mkv");
+            assert_eq!(context.path, "/TV Shows/--original 'film' {path}.mkv");
+            assert_eq!(context.id, "original-id");
+            assert_eq!(pending_url, "https://example.invalid/video");
+            app.config.player = Some("wrapper --legacy".into());
+            app.config.player_args = vec!["--title={name}".into(), "{path}".into(), "{id}".into()];
+            let cli = crate::cmd::play::player_command(&app.config, pending_url, context).unwrap();
+            let tui = app
+                .player_command("wrapper --legacy", pending_url, context)
+                .unwrap();
+            for command in [cli, tui] {
+                assert_eq!(command.get_program(), std::ffi::OsStr::new("wrapper"));
+                assert_eq!(
+                    command.get_args().collect::<Vec<_>>(),
+                    vec![
+                        "--legacy",
+                        "--title=--original 'film' {path}.mkv",
+                        "/TV Shows/--original 'film' {path}.mkv",
+                        "original-id",
+                        "--",
+                        "https://example.invalid/video",
+                    ]
+                );
+                let env: std::collections::BTreeMap<_, _> = command.get_envs().collect();
+                assert_eq!(
+                    env.get(std::ffi::OsStr::new("PIKPAKTUI_PLAY_PATH")),
+                    Some(&Some(std::ffi::OsStr::new(
+                        "/TV Shows/--original 'film' {path}.mkv"
+                    )))
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn unidentified_or_special_folder_paths_are_empty_with_stable_ids() {
+        let mut app = app();
+        app.input = InputMode::Normal;
+        app.entries = vec![super::super::Entry {
+            id: "stable-id".into(),
+            name: "film.mkv".into(),
+            kind: super::super::EntryKind::File,
+            size: 0,
+            created_time: String::new(),
+            modified_time: String::new(),
+            starred: true,
+            thumbnail_link: None,
+            phase: None,
+            audit: None,
+        }];
+        assert_eq!(app.playback_context("stable-id").unwrap().path, "/film.mkv");
+        app.current_folder_id = "unresolved-folder".into();
+        let context = app.playback_context("stable-id").unwrap();
+        assert!(context.path.is_empty());
+        assert_eq!(context.id, "stable-id");
+        app.input = InputMode::TrashView {
+            entries: app.entries.clone(),
+            selected: 0,
+            expanded: false,
+        };
+        app.breadcrumb = vec![(String::new(), "Fake path".into())];
+        assert!(app.playback_context("stable-id").unwrap().path.is_empty());
+        assert!(app.playback_context("different-id").is_none());
     }
 
     #[test]
@@ -384,6 +576,8 @@ mod tests {
             .unwrap();
         app.poll_results();
         assert_eq!(dialog(&app).selected, 1);
+        assert_eq!(dialog(&app).context.id, "fixture");
+        assert!(dialog(&app).context.path.is_empty());
         assert!(
             dialog(&app)
                 .preference_note(app.config.playback_quality)
@@ -402,7 +596,8 @@ mod tests {
         app.poll_results();
         assert!(matches!(
             app.input,
-            InputMode::PlayPicker { selected: 1, .. }
+            InputMode::PlayPicker { selected: 1, context, .. }
+                if context.id == "fixture" && context.path.is_empty()
         ));
     }
 

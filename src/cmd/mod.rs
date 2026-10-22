@@ -5,6 +5,7 @@ pub mod cp;
 pub mod download;
 pub mod empty;
 pub mod events;
+pub mod hash;
 pub mod help;
 pub mod info;
 pub mod link;
@@ -57,7 +58,7 @@ pub const COMMAND_GROUPS: &[(&str, &[&str])] = &[
     ),
     ("Auth", &["login"]),
     ("Account", &["quota", "vip", "whoami"]),
-    ("Utility", &["update", "completions"]),
+    ("Utility", &["hash", "update", "completions"]),
 ];
 
 /// Returns true if the arg slice contains `-h` or `--help`.
@@ -81,6 +82,21 @@ pub fn print_command_help(cmd: &str) -> Result<()> {
 /// `pikpaktui <cmd> --help` read from here.
 pub fn command_help_text(cmd: &str) -> (&'static str, &'static str, String) {
     match cmd {
+        "hash" => (
+            "hash [-J|--json] [--] <local-file>",
+            "Compute a local file's PikPak GCID (offline)",
+            format!(
+                "{B}OPTIONS:{R}\n\
+                 {G}  -J, --json       {D}Output path, algorithm, and hash as JSON{R}\n\
+                 {G}  --               {D}Treat following arguments as file paths{R}\n\
+                 \nReads one local regular file; no login or network access.\n\
+                 Default output is the uppercase GCID followed by a newline.\n\
+                 \n{B}EXAMPLES:{R}\n\
+                 {D}  pikpaktui hash ./movie.mkv{R}\n\
+                 {D}  pikpaktui hash -J ./movie.mkv{R}\n\
+                 {D}  pikpaktui hash -- -local-file{R}\n"
+            ),
+        ),
         "ls" => (
             "ls [options] [path]",
             "List files and folders",
@@ -221,15 +237,23 @@ pub fn command_help_text(cmd: &str) -> (&'static str, &'static str, String) {
                  {opt}  -d, --days <n>   {d}Expiry in days (-1 = permanent){R}\n\
                  {opt}  -o <file>        {d}Write share URL to file{R}\n\
                  {opt}  -J, --json       {d}Output as JSON{R}\n\
-                 \n{B}OPTIONS (save):{R}\n\
+                 \n{B}OPTIONS (browse/save):{R}\n\
                  {opt}  -p <code>        {d}Pass code for protected shares{R}\n\
+                 {opt}  --parent-id <id> {d}Source folder ID inside the share (default: root){R}\n\
+                 {opt}  -J, --json       {d}Output as JSON, including save previews{R}\n\
+                 \n{B}OPTIONS (save):{R}\n\
+                 {opt}  --file-id <id>   {d}Save only this entry in the source folder (repeatable){R}\n\
                  {opt}  -t, --to <path>  {d}Destination folder{R}\n\
                  {opt}  -n, --dry-run    {d}Preview without saving{R}\n\
+                 \nUse a root share URL. Deep web URLs are rejected; select entries by ID.\n\
+                 Without --file-id, save includes all entries in the source folder.\n\
                  \n{B}EXAMPLES:{R}\n\
                  {ex}  pikpaktui share /movie.mkv{R}\n\
                  {ex}  pikpaktui share -p -d 7 /folder{R}\n\
                  {ex}  pikpaktui share -l{R}\n\
                  {ex}  pikpaktui share -S https://mypikpak.com/s/abc123{R}\n\
+                 {ex}  pikpaktui share -b -J --parent-id folder_id https://mypikpak.com/s/abc123{R}\n\
+                 {ex}  pikpaktui share -S --parent-id folder_id --file-id file_id -n -J https://mypikpak.com/s/abc123{R}\n\
                  {ex}  pikpaktui share -D abc123{R}\n",
                 opt = G,
                 d = D,

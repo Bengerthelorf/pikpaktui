@@ -5,7 +5,7 @@ order: 1
 ---
 
 
-pikpaktui provides 28 CLI subcommands for scripting, automation, and power-user workflows. All commands require a valid session — run `pikpaktui` (TUI) first to log in, or use `pikpaktui login`.
+pikpaktui provides 29 CLI subcommands for scripting and automation. Cloud operations require a valid session; use `pikpaktui login` or the TUI to log in. `hash` works entirely offline. Help, completions, and self-update do not require a PikPak session.
 
 ## Command Groups
 
@@ -79,6 +79,7 @@ pikpaktui provides 28 CLI subcommands for scripting, automation, and power-user 
 
 | Command | Description |
 |---------|-------------|
+| [`hash`](/cli/commands#hash) | Compute a local PikPak GCID (offline) |
 | [`update`](/cli/commands#update) | Check for updates and self-update |
 | [`completions`](/cli/commands#completions) | Generate shell completions |
 

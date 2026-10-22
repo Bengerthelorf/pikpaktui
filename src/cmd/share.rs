@@ -4,7 +4,7 @@ use std::io::Write as _;
 pub fn run(args: &[String]) -> Result<()> {
     if args.is_empty() {
         return Err(anyhow!(
-            "Usage:\n  pikpaktui share [-p] [-d <days>] [-J] [-o <file>] <path...>\n  pikpaktui share -S [-n] [-p <code>] [-t <path>] [-J] <url>\n  pikpaktui share -b [-p <code>] [-J] <url> [path]\n  pikpaktui share -l [-J]\n  pikpaktui share -D <share_id...>"
+            "Usage:\n  pikpaktui share [-p] [-d <days>] [-J] [-o <file>] <path...>\n  pikpaktui share -S [-n] [-p <code>] [-t <path>] [--parent-id <id>] [--file-id <id>...] [-J] <url>\n  pikpaktui share -b [-p <code>] [--parent-id <id>] [-J] <url> [path]\n  pikpaktui share -l [-J]\n  pikpaktui share -D <share_id...>"
         ));
     }
 
@@ -12,6 +12,17 @@ pub fn run(args: &[String]) -> Result<()> {
     let delete_mode = args.iter().any(|a| a == "-D" || a == "--delete");
     let save_mode = args.iter().any(|a| a == "-S" || a == "--save");
     let browse_mode = args.iter().any(|a| a == "-b" || a == "--browse");
+
+    if [list_mode, delete_mode, save_mode, browse_mode]
+        .into_iter()
+        .filter(|selected| *selected)
+        .count()
+        > 1
+    {
+        return Err(anyhow!(
+            "share modes --list, --delete, --save and --browse cannot be combined"
+        ));
+    }
 
     if list_mode {
         run_list(args)
@@ -28,28 +39,43 @@ pub fn run(args: &[String]) -> Result<()> {
 
 /// Extract the share id from a full share URL, or pass a bare id through.
 fn extract_share_id(share_url: &str) -> Result<String> {
+    let invalid_share_error = || {
+        anyhow!(
+            "invalid or deep share URL; use a plain share ID (letters, digits, '_' or '-') or the root /s/<share_id> URL with --parent-id <id> to browse a folder and --file-id <id> to select files for --save"
+        )
+    };
+    let valid_id = |id: &str| {
+        !id.is_empty()
+            && id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    };
+    // HTTP URL parsing repairs missing slashes, treats backslashes as path
+    // separators, drops control characters, and removes dot segments. Check
+    // the complete raw form before parsing so it cannot change the selection.
+    if share_url.chars().any(char::is_control) || share_url.contains('\\') {
+        return Err(invalid_share_error());
+    }
     let input = share_url.trim();
-    if !input.contains("://")
-        && !input.contains('/')
-        && !input.contains(['?', '#'])
-        && !input.is_empty()
-    {
+    if valid_id(input) {
         return Ok(input.to_owned());
     }
-    let url = reqwest::Url::parse(input).map_err(|_| anyhow!("invalid share URL"))?;
-    if !matches!(url.scheme(), "https" | "http") {
-        return Err(anyhow!("invalid share URL scheme"));
+    let (scheme, authority_and_path) = input.split_once("://").ok_or_else(invalid_share_error)?;
+    if !scheme.eq_ignore_ascii_case("https") && !scheme.eq_ignore_ascii_case("http") {
+        return Err(invalid_share_error());
     }
-    let parts: Vec<_> = url
-        .path_segments()
-        .ok_or_else(|| anyhow!("share URL has no path"))?
-        .filter(|s| !s.is_empty())
-        .collect();
-    parts
-        .windows(2)
-        .find(|p| p[0] == "s")
-        .map(|p| p[1].to_owned())
-        .ok_or_else(|| anyhow!("share URL must contain /s/<share_id>"))
+    let raw_route = authority_and_path.split(['?', '#']).next().unwrap_or("");
+    let (authority, path) = raw_route.split_once('/').ok_or_else(invalid_share_error)?;
+    if authority.is_empty() {
+        return Err(invalid_share_error());
+    }
+    let path = path.strip_suffix('/').unwrap_or(path);
+    let share_id = path
+        .strip_prefix("s/")
+        .filter(|id| valid_id(id))
+        .ok_or_else(invalid_share_error)?;
+    reqwest::Url::parse(input).map_err(|_| invalid_share_error())?;
+    Ok(share_id.to_owned())
 }
 
 fn query_pass_code(share_url: &str) -> Option<String> {
@@ -134,6 +160,7 @@ fn terminal_safe_text(text: &str) -> String {
 fn run_browse(args: &[String]) -> Result<()> {
     let mut share_url: Option<&str> = None;
     let mut inner_path: Option<&str> = None;
+    let mut parent_id: Option<&str> = None;
     let mut pass_code = "";
     let mut json = false;
     let mut iter = args.iter();
@@ -142,6 +169,17 @@ fn run_browse(args: &[String]) -> Result<()> {
         match arg.as_str() {
             "-b" | "--browse" => {}
             "-J" | "--json" => json = true,
+            "--parent-id" => {
+                if parent_id.is_some() {
+                    return Err(anyhow!("--parent-id may only be specified once"));
+                }
+                parent_id = Some(
+                    iter.next()
+                        .filter(|id| !id.trim().is_empty() && !id.starts_with('-'))
+                        .ok_or_else(|| anyhow!("--parent-id requires a folder ID"))?
+                        .as_str(),
+                );
+            }
             "-p" | "--pass-code" => {
                 pass_code = iter
                     .next()
@@ -163,6 +201,12 @@ fn run_browse(args: &[String]) -> Result<()> {
         }
     }
 
+    if parent_id.is_some() && inner_path.is_some() {
+        return Err(anyhow!(
+            "a share name path and --parent-id cannot be combined"
+        ));
+    }
+
     let share_url = share_url.ok_or_else(|| anyhow!("no share URL or ID provided"))?;
     let share_id = extract_share_id(share_url)?;
     let url_pass_code = query_pass_code(share_url);
@@ -176,9 +220,12 @@ fn run_browse(args: &[String]) -> Result<()> {
     let spinner = super::Spinner::new("Fetching share...");
     let info = client.share_info(&share_id, pass_code)?;
 
-    let entries = load_share_path(inner_path.unwrap_or(""), |parent_id| {
-        client.share_detail(&share_id, parent_id, &info.pass_code_token)
-    })?;
+    let entries = match parent_id {
+        Some(id) => client.share_detail(&share_id, id, &info.pass_code_token)?,
+        None => load_share_path(inner_path.unwrap_or(""), |parent_id| {
+            client.share_detail(&share_id, parent_id, &info.pass_code_token)
+        })?,
+    };
     drop(spinner);
 
     if json {
@@ -243,6 +290,9 @@ fn run_create(args: &[String]) -> Result<()> {
                         .as_str(),
                 );
             }
+            s if s.starts_with('-') && s != "-" => {
+                return Err(anyhow!("unknown option: {s}"));
+            }
             _ => paths.push(arg),
         }
     }
@@ -301,6 +351,8 @@ fn run_save(args: &[String]) -> Result<()> {
     let mut share_url: Option<&str> = None;
     let mut pass_code = "";
     let mut to_path: Option<&str> = None;
+    let mut parent_id: Option<&str> = None;
+    let mut requested_ids: Vec<&str> = Vec::new();
     let mut dry_run = false;
     let mut json = false;
     let mut iter = args.iter();
@@ -310,6 +362,27 @@ fn run_save(args: &[String]) -> Result<()> {
             "-S" | "--save" => {}
             "-n" | "--dry-run" => dry_run = true,
             "-J" | "--json" => json = true,
+            "--parent-id" => {
+                if parent_id.is_some() {
+                    return Err(anyhow!("--parent-id may only be specified once"));
+                }
+                parent_id = Some(
+                    iter.next()
+                        .filter(|id| !id.trim().is_empty() && !id.starts_with('-'))
+                        .ok_or_else(|| anyhow!("--parent-id requires a folder ID"))?
+                        .as_str(),
+                );
+            }
+            "--file-id" => {
+                let id = iter
+                    .next()
+                    .filter(|id| !id.trim().is_empty() && !id.starts_with('-'))
+                    .ok_or_else(|| anyhow!("--file-id requires a file ID"))?
+                    .as_str();
+                if !requested_ids.contains(&id) {
+                    requested_ids.push(id);
+                }
+            }
             "-p" | "--pass-code" => {
                 pass_code = iter
                     .next()
@@ -322,6 +395,9 @@ fn run_save(args: &[String]) -> Result<()> {
                         .ok_or_else(|| anyhow!("-t requires a path"))?
                         .as_str(),
                 );
+            }
+            s if s.starts_with('-') && s != "-" => {
+                return Err(anyhow!("unknown option: {s}"));
             }
             arg => {
                 if share_url.is_none() {
@@ -357,15 +433,44 @@ fn run_save(args: &[String]) -> Result<()> {
         );
     }
     let info = client.share_info(&share_id, pass_code)?;
-    let entries = load_share_path("", |parent_id| {
-        client.share_detail(&share_id, parent_id, &info.pass_code_token)
-    })?;
+    let mut entries =
+        client.share_detail(&share_id, parent_id.unwrap_or(""), &info.pass_code_token)?;
+
+    // Validate every explicit ID against the complete folder listing before
+    // constructing the restore payload. Never widen a failed selection to all.
+    if !requested_ids.is_empty() {
+        let mut selected = Vec::new();
+        for id in requested_ids {
+            let matches: Vec<_> = entries
+                .iter()
+                .enumerate()
+                .filter(|(_, entry)| entry.id == id)
+                .map(|(index, _)| index)
+                .collect();
+            match matches.as_slice() {
+                [] => {
+                    return Err(anyhow!(
+                        "file ID '{}' not found in the selected share folder",
+                        terminal_safe_text(id)
+                    ));
+                }
+                [index] => selected.push(entries.swap_remove(*index)),
+                _ => {
+                    return Err(anyhow!(
+                        "file ID '{}' is ambiguous in the selected share folder",
+                        terminal_safe_text(id)
+                    ));
+                }
+            }
+        }
+        entries = selected;
+    }
 
     if entries.is_empty() {
         return Err(anyhow!("share contains no files"));
     }
 
-    if dry_run || !json {
+    if !json {
         println!("Found {} item(s):", entries.len());
         for f in &entries {
             println!("  {}", terminal_safe_text(&f.name));
@@ -373,11 +478,24 @@ fn run_save(args: &[String]) -> Result<()> {
     }
 
     if dry_run {
-        println!(
-            "[dry-run] Would save {} item(s) to '{}'",
-            entries.len(),
-            terminal_safe_text(dest_display)
-        );
+        if json {
+            let out = serde_json::json!({
+                "dry_run": true,
+                "would_save": entries.len(),
+                "to": dest_display,
+                "files": entries.iter().map(|f| serde_json::json!({
+                    "id": f.id,
+                    "name": f.name,
+                })).collect::<Vec<_>>(),
+            });
+            println!("{}", serde_json::to_string_pretty(&out)?);
+        } else {
+            println!(
+                "[dry-run] Would save {} item(s) to '{}'",
+                entries.len(),
+                terminal_safe_text(dest_display)
+            );
+        }
         return Ok(());
     }
 
@@ -412,6 +530,14 @@ fn run_list(args: &[String]) -> Result<()> {
     use unicode_width::UnicodeWidthStr;
 
     let json = args.iter().any(|a| a == "-J" || a == "--json");
+
+    for arg in args {
+        match arg.as_str() {
+            "-l" | "--list" | "-J" | "--json" => {}
+            s if s.starts_with('-') => return Err(anyhow!("unknown option: {s}")),
+            _ => return Err(anyhow!("unexpected argument: {arg}")),
+        }
+    }
 
     let client = super::cli_client()?;
 
@@ -640,16 +766,25 @@ mod share_url_tests {
     use super::*;
 
     #[test]
-    fn share_identity_is_independent_of_query_fragment_and_nested_route() {
-        for input in [
-            "SHARE_ID",
-            "https://mypikpak.com/s/SHARE_ID",
-            "https://mypikpak.com/s/SHARE_ID/",
-            "https://mypikpak.com/s/SHARE_ID#1234",
-            "https://mypikpak.com/s/SHARE_ID?utm_source=test",
-            "https://mypikpak.com/s/SHARE_ID/folder/child?pass_code=abcd#encrypted",
+    fn root_share_identity_preserves_query_and_fragment_support() {
+        for (input, expected_id) in [
+            ("SHARE_ID", "SHARE_ID"),
+            ("Share-id_09", "Share-id_09"),
+            ("https://mypikpak.com/s/SHARE_ID", "SHARE_ID"),
+            ("http://mypikpak.com/s/Share-id_09", "Share-id_09"),
+            ("HTTPS://mypikpak.com/s/Share-id_09", "Share-id_09"),
+            ("https://mypikpak.com/s/SHARE_ID/", "SHARE_ID"),
+            ("https://mypikpak.com/s/SHARE_ID#1234", "SHARE_ID"),
+            (
+                "https://mypikpak.com/s/SHARE_ID?utm_source=test",
+                "SHARE_ID",
+            ),
+            (
+                "https://mypikpak.com/s/SHARE_ID/?pass_code=a%2Bb#encrypted",
+                "SHARE_ID",
+            ),
         ] {
-            assert_eq!(extract_share_id(input).unwrap(), "SHARE_ID", "{input}");
+            assert_eq!(extract_share_id(input).unwrap(), expected_id, "{input}");
         }
         assert_eq!(
             query_pass_code("https://mypikpak.com/s/SHARE_ID?pass_code=a%2Bb#encrypted").as_deref(),
@@ -661,5 +796,17 @@ mod share_url_tests {
         );
         assert!(extract_share_id("https://mypikpak.com/s/").is_err());
         assert!(extract_share_id("not/a/url").is_err());
+    }
+
+    #[test]
+    fn deep_share_routes_are_never_widened_to_the_root() {
+        for input in [
+            "https://mypikpak.com/s/SHARE_ID/folder",
+            "https://mypikpak.com/s/SHARE_ID/folder/child?pass_code=abcd#encrypted",
+        ] {
+            let error = extract_share_id(input).unwrap_err().to_string();
+            assert!(error.contains("--parent-id"), "{input}: {error}");
+            assert!(error.contains("--file-id"), "{input}: {error}");
+        }
     }
 }

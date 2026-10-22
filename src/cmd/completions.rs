@@ -91,6 +91,7 @@ _pikpaktui() {
         'vip:Show VIP & account info'
         'whoami:Show logged-in account identity'
         'login:Log in and save credentials'
+        'hash:Compute a local PikPak GCID (offline)'
         'update:Check for updates and self-update'
         'completions:Generate shell completions'
         'help:Show help message'
@@ -152,6 +153,13 @@ _pikpaktui() {
                 _pikpaktui_cloud_path
             fi
             ;;
+        hash)
+            if [[ "${words[CURRENT]}" == -* && "${words[CURRENT-1]}" != "--" ]]; then
+                compadd -- '-J' '--json' '--'
+            else
+                _files
+            fi
+            ;;
         upload)
             if [[ "${words[CURRENT]}" == -* ]]; then
                 compadd -- '-t' '-n' '--dry-run'
@@ -163,7 +171,9 @@ _pikpaktui() {
             ;;
         share)
             if [[ "${words[CURRENT]}" == -* ]]; then
-                compadd -- '-p' '--password' '--pass-code' '-d' '--days' '-o' '-l' '--list' '-S' '--save' '-b' '--browse' '-D' '--delete' '-t' '--to' '-J' '--json' '-n' '--dry-run'
+                compadd -- '-p' '--password' '--pass-code' '-d' '--days' '-o' '-l' '--list' '-S' '--save' '-b' '--browse' '-D' '--delete' '-t' '--to' '--file-id' '--parent-id' '-J' '--json' '-n' '--dry-run'
+            elif [[ "${words[CURRENT-1]}" == "--file-id" || "${words[CURRENT-1]}" == "--parent-id" ]]; then
+                return
             elif [[ "${words[CURRENT-1]}" == "-o" ]]; then
                 _files
             elif [[ "${words[CURRENT-1]}" == "-t" ]] || [[ "${words[CURRENT-1]}" == "--to" ]]; then
@@ -319,7 +329,7 @@ _pikpaktui() {
 
     local commands="ls mv cp rename rm mkdir download upload share offline tasks \
 star unstar starred events trash untrash empty info link cat play quota vip \
-whoami login update completions help version"
+whoami login hash update completions help version"
 
     if [[ ${COMP_CWORD} -eq 1 ]]; then
         COMPREPLY=($(compgen -W "$commands" -- "$cur"))
@@ -373,6 +383,13 @@ whoami login update completions help version"
                 _pikpaktui_cloud_path
             fi
             ;;
+        hash)
+            if [[ "$cur" == -* && "$prev" != "--" ]]; then
+                COMPREPLY=($(compgen -W "-J --json --" -- "$cur"))
+            else
+                _pikpaktui_local_path
+            fi
+            ;;
         upload)
             if [[ "$cur" == -* ]]; then
                 COMPREPLY=($(compgen -W "-t -n --dry-run" -- "$cur"))
@@ -384,7 +401,9 @@ whoami login update completions help version"
             ;;
         share)
             if [[ "$cur" == -* ]]; then
-                COMPREPLY=($(compgen -W "-p --password --pass-code -d --days -o -l --list -S --save -b --browse -D --delete -t --to -J --json -n --dry-run" -- "$cur"))
+                COMPREPLY=($(compgen -W "-p --password --pass-code -d --days -o -l --list -S --save -b --browse -D --delete -t --to --file-id --parent-id -J --json -n --dry-run" -- "$cur"))
+            elif [[ "$prev" == "--file-id" || "$prev" == "--parent-id" ]]; then
+                return 0
             elif [[ "$prev" == "-o" ]]; then
                 _pikpaktui_local_path
             elif [[ "$prev" == "-t" ]] || [[ "$prev" == "--to" ]]; then
@@ -514,7 +533,7 @@ complete -c pikpaktui -f
 # Top-level commands
 set -l subcommands ls mv cp rename rm mkdir download upload share offline tasks \
     star unstar starred events trash untrash empty info link cat play quota vip \
-    whoami login update completions help version
+    whoami login hash update completions help version
 
 complete -c pikpaktui -n "not __fish_seen_subcommand_from $subcommands" -a ls         -d "List files"
 complete -c pikpaktui -n "not __fish_seen_subcommand_from $subcommands" -a mv         -d "Move files"
@@ -542,6 +561,7 @@ complete -c pikpaktui -n "not __fish_seen_subcommand_from $subcommands" -a quota
 complete -c pikpaktui -n "not __fish_seen_subcommand_from $subcommands" -a vip        -d "VIP info"
 complete -c pikpaktui -n "not __fish_seen_subcommand_from $subcommands" -a whoami     -d "Account identity"
 complete -c pikpaktui -n "not __fish_seen_subcommand_from $subcommands" -a login      -d "Login"
+complete -c pikpaktui -n "not __fish_seen_subcommand_from $subcommands" -a hash       -d "Compute local PikPak GCID"
 complete -c pikpaktui -n "not __fish_seen_subcommand_from $subcommands" -a update     -d "Update binary"
 complete -c pikpaktui -n "not __fish_seen_subcommand_from $subcommands" -a completions -d "Generate completions"
 complete -c pikpaktui -n "not __fish_seen_subcommand_from $subcommands" -a help       -d "Show help"
@@ -551,6 +571,8 @@ complete -c pikpaktui -n "not __fish_seen_subcommand_from $subcommands" -a versi
 complete -c pikpaktui -n "__pikpaktui_using_command completions" -a "bash zsh fish powershell"
 
 # Context-aware path candidates
+complete -c pikpaktui -n "__pikpaktui_using_command hash" -F
+complete -c pikpaktui -n "__pikpaktui_using_command hash" -s J -l json -d "JSON output"
 complete -c pikpaktui -n "__pikpaktui_using_command ls; and not __pikpaktui_prev_is -s --sort --depth" -a "(__pikpaktui_cloud_path)"
 complete -c pikpaktui -n "__pikpaktui_using_command mv; or __pikpaktui_using_command cp; or __pikpaktui_using_command rename; or __pikpaktui_using_command rm; or __pikpaktui_using_command mkdir; or __pikpaktui_using_command star; or __pikpaktui_using_command unstar; or __pikpaktui_using_command info; or __pikpaktui_using_command link; or __pikpaktui_using_command cat; or __pikpaktui_using_command play" -a "(__pikpaktui_cloud_path)"
 complete -c pikpaktui -n "__pikpaktui_using_command download; and not __pikpaktui_prev_is -o --output -t -j --jobs" -a "(__pikpaktui_cloud_path)"
@@ -558,7 +580,7 @@ complete -c pikpaktui -n "__pikpaktui_using_command download; and __pikpaktui_pr
 complete -c pikpaktui -n "__pikpaktui_using_command upload; and __pikpaktui_prev_is -t" -a "(__pikpaktui_cloud_path)"
 complete -c pikpaktui -n "__pikpaktui_using_command upload; and not __pikpaktui_prev_is -t" -F
 complete -c pikpaktui -n "__pikpaktui_using_command share; and __pikpaktui_prev_is -o" -F
-complete -c pikpaktui -n "__pikpaktui_using_command share; and not __pikpaktui_prev_is -o -d --days --pass-code" -a "(__pikpaktui_cloud_path)"
+complete -c pikpaktui -n "__pikpaktui_using_command share; and not __pikpaktui_prev_is -o -d --days --pass-code --file-id --parent-id" -a "(__pikpaktui_cloud_path)"
 complete -c pikpaktui -n "__pikpaktui_using_command offline; and __pikpaktui_prev_is -t --to" -a "(__pikpaktui_cloud_path)"
 
 # ls options
@@ -589,6 +611,8 @@ complete -c pikpaktui -n "__pikpaktui_using_command share" -s l -l list -d "List
 complete -c pikpaktui -n "__pikpaktui_using_command share" -s S -l save -d "Save a share"
 complete -c pikpaktui -n "__pikpaktui_using_command share" -s b -l browse -d "Browse a share"
 complete -c pikpaktui -n "__pikpaktui_using_command share" -s D -l delete -d "Delete shares"
+complete -c pikpaktui -n "__pikpaktui_using_command share" -l file-id -r -d "Select a shared file ID (repeatable)"
+complete -c pikpaktui -n "__pikpaktui_using_command share" -l parent-id -r -d "Source folder ID inside the share"
 complete -c pikpaktui -n "__pikpaktui_using_command share" -s t -l to -d "Destination folder"
 complete -c pikpaktui -n "__pikpaktui_using_command share" -s J -l json -d "JSON output"
 complete -c pikpaktui -n "__pikpaktui_using_command share" -s n -l dry-run -d "Preview without saving"
@@ -692,7 +716,7 @@ Register-ArgumentCompleter -Native -CommandName @('pikpaktui') -ScriptBlock {
         'ls','mv','cp','rename','rm','mkdir','download','upload','share',
         'offline','tasks','star','unstar','starred','events','trash','untrash',
         'empty','info','link','cat','play','quota','vip','whoami','login',
-        'update','completions','help','version'
+        'hash','update','completions','help','version'
     )
 
     # Top-level: no sub-command typed yet (or user is still completing the command name)
@@ -710,6 +734,15 @@ Register-ArgumentCompleter -Native -CommandName @('pikpaktui') -ScriptBlock {
                 ForEach-Object {
                     [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
                 }
+        }
+        "hash" {
+            if ($wordToComplete.StartsWith('-') -and $previous -ne '--') {
+                @('-J','--json','--') | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
+                    [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
+                }
+            } else {
+                Get-LocalPaths $wordToComplete
+            }
         }
         "tasks" {
             $candidates = if ($wordToComplete.StartsWith('-')) {
@@ -735,7 +768,7 @@ Register-ArgumentCompleter -Native -CommandName @('pikpaktui') -ScriptBlock {
                     'mkdir'    { @('-p','-n','--dry-run') }
                     'download' { @('-o','--output','-t','-j','--jobs','-n','--dry-run') }
                     'upload'   { @('-t','-n','--dry-run') }
-                    'share'    { @('-p','--password','--pass-code','-d','--days','-o','-l','--list','-S','--save','-b','--browse','-D','--delete','-t','--to','-J','--json','-n','--dry-run') }
+                    'share'    { @('-p','--password','--pass-code','-d','--days','-o','-l','--list','-S','--save','-b','--browse','-D','--delete','-t','--to','--file-id','--parent-id','-J','--json','-n','--dry-run') }
                     'offline'  { @('-t','--to','--name','-p','--preview','-n','--dry-run') }
                     'star'     { @('-n','--dry-run') }
                     'unstar'   { @('-n','--dry-run') }
@@ -751,6 +784,8 @@ Register-ArgumentCompleter -Native -CommandName @('pikpaktui') -ScriptBlock {
                 Get-LocalPaths $wordToComplete
             } elseif ($command -eq 'upload' -and $previous -ne '-t') {
                 Get-LocalPaths $wordToComplete
+            } elseif ($command -eq 'share' -and $previous -in @('--file-id','--parent-id')) {
+                return
             } elseif ($command -eq 'share' -and $previous -eq '-o') {
                 Get-LocalPaths $wordToComplete
             } elseif ($command -eq 'offline' -and $previous -notin @('-t','--to')) {
@@ -830,6 +865,38 @@ pub fn run(args: &[String]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn bash_hash_completion_is_local_and_share_ids_do_not_query_cloud_paths() {
+        let script = format!(
+            "{BASH_COMPLETION}\n{}",
+            r#"
+_pikpaktui_cloud_path() { printf 'unexpected cloud query\n' >&2; exit 91; }
+_pikpaktui_local_path() { COMPREPLY=('local fixture.bin'); }
+COMP_WORDS=(pikpaktui hash local); COMP_CWORD=2; _pikpaktui
+[[ ${#COMPREPLY[@]} -eq 1 && "${COMPREPLY[0]}" == 'local fixture.bin' ]] || exit 92
+COMP_WORDS=(pikpaktui hash --j); COMP_CWORD=2; _pikpaktui
+[[ " ${COMPREPLY[*]} " == *' --json '* ]] || exit 93
+for selector in --file-id --parent-id; do
+    COMP_WORDS=(pikpaktui share -S root "$selector" value); COMP_CWORD=5; _pikpaktui
+    [[ ${#COMPREPLY[@]} -eq 0 ]] || exit 94
+done
+COMP_WORDS=(pikpaktui share --file); COMP_CWORD=2; _pikpaktui
+[[ " ${COMPREPLY[*]} " == *' --file-id '* ]] || exit 95
+"#
+        );
+        let output = std::process::Command::new("bash")
+            .args(["-c", &script])
+            .output()
+            .expect("bash completion test");
+        assert!(
+            output.status.success(),
+            "completion exited {:?}: {}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 
     fn public_commands() -> impl Iterator<Item = &'static str> {
         crate::cmd::COMMAND_GROUPS

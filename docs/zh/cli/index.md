@@ -6,7 +6,7 @@ locale: zh
 ---
 
 
-pikpaktui 提供 28 条 CLI 子命令，适合脚本、自动化和进阶用户。所有命令均需有效会话——先运行 `pikpaktui`（TUI）登录，或使用 `pikpaktui login`。
+pikpaktui 提供 29 条 CLI 子命令，适合脚本和自动化。云端操作需要有效会话，可使用 `pikpaktui login` 或 TUI 登录。`hash` 完全离线运行；帮助、补全和自更新无需 PikPak 会话。
 
 ## 命令分组
 
@@ -80,6 +80,7 @@ pikpaktui 提供 28 条 CLI 子命令，适合脚本、自动化和进阶用户�
 
 | 命令 | 说明 |
 |------|------|
+| [`hash`](/zh/cli/commands#hash) | 离线计算本地文件的 PikPak GCID |
 | [`update`](/zh/cli/commands#update) | 检查更新并自动更新二进制文件 |
 | [`completions`](/zh/cli/commands#completions) | 生成 Shell 补全脚本 |
 

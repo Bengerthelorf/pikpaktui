@@ -737,6 +737,8 @@ pub struct TuiConfig {
     image_protocol: Option<ImageProtocol>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub player: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub player_args: Vec<String>,
     #[serde(default)]
     pub playback_quality: PlaybackQuality,
     #[serde(default = "default_download_jobs")]
@@ -826,6 +828,7 @@ impl Default for TuiConfig {
             image_protocols: BTreeMap::new(),
             image_protocol: None,
             player: None,
+            player_args: Vec::new(),
             playback_quality: PlaybackQuality::default(),
             download_jobs: 1,
             update_check: UpdateCheck::default(),
@@ -1045,6 +1048,21 @@ mod browser_config_tests {
         assert_eq!(config.inline_thumbnail_size.dimensions(), (2, 1));
         assert!(config.thumbnail_placeholders);
         assert_eq!(config.playback_quality, PlaybackQuality::Original);
+        assert!(config.player_args.is_empty());
+    }
+
+    #[test]
+    fn player_arguments_round_trip_as_literal_boundaries() {
+        let source = r#"player = "mpv"
+player_args = ["--title={name}", "two words", "--path={path}"]"#;
+        let config: TuiConfig = toml::from_str(source).unwrap();
+        let restored: toml::Value = toml::from_str(&toml::to_string(&config).unwrap()).unwrap();
+        assert_eq!(
+            restored.get("player_args"),
+            toml::from_str::<toml::Value>(source)
+                .unwrap()
+                .get("player_args")
+        );
     }
 
     #[test]

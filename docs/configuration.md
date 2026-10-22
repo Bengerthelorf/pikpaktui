@@ -72,6 +72,27 @@ update_check = "notify"     # "notify" | "quiet" | "off"
 
 The default playback preference is `original`: source quality, not a fixed resolution. Change it in **Playback Settings → Default Playback Quality**, then press `s` to save, or set the top-level `playback_quality` key. `4k` is accepted as an alias for `2160p`. An explicit resolution prefers a permitted transcode: the highest at or below the target, then the lowest above it, then the original/first permitted link when resolution metadata is unavailable. The Play Video dialog shows the actual selection and a notice if the preference is unavailable. Per-file changes in the dropdown do not change the saved default. CLI `play` still lists streams when quality is omitted and uses an explicitly supplied name/index when provided.
 
+### Player arguments and wrappers
+
+Both CLI and TUI use the same player configuration:
+
+```toml
+player = "mpv"
+player_args = ["--force-media-title={name}"]
+```
+
+Each `player_args` element is one argument, including any spaces or quotes in the inserted value. `{name}`, `{path}`, and `{id}` expand to the original cloud filename, cloud file path, and file ID. Expansion happens once; unknown placeholders remain literal. The video URL is appended after `--`. No shell is invoked.
+
+A wrapper also receives `PIKPAKTUI_PLAY_NAME`, `PIKPAKTUI_PLAY_PATH`, and `PIKPAKTUI_PLAY_ID` in its child environment. The path is empty when a reliable cloud path is unavailable (for example, some special views); use the file ID in that case. A wrapper can set the title like this:
+
+```sh
+#!/bin/sh
+exec mpv --force-media-title="$PIKPAKTUI_PLAY_NAME" "$@"
+```
+
+Set `player` to the wrapper executable. Its arguments already include `--` and the video URL. The legacy `player` string still splits on whitespace; use a wrapper name on `PATH` or a path without spaces, and put extra arguments in `player_args`. Subtitle selection can be implemented in the wrapper; pikpaktui does not automatically match or download subtitles.
+
+
 ### update_check
 
 Controls update checking behavior.

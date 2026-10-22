@@ -19,6 +19,7 @@ pub use download_view::{DownloadViewMode, NetworkStats};
 
 use crate::config::{AppConfig, TuiConfig};
 use crate::pikpak::{Entry, EntryKind, FileInfoResponse, PikPak};
+use crate::player::PlayContext;
 use crate::theme;
 use anyhow::Result;
 use crossterm::event::{
@@ -261,6 +262,7 @@ struct AsyncRequest {
     id: u64,
     kind: AsyncRequestKind,
     target: String,
+    playback_context: Option<PlayContext>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -427,12 +429,14 @@ enum InputMode {
     },
     PlayPicker {
         name: String,
+        context: PlayContext,
         medias: Vec<PlayOption>,
         selected: usize,
     },
     PlayerInput {
         value: String,
         pending_url: String,
+        context: PlayContext,
     },
     TrashView {
         entries: Vec<Entry>,
@@ -1193,7 +1197,11 @@ impl App {
                     } else {
                         self.input = InputMode::ConfirmPlay {
                             dialog: playback::PlaybackDialog::new(
-                                info.name,
+                                request.playback_context.unwrap_or(PlayContext {
+                                    name: info.name,
+                                    path: String::new(),
+                                    id: request.target,
+                                }),
                                 medias,
                                 self.config.playback_quality,
                             ),
@@ -1227,7 +1235,15 @@ impl App {
                         )
                         .unwrap_or(0);
                         self.input = InputMode::PlayPicker {
-                            name: info.name.clone(),
+                            name: request
+                                .playback_context
+                                .as_ref()
+                                .map_or_else(|| info.name.clone(), |c| c.name.clone()),
+                            context: request.playback_context.unwrap_or(PlayContext {
+                                name: info.name,
+                                path: String::new(),
+                                id: request.target,
+                            }),
                             medias,
                             selected: first_avail,
                         };
@@ -1651,6 +1667,7 @@ impl App {
             id: self.next_async_request_id(),
             kind,
             target: target.into(),
+            playback_context: None,
         }
     }
 
@@ -1659,7 +1676,10 @@ impl App {
         kind: AsyncRequestKind,
         target: impl Into<String>,
     ) -> AsyncRequest {
-        let request = self.new_async_request(kind, target);
+        let mut request = self.new_async_request(kind, target);
+        if matches!(kind, AsyncRequestKind::Play | AsyncRequestKind::PlayPicker) {
+            request.playback_context = self.playback_context(&request.target);
+        }
         self.modal_request = Some(request.clone());
         request
     }
@@ -2094,6 +2114,7 @@ mod folder_listing_result_tests {
             id,
             kind,
             target: target.to_string(),
+            playback_context: None,
         }
     }
 

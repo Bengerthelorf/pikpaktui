@@ -256,6 +256,8 @@ pikpaktui play "/My Pack/video.mp4" 2          # 按编号播放第 2 条流
 在 `config.toml` 中设置 `player = "mpv"`，或在 TUI 设置面板中配置。支持任意命令行视频播放器：`mpv`、`vlc`、`iina`、`celluloid` 等。
 :::
 
+可在[播放器配置](/zh/configuration#播放器参数与包装脚本)中设置 `player_args`，传递标题及包装脚本所需的文件信息。
+
 ---
 
 ## download
@@ -374,6 +376,20 @@ pikpaktui share -S "https://mypikpak.com/s/XXXX"              # 保存到根目�
 pikpaktui share -S -p PO -t "/My Pack" "https://..."          # 含密码+指定目标
 pikpaktui share -S -n "https://mypikpak.com/s/XXXX"           # 预览
 ```
+
+**选择分享内的文件：**
+
+`--parent-id <ID>` 指定浏览或转存的源目录。`--file-id <ID>` 选择该目录下的直接子项用于转存，可重复指定多个。通过浏览的 JSON 输出获取 ID。缺失或不明确的 ID 会在转存前报错，重复 ID 只保存一次。不指定 `--file-id` 时保存源目录下的所有条目；不指定 `--parent-id` 时源目录为分享根目录。浏览时不能同时提供名称路径和 `--parent-id`。
+
+```bash
+pikpaktui share -b -J "https://mypikpak.com/s/XXXX"
+pikpaktui share -b -J --parent-id FOLDER_ID "https://mypikpak.com/s/XXXX"
+pikpaktui share -S --parent-id FOLDER_ID --file-id FILE_ID -n -J "https://mypikpak.com/s/XXXX"
+pikpaktui share -S --parent-id FOLDER_ID --file-id FILE_ID -t /Downloads "https://mypikpak.com/s/XXXX"
+```
+
+`/s/XXXX/folder/file` 这样的网页深链接会被明确拒绝，避免意外转存整个分享。请使用分享根链接和明确的 ID。`-n -J` 输出含 `dry_run`、`would_save`、`to`、`files` 的 JSON 预览，不执行保存。递归遍历及转存、下载、删除流程可通过脚本组合。
+
 
 ---
 
@@ -660,6 +676,22 @@ pikpaktui vip
 ```
 pikpaktui whoami [-J|--json]
 ```
+
+---
+
+## hash
+
+计算一个本地普通文件的 PikPak GCID。此命令完全离线运行，无需登录，不读取账号设置，也不检查更新。
+
+```bash
+pikpaktui hash ./movie.mkv
+pikpaktui hash -J "./local file.bin"
+pikpaktui hash -- -local-file
+```
+
+默认输出大写 GCID 和换行。`-J` / `--json` 输出 `{path, algorithm, hash}`，其中 `algorithm` 为 `pikpak-gcid`。`--` 结束选项解析。目录和非普通文件会被拒绝。
+
+可与 `pikpaktui info -J <路径>` 返回的原始云端文件 `hash` 比较。GCID 并非普通的整文件 SHA-1；转码视频流可能与原始文件不同。
 
 ---
 
