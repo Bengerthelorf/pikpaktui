@@ -6,7 +6,7 @@ locale: zh-Hant
 ---
 
 
-所有設定檔位於 `~/.config/pikpaktui/` 目錄下。
+憑證、設定與工作階段預設位於 `~/.config/pikpaktui/`。設定 `PIKPAKTUI_CONFIG_DIR` 可在所有平台指定設定與下載狀態的儲存目錄。空值保留預設位置；既有檔案不會自動遷移。
 
 ## 帳號憑證——`login.toml`
 
@@ -73,6 +73,27 @@ update_check = "notify"    # "notify" | "quiet" | "off"
 
 預設播放偏好為 `original`（原畫），代表來源檔案的畫質，不固定為 1080p。可在 **Playback Settings → Default Playback Quality** 修改並按 `s` 儲存，或設定頂層 `playback_quality`；`4k` 是 `2160p` 的別名。指定解析度時，優先選擇允許播放且不高於目標的最高轉碼版本，其次選擇高於目標的最低版本；沒有已知解析度的可用轉碼時退回原畫／首個允許播放的連結。播放確認框顯示實際選項，偏好不可用時提示退回。下拉選單的單次選擇不修改預設設定。CLI `play` 仍在省略畫質參數時列出版本，提供名稱／序號時依該參數播放。
 
+### 播放器參數與包裝腳本
+
+CLI 與 TUI 使用相同的播放器設定：
+
+```toml
+player = "mpv"
+player_args = ["--force-media-title={name}"]
+```
+
+`player_args` 的每個元素都是一個獨立參數，即使替換值含有空格或引號。`{name}`、`{path}`、`{id}` 分別替換為原始雲端檔名、雲端檔案路徑與檔案 ID，只替換一次，未知佔位符保持原樣。影片 URL 附加在 `--` 後，不呼叫 shell 執行命令。
+
+包裝腳本也會收到子行程環境變數 `PIKPAKTUI_PLAY_NAME`、`PIKPAKTUI_PLAY_PATH`、`PIKPAKTUI_PLAY_ID`。無法可靠確定雲端路徑時（例如部分特殊檢視），路徑為空，此時使用檔案 ID。設定標題的腳本範例：
+
+```sh
+#!/bin/sh
+exec mpv --force-media-title="$PIKPAKTUI_PLAY_NAME" "$@"
+```
+
+將 `player` 設為腳本執行檔。傳入參數已包含 `--` 與影片 URL。原有 `player` 字串仍依空白拆分；請使用 `PATH` 中的腳本名稱或不含空格的執行檔路徑，將額外參數放入 `player_args`。字幕選擇可由腳本實作；pikpaktui 不自動匹配或下載字幕。
+
+
 ### update_check
 
 控制更新檢查行為。
@@ -133,7 +154,7 @@ default  = [255, 255, 255]  # 白色
 | 檔案 | 說明 |
 |------|------|
 | `session.json` | 存取權杖與更新權杖（自動更新） |
-| `downloads.json` | 未完成的下載狀態（重新啟動後可恢復） |
+| `downloads.json` | 未完成的下載狀態（重新啟動後可恢復），預設位於系統設定目錄的 `pikpaktui/` 下 |
 
 ## 環境變數
 
@@ -141,6 +162,7 @@ default  = [255, 255, 255]  # 白色
 
 | 變數 | 說明 |
 |------|------|
+| `PIKPAKTUI_CONFIG_DIR` | 設定、憑證、工作階段及下載狀態的儲存目錄；空值使用預設位置 |
 | `PIKPAK_USER` | 帳號電子郵件（`pikpaktui login` 使用） |
 | `PIKPAK_PASS` | 帳號密碼（`pikpaktui login` 使用） |
 | `PIKPAK_DRIVE_BASE_URL` | 覆寫 PikPak Drive API 位址 |

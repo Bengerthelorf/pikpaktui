@@ -1,6 +1,7 @@
 mod cmd;
 mod config;
 mod pikpak;
+mod player;
 mod theme;
 mod tui;
 
@@ -25,8 +26,17 @@ fn entry() -> Result<()> {
         return run_tui();
     }
 
+    // Hash accepts local names such as `--help` after the option separator.
+    let help_args = if args[0] == "hash" {
+        args[1..]
+            .split(|arg| arg == "--")
+            .next()
+            .unwrap_or_default()
+    } else {
+        &args[1..]
+    };
     if args.len() >= 2
-        && cmd::wants_help(&args[1..])
+        && cmd::wants_help(help_args)
         && !matches!(
             args[0].as_str(),
             "--help" | "-h" | "help" | "--version" | "-V"
@@ -51,6 +61,7 @@ fn entry() -> Result<()> {
         "mkdir" => cmd::mkdir::run(&args[1..]),
         "download" => cmd::download::run(&args[1..]),
         "upload" => cmd::upload::run(&args[1..]),
+        "hash" => cmd::hash::run(&args[1..]),
         "share" => cmd::share::run(&args[1..]),
         "quota" => cmd::quota::run(&args[1..]),
         "offline" => cmd::offline::run(&args[1..]),
@@ -93,7 +104,7 @@ fn entry() -> Result<()> {
 fn cli_update_check(args: &[String]) -> Option<mpsc::Receiver<Option<String>>> {
     let skip = matches!(
         args.first().map(|s| s.as_str()),
-        Some("update" | "completions" | "__complete_path")
+        Some("hash" | "update" | "completions" | "__complete_path")
     );
     if skip {
         return None;

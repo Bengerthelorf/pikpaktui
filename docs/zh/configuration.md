@@ -6,7 +6,7 @@ locale: zh
 ---
 
 
-所有配置文件位于 `~/.config/pikpaktui/` 目录下。
+凭据、设置和会话默认位于 `~/.config/pikpaktui/`。设置 `PIKPAKTUI_CONFIG_DIR` 可在所有平台上指定配置与下载状态的存储目录。空值保留默认位置；已有文件不会自动迁移。
 
 ## 账号凭据——`login.toml`
 
@@ -73,6 +73,27 @@ update_check = "notify"     # "notify" | "quiet" | "off"
 
 默认播放偏好为 `original`（原画），表示源文件的画质，不固定为 1080p。可在 **Playback Settings → Default Playback Quality** 修改并按 `s` 保存，或设置顶层 `playback_quality`；`4k` 是 `2160p` 的别名。指定分辨率时，优先选择允许播放且不高于目标的最高转码版本，其次选择高于目标的最低版本；没有已知分辨率的可用转码时回退到原画／首个允许播放的链接。播放确认框显示实际选项，偏好不可用时提示回退。下拉框的单次选择不修改默认配置。CLI `play` 仍在省略画质参数时列出版本，提供名称／序号时按该参数播放。
 
+### 播放器参数与包装脚本
+
+CLI 和 TUI 使用相同的播放器配置：
+
+```toml
+player = "mpv"
+player_args = ["--force-media-title={name}"]
+```
+
+`player_args` 的每个元素都是一个独立参数，即使替换值包含空格或引号。`{name}`、`{path}`、`{id}` 分别替换为原始云端文件名、云端文件路径和文件 ID，只替换一次，未知占位符保留原样。视频 URL 追加在 `--` 后，不调用 shell 执行命令。
+
+包装脚本还会收到子进程环境变量 `PIKPAKTUI_PLAY_NAME`、`PIKPAKTUI_PLAY_PATH`、`PIKPAKTUI_PLAY_ID`。无法可靠确定云端路径时（例如部分特殊视图），路径为空，此时使用文件 ID。设置标题的脚本示例：
+
+```sh
+#!/bin/sh
+exec mpv --force-media-title="$PIKPAKTUI_PLAY_NAME" "$@"
+```
+
+将 `player` 设置为脚本可执行文件。传入参数已包含 `--` 和视频 URL。原有 `player` 字符串仍按空白拆分；请使用 `PATH` 中的脚本名称或不含空格的可执行路径，将额外参数放入 `player_args`。字幕选择可由脚本实现；pikpaktui 不自动匹配或下载字幕。
+
+
 ### 缩略图设置
 
 **Browser Settings** 提供栏目数、最小栏宽、行内缩略图开关、显示尺寸、占位图开关和服务端缩略图尺寸。这些字段都放在 `config.toml` 顶层。
@@ -121,7 +142,7 @@ default  = [255, 255, 255]  # 白色
 | 文件 | 说明 |
 |------|------|
 | `session.json` | 访问令牌和刷新令牌（自动刷新） |
-| `downloads.json` | 未完成的下载状态（重启后可恢复） |
+| `downloads.json` | 未完成的下载状态（重启后可恢复），默认位于系统配置目录的 `pikpaktui/` 下 |
 
 ## 环境变量
 
@@ -129,6 +150,7 @@ default  = [255, 255, 255]  # 白色
 
 | 变量 | 说明 |
 |------|------|
+| `PIKPAKTUI_CONFIG_DIR` | 设置、凭据、会话及下载状态的存储目录；空值使用默认位置 |
 | `PIKPAK_USER` | 账号邮箱（`pikpaktui login` 使用） |
 | `PIKPAK_PASS` | 账号密码（`pikpaktui login` 使用） |
 | `PIKPAK_DRIVE_BASE_URL` | 覆盖 PikPak Drive API 地址 |

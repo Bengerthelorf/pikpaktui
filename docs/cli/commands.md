@@ -262,6 +262,8 @@ pikpaktui play "/My Pack/video.mp4" 2         # play stream #2 by index
 Set your player in `config.toml` (`player = "mpv"`) or via the TUI Settings panel. Any command-line video player works: `mpv`, `vlc`, `iina`, `celluloid`, etc.
 :::
 
+Player titles and wrapper context can be configured with [`player_args`](/configuration#player-arguments-and-wrappers).
+
 ---
 
 ## download
@@ -385,6 +387,20 @@ pikpaktui share -S "https://mypikpak.com/s/XXXX"              # save to /
 pikpaktui share -S -p PO -t "/My Pack" "https://..."          # with password + destination
 pikpaktui share -S -n "https://mypikpak.com/s/XXXX"           # dry run
 ```
+
+**Selecting shared files:**
+
+`--parent-id <id>` selects the source folder for browse or save. `--file-id <id>` selects an immediate entry in that folder for save; repeat it to select several. Obtain IDs from browse JSON. Missing or ambiguous IDs fail before saving. Repeated IDs are saved once. Without `--file-id`, all entries in the selected source folder are saved; without `--parent-id`, that folder is the share root. A browse name path and `--parent-id` cannot be combined.
+
+```bash
+pikpaktui share -b -J "https://mypikpak.com/s/XXXX"
+pikpaktui share -b -J --parent-id FOLDER_ID "https://mypikpak.com/s/XXXX"
+pikpaktui share -S --parent-id FOLDER_ID --file-id FILE_ID -n -J "https://mypikpak.com/s/XXXX"
+pikpaktui share -S --parent-id FOLDER_ID --file-id FILE_ID -t /Downloads "https://mypikpak.com/s/XXXX"
+```
+
+Deep web URLs such as `/s/XXXX/folder/file` are rejected instead of silently saving the entire share. Use the root share URL with explicit IDs. `-n -J` returns a JSON preview with `dry_run`, `would_save`, `to`, and `files`; it performs no save. Recursive traversal and save/download/delete workflows can be composed in scripts.
+
 
 ---
 
@@ -671,6 +687,22 @@ Show the identity associated with the current session.
 ```
 pikpaktui whoami [-J|--json]
 ```
+
+---
+
+## hash
+
+Compute the PikPak GCID of one local regular file. This command works offline, without login, and does not read account settings or check for updates.
+
+```bash
+pikpaktui hash ./movie.mkv
+pikpaktui hash -J "./local file.bin"
+pikpaktui hash -- -local-file
+```
+
+Default output is the uppercase GCID and a newline. `-J` / `--json` returns `{path, algorithm, hash}`, with `algorithm` set to `pikpak-gcid`. `--` ends option parsing. Directories and non-regular files are rejected.
+
+Compare this value with the original cloud file's `hash` from `pikpaktui info -J <path>`. GCID is not an ordinary whole-file SHA-1; transcoded streams may differ from the original file.
 
 ---
 

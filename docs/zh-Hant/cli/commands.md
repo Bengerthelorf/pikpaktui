@@ -250,6 +250,8 @@ pikpaktui play "/My Pack/video.mp4" original   # 播放原始檔案
 pikpaktui play "/My Pack/video.mp4" 2          # 按編號播放第 2 條串流
 ```
 
+可在[播放器設定](/zh-Hant/configuration#播放器參數與包裝腳本)中設定 `player_args`，傳遞標題與包裝腳本所需的檔案資訊。
+
 ---
 
 ## download
@@ -358,6 +360,20 @@ pikpaktui share -S "https://mypikpak.com/s/XXXX"
 pikpaktui share -S -p PO -t "/My Pack" "https://..."
 pikpaktui share -S -n "https://mypikpak.com/s/XXXX"   # 預覽
 ```
+
+**選擇分享內的檔案：**
+
+`--parent-id <ID>` 指定瀏覽或轉存的來源目錄。`--file-id <ID>` 選擇該目錄下的直接子項用於轉存，可重複指定多個。透過瀏覽的 JSON 輸出取得 ID。缺少或不明確的 ID 會在轉存前報錯，重複 ID 只儲存一次。不指定 `--file-id` 時儲存來源目錄下的所有項目；不指定 `--parent-id` 時來源目錄為分享根目錄。瀏覽時不能同時提供名稱路徑與 `--parent-id`。
+
+```bash
+pikpaktui share -b -J "https://mypikpak.com/s/XXXX"
+pikpaktui share -b -J --parent-id FOLDER_ID "https://mypikpak.com/s/XXXX"
+pikpaktui share -S --parent-id FOLDER_ID --file-id FILE_ID -n -J "https://mypikpak.com/s/XXXX"
+pikpaktui share -S --parent-id FOLDER_ID --file-id FILE_ID -t /Downloads "https://mypikpak.com/s/XXXX"
+```
+
+`/s/XXXX/folder/file` 這類網頁深連結會被明確拒絕，避免意外轉存整個分享。請使用分享根連結與明確的 ID。`-n -J` 輸出含 `dry_run`、`would_save`、`to`、`files` 的 JSON 預覽，不執行儲存。遞迴遍歷及轉存、下載、刪除流程可透過腳本組合。
+
 
 ---
 
@@ -597,6 +613,22 @@ pikpaktui vip
 ```
 pikpaktui whoami [-J|--json]
 ```
+
+---
+
+## hash
+
+計算一個本機一般檔案的 PikPak GCID。此指令完全離線執行，無需登入，不讀取帳號設定，也不檢查更新。
+
+```bash
+pikpaktui hash ./movie.mkv
+pikpaktui hash -J "./local file.bin"
+pikpaktui hash -- -local-file
+```
+
+預設輸出大寫 GCID 與換行。`-J` / `--json` 輸出 `{path, algorithm, hash}`，其中 `algorithm` 為 `pikpak-gcid`。`--` 結束選項解析。目錄與非一般檔案會被拒絕。
+
+可與 `pikpaktui info -J <路徑>` 回傳的原始雲端檔案 `hash` 比較。GCID 並非普通的整檔 SHA-1；轉碼串流可能與原始檔案不同。
 
 ---
 

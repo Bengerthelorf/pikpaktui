@@ -1,6 +1,10 @@
 use anyhow::{Result, anyhow};
 
-use crate::pikpak::PlayOption;
+use crate::{
+    config::TuiConfig,
+    pikpak::PlayOption,
+    player::{self, PlayContext},
+};
 
 pub fn run(args: &[String]) -> Result<()> {
     if args.is_empty() {
@@ -15,7 +19,7 @@ pub fn run(args: &[String]) -> Result<()> {
     let quality = args.get(1).map(|s| s.as_str());
 
     let config = super::cli_config();
-    let player = config.player.ok_or_else(|| {
+    config.player.as_ref().ok_or_else(|| {
         anyhow!(
             "no player configured.\n\
              Set `player` in ~/.config/pikpaktui/config.toml at the top level, e.g.:\n\n  \
@@ -29,6 +33,7 @@ pub fn run(args: &[String]) -> Result<()> {
     let parent_id = client.resolve_path(&parent_path)?;
     let entry = super::find_entry(&client, &parent_id, &name)?;
 
+    let context = playback_context(&parent_path, &entry.name, &entry.id);
     let options = client.file_info(&entry.id)?.play_options();
     if options.is_empty() {
         return Err(anyhow!("no playable streams found for '{}'", name));
@@ -59,7 +64,7 @@ pub fn run(args: &[String]) -> Result<()> {
                             opt.unavailable_reason.unwrap_or("unavailable")
                         ));
                     }
-                    return launch_player(&player, &opt.url, &opt.label);
+                    return launch_player(&config, &opt.url, &opt.label, &context);
                 }
                 return Err(anyhow!(
                     "invalid stream number: {}. Available: 1-{}",
@@ -92,7 +97,7 @@ pub fn run(args: &[String]) -> Result<()> {
                             opt.unavailable_reason.unwrap_or("unavailable")
                         ));
                     }
-                    launch_player(&player, &opt.url, &opt.label)
+                    launch_player(&config, &opt.url, &opt.label, &context)
                 }
                 _ => {
                     let names: Vec<&str> = matched.iter().map(|o| o.label.as_str()).collect();
@@ -107,22 +112,53 @@ pub fn run(args: &[String]) -> Result<()> {
     }
 }
 
-fn launch_player(player_cmd: &str, url: &str, label: &str) -> Result<()> {
-    let parts: Vec<&str> = player_cmd.split_whitespace().collect();
-    if parts.is_empty() {
-        return Err(anyhow!("player command is empty"));
+fn playback_context(parent_path: &str, name: &str, id: &str) -> PlayContext {
+    let mut components: Vec<&str> = parent_path
+        .trim()
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .collect();
+    components.push(name);
+    PlayContext {
+        name: name.into(),
+        path: format!("/{}", components.join("/")),
+        id: id.into(),
     }
-    let program = parts[0];
-    let mut args: Vec<&str> = parts[1..].to_vec();
-    args.push("--");
-    args.push(url);
+}
 
+pub(crate) fn player_command(
+    config: &TuiConfig,
+    url: &str,
+    context: &PlayContext,
+) -> Result<std::process::Command> {
+    let player = config
+        .player
+        .as_deref()
+        .ok_or_else(|| anyhow!("no player configured"))?;
+    player::build_command(player, &config.player_args, url, context)
+}
+
+fn launch_player(config: &TuiConfig, url: &str, label: &str, context: &PlayContext) -> Result<()> {
+    let mut command = player_command(config, url, context)?;
+    let program = command.get_program().to_string_lossy().into_owned();
     eprintln!("Playing '{}' with {}...", label, program);
-    let mut child = std::process::Command::new(program)
-        .args(&args)
+    let mut child = command
         .spawn()
         .map_err(|e| anyhow!("failed to launch {}: {}", program, e))?;
-
     child.wait().map_err(|e| anyhow!("player error: {}", e))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cli_context_matches_resolved_cloud_path_and_stable_id() {
+        let context = playback_context(" //TV Shows///Season 1/ ", "--film {id}.mkv", "file-id");
+        assert_eq!(context.path, "/TV Shows/Season 1/--film {id}.mkv");
+        assert_eq!(context.name, "--film {id}.mkv");
+        assert_eq!(context.id, "file-id");
+        assert_eq!(playback_context("/", "film.mkv", "id").path, "/film.mkv");
+    }
 }

@@ -32,7 +32,7 @@ CLI reference, TUI guide, configuration, shell completions, and more.
 ## Highlights
 
 - 🖥️ **Interactive TUI** — Configurable multi-column browser with sibling previews and inline image thumbnails, syntax highlighting, and keyboard-driven navigation
-- ⌨️ **Full CLI** — 28 subcommands (`ls`, `mv`, `cp`, `rm`, `download`, `upload`, `share`, `update`, and more) with colored output, JSON mode, and dry-run support
+- ⌨️ **Full CLI** — 29 subcommands (`ls`, `mv`, `cp`, `rm`, `download`, `upload`, `share`, `update`, and more) with colored output, JSON mode, and dry-run support
 - 🎬 **Video Streaming** — Stream videos directly from PikPak to your local player (IINA, mpv, VLC)
 - 📥 **Cloud Downloads** — Add magnet links and URLs for offline downloading
 - 🔗 **Share Management** — Create, list, save, and delete share links with optional password protection

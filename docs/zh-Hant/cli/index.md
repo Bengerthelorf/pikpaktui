@@ -6,7 +6,7 @@ locale: zh-Hant
 ---
 
 
-pikpaktui 提供 28 條 CLI 子指令，適合腳本、自動化與進階使用者。所有指令均需有效工作階段——先執行 `pikpaktui`（TUI）登入，或使用 `pikpaktui login`。
+pikpaktui 提供 29 條 CLI 子指令，適合腳本與自動化。雲端操作需要有效工作階段，可使用 `pikpaktui login` 或 TUI 登入。`hash` 完全離線執行；說明、補全與自動更新無需 PikPak 工作階段。
 
 ## 指令分組
 
@@ -80,6 +80,7 @@ pikpaktui 提供 28 條 CLI 子指令，適合腳本、自動化與進階使用�
 
 | 指令 | 說明 |
 |------|------|
+| [`hash`](/zh-Hant/cli/commands#hash) | 離線計算本機檔案的 PikPak GCID |
 | [`update`](/zh-Hant/cli/commands#update) | 檢查更新並自動更新二進位檔案 |
 | [`completions`](/zh-Hant/cli/commands#completions) | 產生 Shell 補全腳本 |
 

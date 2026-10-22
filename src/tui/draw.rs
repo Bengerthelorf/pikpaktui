@@ -1863,6 +1863,7 @@ impl App {
                 name,
                 medias,
                 selected,
+                ..
             } => {
                 self.draw_play_picker_overlay(f, name, medias, *selected);
             }

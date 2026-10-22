@@ -93,8 +93,8 @@ impl AppConfig {
 }
 
 pub fn config_path() -> Result<PathBuf> {
-    let base = home_config_dir().ok_or_else(|| anyhow::anyhow!("unable to locate config dir"))?;
-    Ok(base.join("pikpaktui").join("login.toml"))
+    let base = config_dir().ok_or_else(|| anyhow::anyhow!("unable to locate config dir"))?;
+    Ok(base.join("login.toml"))
 }
 
 #[cfg(unix)]
@@ -126,8 +126,16 @@ fn write_owner_only(path: &PathBuf, data: &[u8]) -> std::io::Result<()> {
     fs::write(path, data)
 }
 
-fn home_config_dir() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".config"))
+/// An explicit application directory also isolates account state on Windows,
+/// where the home directory comes from the OS rather than HOME/USERPROFILE.
+pub(crate) fn config_dir_override() -> Option<PathBuf> {
+    env::var_os("PIKPAKTUI_CONFIG_DIR")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
+pub(crate) fn config_dir() -> Option<PathBuf> {
+    config_dir_override().or_else(|| dirs::home_dir().map(|h| h.join(".config/pikpaktui")))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
@@ -737,6 +745,8 @@ pub struct TuiConfig {
     image_protocol: Option<ImageProtocol>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub player: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub player_args: Vec<String>,
     #[serde(default)]
     pub playback_quality: PlaybackQuality,
     #[serde(default = "default_download_jobs")]
@@ -826,6 +836,7 @@ impl Default for TuiConfig {
             image_protocols: BTreeMap::new(),
             image_protocol: None,
             player: None,
+            player_args: Vec::new(),
             playback_quality: PlaybackQuality::default(),
             download_jobs: 1,
             update_check: UpdateCheck::default(),
@@ -885,8 +896,8 @@ impl TuiConfig {
 
 impl TuiConfig {
     pub fn load() -> Self {
-        let path = match home_config_dir() {
-            Some(base) => base.join("pikpaktui").join("config.toml"),
+        let path = match config_dir() {
+            Some(base) => base.join("config.toml"),
             None => return Self::default(),
         };
         if !path.exists() {
@@ -913,8 +924,8 @@ impl TuiConfig {
     }
 
     pub fn save(&self) -> Result<()> {
-        let path = match home_config_dir() {
-            Some(base) => base.join("pikpaktui").join("config.toml"),
+        let path = match config_dir() {
+            Some(base) => base.join("config.toml"),
             None => return Err(anyhow::anyhow!("unable to locate config dir")),
         };
 
@@ -1045,6 +1056,21 @@ mod browser_config_tests {
         assert_eq!(config.inline_thumbnail_size.dimensions(), (2, 1));
         assert!(config.thumbnail_placeholders);
         assert_eq!(config.playback_quality, PlaybackQuality::Original);
+        assert!(config.player_args.is_empty());
+    }
+
+    #[test]
+    fn player_arguments_round_trip_as_literal_boundaries() {
+        let source = r#"player = "mpv"
+player_args = ["--title={name}", "two words", "--path={path}"]"#;
+        let config: TuiConfig = toml::from_str(source).unwrap();
+        let restored: toml::Value = toml::from_str(&toml::to_string(&config).unwrap()).unwrap();
+        assert_eq!(
+            restored.get("player_args"),
+            toml::from_str::<toml::Value>(source)
+                .unwrap()
+                .get("player_args")
+        );
     }
 
     #[test]

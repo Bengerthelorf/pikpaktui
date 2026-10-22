@@ -433,6 +433,7 @@ impl App {
             }
             InputMode::PlayPicker {
                 name,
+                context,
                 medias,
                 mut selected,
             } => {
@@ -445,7 +446,7 @@ impl App {
                     }
                     KeyCode::Enter => {
                         if let Some(option) = medias.get(selected)
-                            && self.launch_play_option(option)
+                            && self.launch_play_option(option, &context)
                         {
                             return Ok(false);
                         }
@@ -455,6 +456,7 @@ impl App {
                 }
                 self.input = InputMode::PlayPicker {
                     name,
+                    context,
                     medias,
                     selected,
                 };
@@ -463,6 +465,7 @@ impl App {
             InputMode::PlayerInput {
                 mut value,
                 pending_url,
+                context,
             } => {
                 match handle_text_input(&mut value, &mut self.text_cursor, code, modifiers) {
                     Some(false) => {}
@@ -470,15 +473,23 @@ impl App {
                         let cmd = value.trim().to_string();
                         if !cmd.is_empty() {
                             self.push_log(format!("Player set to: {}", cmd));
-                            self.spawn_player(&cmd, &pending_url);
+                            self.spawn_player(&cmd, &pending_url, &context);
                             self.config.player = Some(cmd);
                             let _ = self.config.save();
                         } else {
-                            self.input = InputMode::PlayerInput { value, pending_url };
+                            self.input = InputMode::PlayerInput {
+                                value,
+                                pending_url,
+                                context,
+                            };
                         }
                     }
                     None => {
-                        self.input = InputMode::PlayerInput { value, pending_url };
+                        self.input = InputMode::PlayerInput {
+                            value,
+                            pending_url,
+                            context,
+                        };
                     }
                 }
                 Ok(false)
@@ -1915,23 +1926,23 @@ impl App {
         });
     }
 
-    pub(super) fn spawn_player(&mut self, cmd: &str, url: &str) {
-        let parts: Vec<&str> = cmd.split_whitespace().collect();
-        if parts.is_empty() {
-            self.push_log("Player command is empty".into());
-            return;
-        }
-        let program = parts[0];
-        let mut args: Vec<&str> = parts[1..].to_vec();
-        args.push("--");
-        args.push(url);
-        match std::process::Command::new(program).args(&args).spawn() {
-            Ok(_) => {
-                self.push_log(format!("Launched {} with video URL", program));
+    pub(super) fn spawn_player(
+        &mut self,
+        cmd: &str,
+        url: &str,
+        context: &crate::player::PlayContext,
+    ) {
+        let mut command = match self.player_command(cmd, url, context) {
+            Ok(command) => command,
+            Err(error) => {
+                self.push_log(error.to_string());
+                return;
             }
-            Err(e) => {
-                self.push_log(format!("Failed to launch {}: {}", program, e));
-            }
+        };
+        let program = command.get_program().to_string_lossy().into_owned();
+        match command.spawn() {
+            Ok(_) => self.push_log(format!("Launched {} with video URL", program)),
+            Err(e) => self.push_log(format!("Failed to launch {}: {}", program, e)),
         }
     }
 
