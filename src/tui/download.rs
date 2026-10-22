@@ -99,6 +99,22 @@ impl DownloadState {
         }
     }
 
+    /// Queue a pending download task for `entry` at `dest_path`.
+    pub fn queue(&mut self, entry: crate::pikpak::Entry, dest_path: PathBuf) {
+        let id = self.alloc_id();
+        self.tasks.push(DownloadTask {
+            id,
+            file_id: entry.id,
+            name: entry.name,
+            total_size: entry.size,
+            downloaded: 0,
+            dest_path,
+            status: TaskStatus::Pending,
+            cancel_flag: Arc::new(AtomicBool::new(false)),
+            speed: 0.0,
+        });
+    }
+
     pub fn alloc_id(&mut self) -> u64 {
         let id = self.next_id;
         self.next_id = self.next_id.wrapping_add(1);
