@@ -199,11 +199,6 @@ impl PikPak {
         Ok((file_name, false))
     }
 
-    #[cfg(test)]
-    pub fn upload_dir(&self, parent_id: &str, local_dir: &Path) -> Result<(usize, usize)> {
-        self.upload_dir_controlled(parent_id, local_dir, None)
-    }
-
     pub(crate) fn upload_path_controlled(
         &self,
         parent_id: &str,
@@ -967,7 +962,9 @@ mod tests {
 
         let mut client = PikPak::new().unwrap();
         client.session_path = root.join("missing-session.json");
-        let err = client.upload_dir("parent", &link).unwrap_err();
+        let err = client
+            .upload_dir_controlled("parent", &link, None)
+            .unwrap_err();
 
         assert!(
             err.to_string().contains("symbolic link"),
