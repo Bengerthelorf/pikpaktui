@@ -442,7 +442,9 @@ struct PersistedTask {
 }
 
 fn persist_path() -> Option<PathBuf> {
-    dirs::config_dir().map(|d| d.join("pikpaktui").join("downloads.json"))
+    crate::config::config_dir_override()
+        .or_else(|| dirs::config_dir().map(|d| d.join("pikpaktui")))
+        .map(|d| d.join("downloads.json"))
 }
 
 pub fn save_download_state(tasks: &[DownloadTask]) {

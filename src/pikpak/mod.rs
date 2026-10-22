@@ -780,10 +780,8 @@ fn json_or_api_error<T: serde::de::DeserializeOwned>(
 }
 
 fn default_session_path() -> Result<PathBuf> {
-    let base = dirs::home_dir()
-        .map(|h| h.join(".config"))
-        .ok_or_else(|| anyhow!("unable to locate home dir"))?;
-    Ok(base.join("pikpaktui").join("session.json"))
+    let base = crate::config::config_dir().ok_or_else(|| anyhow!("unable to locate config dir"))?;
+    Ok(base.join("session.json"))
 }
 
 #[cfg(unix)]

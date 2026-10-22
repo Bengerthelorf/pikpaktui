@@ -6,7 +6,7 @@ locale: zh-Hant
 ---
 
 
-所有設定檔位於 `~/.config/pikpaktui/` 目錄下。
+憑證、設定與工作階段預設位於 `~/.config/pikpaktui/`。設定 `PIKPAKTUI_CONFIG_DIR` 可在所有平台指定設定與下載狀態的儲存目錄。空值保留預設位置；既有檔案不會自動遷移。
 
 ## 帳號憑證——`login.toml`
 
@@ -154,7 +154,7 @@ default  = [255, 255, 255]  # 白色
 | 檔案 | 說明 |
 |------|------|
 | `session.json` | 存取權杖與更新權杖（自動更新） |
-| `downloads.json` | 未完成的下載狀態（重新啟動後可恢復） |
+| `downloads.json` | 未完成的下載狀態（重新啟動後可恢復），預設位於系統設定目錄的 `pikpaktui/` 下 |
 
 ## 環境變數
 
@@ -162,6 +162,7 @@ default  = [255, 255, 255]  # 白色
 
 | 變數 | 說明 |
 |------|------|
+| `PIKPAKTUI_CONFIG_DIR` | 設定、憑證、工作階段及下載狀態的儲存目錄；空值使用預設位置 |
 | `PIKPAK_USER` | 帳號電子郵件（`pikpaktui login` 使用） |
 | `PIKPAK_PASS` | 帳號密碼（`pikpaktui login` 使用） |
 | `PIKPAK_DRIVE_BASE_URL` | 覆寫 PikPak Drive API 位址 |

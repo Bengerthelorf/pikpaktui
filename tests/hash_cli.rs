@@ -38,6 +38,7 @@ impl Sandbox {
             .args(args)
             .current_dir(&self.0)
             .env_clear()
+            .env("PIKPAKTUI_CONFIG_DIR", self.config_dir())
             .env("HOME", &home)
             .env("USERPROFILE", &home)
             .env("XDG_CONFIG_HOME", home.join(".config"))
@@ -67,7 +68,7 @@ impl Sandbox {
     }
 
     fn config_dir(&self) -> PathBuf {
-        self.0.join("home/.config/pikpaktui")
+        self.0.join("isolated-config")
     }
 }
 
@@ -103,6 +104,7 @@ fn hashes_official_vectors_without_login_or_creating_state() {
         );
     }
     assert_eq!(fs::read_dir(sandbox.0.join("home")).unwrap().count(), 0);
+    assert!(!sandbox.config_dir().exists());
 }
 
 // Losing -- handling or splitting local names fails this test.

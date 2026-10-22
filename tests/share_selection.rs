@@ -30,6 +30,7 @@ impl Request {
 
 struct Fixture {
     home: PathBuf,
+    config: PathBuf,
     base: String,
     requests: Arc<Mutex<Vec<Request>>>,
     stop: Arc<AtomicBool>,
@@ -51,7 +52,9 @@ impl Fixture {
                 Err(error) => panic!("cannot allocate test home '{}': {error}", path.display()),
             }
         };
-        let config = home.join(".config/pikpaktui");
+        // Keep the explicit app directory separate from the fake home so an
+        // ignored override fails on Unix as well as on Windows.
+        let config = home.join("isolated-config");
         std::fs::create_dir_all(&config).unwrap();
         std::fs::write(config.join("config.toml"), "update_check = 'off'\n").unwrap();
         std::fs::write(config.join("session.json"), json!({"access_token":"test-access", "refresh_token":"test-refresh", "expires_at_unix":4102444800_i64}).to_string()).unwrap();
@@ -127,6 +130,7 @@ impl Fixture {
         });
         Self {
             home,
+            config,
             base,
             requests,
             stop,
@@ -139,6 +143,7 @@ impl Fixture {
             .arg("share")
             .args(args)
             .env_clear()
+            .env("PIKPAKTUI_CONFIG_DIR", &self.config)
             .env("HOME", &self.home)
             .env("USERPROFILE", &self.home)
             .env("XDG_CONFIG_HOME", self.home.join(".config"))
@@ -178,6 +183,26 @@ impl Drop for Fixture {
             joined.unwrap();
         }
     }
+}
+
+// If settings or login credentials ignore the app-directory override, the
+// command will miss these malformed files instead of reporting their errors.
+#[test]
+fn explicit_config_directory_is_used_for_settings_and_login() {
+    let fixture = Fixture::new(false);
+    std::fs::remove_file(fixture.config.join("session.json")).unwrap();
+    std::fs::write(
+        fixture.config.join("config.toml"),
+        "update_check = 'invalid-mode'\n",
+    )
+    .unwrap();
+    std::fs::write(fixture.config.join("login.toml"), "username = [").unwrap();
+    let result = fixture.run(&["-b", "-J", "SHARE"]);
+    assert!(!result.status.success());
+    let error = String::from_utf8_lossy(&result.stderr);
+    assert!(error.contains("failed to parse config.toml"), "{error}");
+    assert!(error.contains("failed to parse login.toml"), "{error}");
+    assert!(fixture.requests.lock().unwrap().is_empty());
 }
 
 // A wrong parent query, missing pagination, or widening selection to all entries
@@ -314,7 +339,7 @@ fn root_save_default_still_saves_all_root_entries_and_decodes_password() {
 #[test]
 fn deep_share_url_fails_before_any_account_or_network_use() {
     let fixture = Fixture::new(false);
-    std::fs::remove_file(fixture.home.join(".config/pikpaktui/session.json")).unwrap();
+    std::fs::remove_file(fixture.config.join("session.json")).unwrap();
     for mode in ["-S", "-b"] {
         let result = fixture.run(&[
             mode,
@@ -331,7 +356,7 @@ fn deep_share_url_fails_before_any_account_or_network_use() {
 #[test]
 fn normalized_deep_share_routes_fail_before_any_account_or_network_use() {
     let fixture = Fixture::new(false);
-    std::fs::remove_file(fixture.home.join(".config/pikpaktui/session.json")).unwrap();
+    std::fs::remove_file(fixture.config.join("session.json")).unwrap();
     for route in [
         "folder/..",
         "folder/%2e%2e",
@@ -357,7 +382,7 @@ fn normalized_deep_share_routes_fail_before_any_account_or_network_use() {
 #[test]
 fn malformed_share_urls_fail_before_any_account_or_network_use() {
     let fixture = Fixture::new(false);
-    std::fs::remove_file(fixture.home.join(".config/pikpaktui/session.json")).unwrap();
+    std::fs::remove_file(fixture.config.join("session.json")).unwrap();
     let mut failures = Vec::new();
     for input in [
         "https:/mypikpak.com/s/SHARE/folder/..",
@@ -405,7 +430,7 @@ fn malformed_share_urls_fail_before_any_account_or_network_use() {
 #[test]
 fn incompatible_selectors_modes_and_unknown_options_fail_before_network() {
     let fixture = Fixture::new(false);
-    std::fs::remove_file(fixture.home.join(".config/pikpaktui/session.json")).unwrap();
+    std::fs::remove_file(fixture.config.join("session.json")).unwrap();
     for args in [
         vec!["-S", "--wat", "SHARE"],
         vec!["-b", "--parent-id", "nested", "SHARE", "docs"],

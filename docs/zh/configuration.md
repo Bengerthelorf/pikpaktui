@@ -6,7 +6,7 @@ locale: zh
 ---
 
 
-所有配置文件位于 `~/.config/pikpaktui/` 目录下。
+凭据、设置和会话默认位于 `~/.config/pikpaktui/`。设置 `PIKPAKTUI_CONFIG_DIR` 可在所有平台上指定配置与下载状态的存储目录。空值保留默认位置；已有文件不会自动迁移。
 
 ## 账号凭据——`login.toml`
 
@@ -142,7 +142,7 @@ default  = [255, 255, 255]  # 白色
 | 文件 | 说明 |
 |------|------|
 | `session.json` | 访问令牌和刷新令牌（自动刷新） |
-| `downloads.json` | 未完成的下载状态（重启后可恢复） |
+| `downloads.json` | 未完成的下载状态（重启后可恢复），默认位于系统配置目录的 `pikpaktui/` 下 |
 
 ## 环境变量
 
@@ -150,6 +150,7 @@ default  = [255, 255, 255]  # 白色
 
 | 变量 | 说明 |
 |------|------|
+| `PIKPAKTUI_CONFIG_DIR` | 设置、凭据、会话及下载状态的存储目录；空值使用默认位置 |
 | `PIKPAK_USER` | 账号邮箱（`pikpaktui login` 使用） |
 | `PIKPAK_PASS` | 账号密码（`pikpaktui login` 使用） |
 | `PIKPAK_DRIVE_BASE_URL` | 覆盖 PikPak Drive API 地址 |

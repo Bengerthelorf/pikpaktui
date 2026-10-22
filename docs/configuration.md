@@ -5,7 +5,7 @@ order: 3
 ---
 
 
-All configuration files live under `~/.config/pikpaktui/`.
+Credentials, settings, and sessions default to `~/.config/pikpaktui/`. Set `PIKPAKTUI_CONFIG_DIR` to use another directory for configuration and saved download state on any platform. An empty value keeps the defaults; existing files are not moved.
 
 ## Credentials — `login.toml`
 
@@ -153,7 +153,7 @@ These are maintained automatically. Do not edit manually.
 | File | Description |
 |------|-------------|
 | `session.json` | Access and refresh tokens (auto-refreshed) |
-| `downloads.json` | Incomplete download state — survives restarts |
+| `downloads.json` | Incomplete download state — survives restarts; defaults to the platform configuration directory under `pikpaktui/` |
 
 ## Environment Variables
 
@@ -161,6 +161,7 @@ These override config file values. Useful for CI or per-session overrides.
 
 | Variable | Description |
 |----------|-------------|
+| `PIKPAKTUI_CONFIG_DIR` | Directory for settings, credentials, sessions, and saved download state; empty uses defaults |
 | `PIKPAK_USER` | Account email (for `pikpaktui login`) |
 | `PIKPAK_PASS` | Account password (for `pikpaktui login`) |
 | `PIKPAK_DRIVE_BASE_URL` | Override PikPak drive API endpoint |

@@ -93,8 +93,8 @@ impl AppConfig {
 }
 
 pub fn config_path() -> Result<PathBuf> {
-    let base = home_config_dir().ok_or_else(|| anyhow::anyhow!("unable to locate config dir"))?;
-    Ok(base.join("pikpaktui").join("login.toml"))
+    let base = config_dir().ok_or_else(|| anyhow::anyhow!("unable to locate config dir"))?;
+    Ok(base.join("login.toml"))
 }
 
 #[cfg(unix)]
@@ -126,8 +126,16 @@ fn write_owner_only(path: &PathBuf, data: &[u8]) -> std::io::Result<()> {
     fs::write(path, data)
 }
 
-fn home_config_dir() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".config"))
+/// An explicit application directory also isolates account state on Windows,
+/// where the home directory comes from the OS rather than HOME/USERPROFILE.
+pub(crate) fn config_dir_override() -> Option<PathBuf> {
+    env::var_os("PIKPAKTUI_CONFIG_DIR")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
+pub(crate) fn config_dir() -> Option<PathBuf> {
+    config_dir_override().or_else(|| dirs::home_dir().map(|h| h.join(".config/pikpaktui")))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
@@ -888,8 +896,8 @@ impl TuiConfig {
 
 impl TuiConfig {
     pub fn load() -> Self {
-        let path = match home_config_dir() {
-            Some(base) => base.join("pikpaktui").join("config.toml"),
+        let path = match config_dir() {
+            Some(base) => base.join("config.toml"),
             None => return Self::default(),
         };
         if !path.exists() {
@@ -916,8 +924,8 @@ impl TuiConfig {
     }
 
     pub fn save(&self) -> Result<()> {
-        let path = match home_config_dir() {
-            Some(base) => base.join("pikpaktui").join("config.toml"),
+        let path = match config_dir() {
+            Some(base) => base.join("config.toml"),
             None => return Err(anyhow::anyhow!("unable to locate config dir")),
         };
 
