@@ -174,7 +174,7 @@ pub(super) struct BrowserRequest {
 
 pub(super) enum BrowserPayload {
     Directory(Vec<Entry>),
-    InlineImage(image::DynamicImage),
+    InlineImage(super::PreparedThumbnail),
     File(Box<PreviewState>),
 }
 
@@ -186,9 +186,7 @@ pub(super) struct Cached<T> {
 #[derive(Default)]
 pub(super) struct BrowserState {
     pub directories: HashMap<String, DirectorySnapshot>,
-    pub inline_images: HashMap<String, Cached<image::DynamicImage>>,
-    pub inline_protocols: RefCell<HashMap<String, super::image_render::InlineImageProtocol>>,
-    pub preview_protocols: RefCell<HashMap<String, super::image_render::InlineImageProtocol>>,
+    pub inline_images: HashMap<String, Cached<Arc<image::DynamicImage>>>,
     pub file_previews: HashMap<String, Cached<PreviewState>>,
     pub thumbnail_previews: HashMap<String, Cached<PreviewState>>,
     pub preview_scrolls: HashMap<String, usize>,
@@ -263,12 +261,6 @@ impl BrowserState {
             .map(|(url, _, _)| url.clone())
             .collect();
         trim_cache(&mut self.inline_images, MAX_INLINE_IMAGES, &images);
-        self.inline_protocols
-            .borrow_mut()
-            .retain(|url, _| self.inline_images.contains_key(url));
-        self.preview_protocols
-            .borrow_mut()
-            .retain(|id, _| self.visible_files.borrow().contains(id));
         trim_cache(
             &mut self.file_previews,
             MAX_FILE_PREVIEWS,
@@ -289,8 +281,6 @@ impl BrowserState {
         self.file_previews.clear();
         self.thumbnail_previews.clear();
         self.inline_images.clear();
-        self.inline_protocols.borrow_mut().clear();
-        self.preview_protocols.borrow_mut().clear();
         self.failed.clear();
         // Keep running workers counted until they finish. Clearing them here
         // would let repeated refreshes exceed the concurrency limit.
@@ -889,7 +879,9 @@ impl App {
                                     None => fetch_and_render_thumbnail(url, &client),
                                 };
                                 image.map(|image| {
-                                    BrowserPayload::InlineImage(image.thumbnail(512, 512))
+                                    BrowserPayload::InlineImage(super::PreparedThumbnail::new(
+                                        image,
+                                    ))
                                 })
                             }
                             LoadKey::File(id) => {
@@ -900,7 +892,7 @@ impl App {
                                     super::fetch_entry_thumbnail(&entry, &client).map(|image| {
                                         BrowserPayload::File(Box::new(
                                             PreviewState::ThumbnailImage {
-                                                image: image.thumbnail(512, 512),
+                                                image: Arc::new(image.thumbnail(512, 512)),
                                             },
                                         ))
                                     })
@@ -969,19 +961,12 @@ impl App {
                 }
             }
             Ok(BrowserPayload::InlineImage(image)) => {
-                self.image_render_cache.borrow_mut().clear();
                 if let LoadKey::InlineImage(url) = request.key {
-                    if let Some(entry) = self.browser.thumbnail_entries.borrow().get(&url) {
-                        self.browser
-                            .preview_protocols
-                            .borrow_mut()
-                            .remove(&entry.id);
-                    }
                     self.browser.thumbnail_previews.insert(
                         url.clone(),
                         Cached {
                             value: PreviewState::ThumbnailImage {
-                                image: image.clone(),
+                                image: image.preview,
                             },
                             touched: Instant::now(),
                         },
@@ -989,16 +974,14 @@ impl App {
                     self.browser.inline_images.insert(
                         url,
                         Cached {
-                            value: image.thumbnail(96, 96),
+                            value: image.inline,
                             touched: Instant::now(),
                         },
                     );
                 }
             }
             Ok(BrowserPayload::File(state)) => {
-                self.image_render_cache.borrow_mut().clear();
                 if let LoadKey::File(id) = request.key {
-                    self.browser.preview_protocols.borrow_mut().remove(&id);
                     self.browser.file_previews.insert(
                         id,
                         Cached {
@@ -1504,9 +1487,9 @@ mod tests {
         let request = app.browser.in_flight.values().next().unwrap().clone();
         app.apply_browser_result(
             request,
-            Ok(BrowserPayload::InlineImage(image::DynamicImage::new_rgb8(
-                512, 256,
-            ))),
+            Ok(BrowserPayload::InlineImage(
+                super::super::PreparedThumbnail::new(image::DynamicImage::new_rgb8(512, 256)),
+            )),
         );
         assert!(matches!(
             app.file_preview_state(0),
@@ -1539,7 +1522,9 @@ mod tests {
         app.result_tx
             .send(OpResult::PreviewThumbnail(
                 request,
-                Ok(image::DynamicImage::new_rgb8(300, 150)),
+                Ok(super::super::PreparedThumbnail::new(
+                    image::DynamicImage::new_rgb8(300, 150),
+                )),
             ))
             .unwrap();
         app.poll_results();

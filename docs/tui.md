@@ -77,6 +77,8 @@ Uploads run in the background with hashing, transfer and server-finalization sta
 
 Text preview popups support `j/k`, arrow keys, mouse scrolling, `PageUp/PageDown`, `Home/End` and `Esc/q` to close. Local path completion runs in the background. Empty, loading and failed folders have distinct messages; press `r` to retry a failed listing or preview.
 
+Image resizing and terminal-protocol encoding also run in the background. A loading card stays visible while an image is being prepared; scrolling, navigation and closing the view remain available.
+
 ### Inline thumbnails
 
 Files with an available thumbnail link show a tiny thumbnail before the filename,

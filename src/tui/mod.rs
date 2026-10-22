@@ -98,7 +98,7 @@ enum PreviewState {
         truncated: bool,
     },
     ThumbnailImage {
-        image: image::DynamicImage,
+        image: Arc<image::DynamicImage>,
     },
 }
 
@@ -289,7 +289,7 @@ enum OpResult {
     PreviewLs(AsyncRequest, Result<Vec<Entry>>),
     PreviewInfo(AsyncRequest, Result<FileInfoResponse>),
     PreviewText(AsyncRequest, Result<PreparedTextPreview>),
-    PreviewThumbnail(AsyncRequest, Result<image::DynamicImage>),
+    PreviewThumbnail(AsyncRequest, Result<PreparedThumbnail>),
     OfflineTasks(AsyncRequest, Result<crate::pikpak::OfflineListResponse>),
     PlayInfo(AsyncRequest, Result<FileInfoResponse>),
     PlayPickerInfo(AsyncRequest, Result<(FileInfoResponse, Vec<PlayOption>)>),
@@ -409,7 +409,7 @@ enum InputMode {
         request_id: u64,
         target_id: String,
         info: FileInfoResponse,
-        image: Option<image::DynamicImage>,
+        image: Option<Arc<image::DynamicImage>>,
         has_thumbnail: bool,
     },
     InfoFolderView {
@@ -1127,7 +1127,6 @@ impl App {
                         continue;
                     }
                     self.preview_request = None;
-                    self.image_render_cache.borrow_mut().clear();
                     self.browser
                         .failed
                         .remove(&browser::LoadKey::File(request.target.clone()));
@@ -1135,26 +1134,21 @@ impl App {
                         request.target.clone(),
                         browser::Cached {
                             value: PreviewState::ThumbnailImage {
-                                image: image.thumbnail(512, 512),
+                                image: Arc::clone(&image.preview),
                             },
                             touched: Instant::now(),
                         },
                     );
-                    self.browser
-                        .preview_protocols
-                        .borrow_mut()
-                        .remove(&request.target);
                     if let Some(entry) = self.current_entry()
                         && let Some(url) = browser::inline_thumbnail_url(entry).map(str::to_owned)
                     {
                         self.browser
                             .failed
                             .remove(&browser::LoadKey::InlineImage(url.clone()));
-                        self.browser.inline_protocols.borrow_mut().remove(&url);
                         self.browser.inline_images.insert(
                             url.clone(),
                             browser::Cached {
-                                value: image.thumbnail(96, 96),
+                                value: Arc::clone(&image.inline),
                                 touched: Instant::now(),
                             },
                         );
@@ -1162,13 +1156,15 @@ impl App {
                             url,
                             browser::Cached {
                                 value: PreviewState::ThumbnailImage {
-                                    image: image.thumbnail(512, 512),
+                                    image: Arc::clone(&image.preview),
                                 },
                                 touched: Instant::now(),
                             },
                         );
                     }
-                    self.preview_state = PreviewState::ThumbnailImage { image };
+                    self.preview_state = PreviewState::ThumbnailImage {
+                        image: image.preview,
+                    };
                 }
                 OpResult::PreviewThumbnail(request, Err(e)) => {
                     if !self.preview_request_matches(&request) {
@@ -1270,8 +1266,7 @@ impl App {
                     if *request_id != request.id || target_id != &request.target {
                         continue;
                     }
-                    self.image_render_cache.borrow_mut().clear();
-                    *image = Some(img);
+                    *image = Some(Arc::new(img));
                     self.modal_request = None;
                 }
                 OpResult::InfoThumbnail(request, Err(e)) => {
@@ -1849,7 +1844,10 @@ impl App {
                             request,
                             crate::pikpak::interactive::with_deadline(
                                 Duration::from_secs(5),
-                                || fetch_entry_thumbnail(&entry, &client),
+                                || {
+                                    fetch_entry_thumbnail(&entry, &client)
+                                        .map(PreparedThumbnail::new)
+                                },
                             ),
                         ));
                     });
@@ -1912,6 +1910,22 @@ static SYNTAX_SET: LazyLock<syntect::parsing::SyntaxSet> =
     LazyLock::new(syntect::parsing::SyntaxSet::load_defaults_newlines);
 static THEME_SET: LazyLock<syntect::highlighting::ThemeSet> =
     LazyLock::new(syntect::highlighting::ThemeSet::load_defaults);
+
+struct PreparedThumbnail {
+    preview: Arc<image::DynamicImage>,
+    inline: Arc<image::DynamicImage>,
+}
+impl PreparedThumbnail {
+    fn new(image: image::DynamicImage) -> Self {
+        let inline = Arc::new(image.thumbnail(96, 96));
+        let preview = Arc::new(if image.width() > 512 || image.height() > 512 {
+            image.thumbnail(512, 512)
+        } else {
+            image
+        });
+        Self { preview, inline }
+    }
+}
 
 struct PreparedTextPreview {
     name: String,

@@ -11,7 +11,7 @@ use crate::pikpak::{Entry, EntryKind};
 use crate::theme;
 
 use super::completion::PathInput;
-use super::image_render::{center_image_rect, upscale_for_rect};
+use super::image_render::{ImageMode, center_image_rect};
 use super::local_completion::LocalPathInput;
 use super::widgets;
 use super::{
@@ -556,6 +556,7 @@ impl App {
     }
 
     pub(super) fn draw(&self, f: &mut Frame) {
+        self.image_render_cache.borrow_mut().begin_frame();
         self.play_quality_area.set(Rect::default());
         self.mouse_list_area.set(Rect::default());
         self.mouse_list_visible.set(0);
@@ -618,6 +619,7 @@ impl App {
             }
             _ => self.draw_main(f),
         }
+        self.image_render_cache.borrow_mut().finish_frame();
     }
 
     pub(super) fn styled_block(&self) -> Block<'static> {
@@ -633,8 +635,6 @@ impl App {
         self.config.color_scheme == ColorScheme::Vibrant
     }
 
-    /// Returns `(border, title)` colors for a single base color.
-    /// In vibrant mode, both are the light variant; otherwise both are `base`.
     fn themed_colors(&self, base: Color) -> (Color, Color) {
         if self.is_vibrant() {
             let v = vibrant(base);
@@ -1270,56 +1270,41 @@ impl App {
                     self.config.thumbnail_mode.should_use_color()
                 };
 
+                let id = format!(
+                    "preview:{}",
+                    entry.map_or("manual-preview", |entry| entry.id.as_str())
+                );
                 match render_mode {
                     ThumbnailRenderMode::Auto => {
-                        let mut used_protocol = false;
-                        if let Some(picker) = picker
-                            && let Some(entry) = entry
-                        {
-                            let render_rect = center_image_rect(image, image_area);
-                            used_protocol = self.draw_cached_preview_image(
+                        if let Some(picker) = picker.filter(|_| {
+                            !self.show_help_sheet
+                                && !(self.show_logs_overlay
+                                    && image_area.intersects(self.logs_overlay_area.get()))
+                        }) {
+                            self.draw_prepared_image(
                                 f,
-                                render_rect,
-                                entry,
+                                center_image_rect(image, image_area),
+                                &id,
                                 image,
-                                &picker,
+                                ImageMode::Native(picker),
+                                2,
                             );
-                        }
-                        // Fallback to halfblock when no protocol is available
-                        if !used_protocol {
-                            let colored_lines = self.cached_image_lines(
-                                entry.map_or("manual-preview", |entry| entry.id.as_str()),
+                        } else {
+                            self.draw_prepared_image(
+                                f,
+                                image_area,
+                                &id,
                                 image,
-                                image_area.width as u32,
-                                image_area.height as u32,
-                                false,
+                                ImageMode::Colored,
+                                2,
                             );
-                            let colored_para = Paragraph::new(Text::from(colored_lines));
-                            f.render_widget(colored_para, image_area);
                         }
                     }
                     ThumbnailRenderMode::ColoredHalf => {
-                        let colored_lines = self.cached_image_lines(
-                            entry.map_or("manual-preview", |entry| entry.id.as_str()),
-                            image,
-                            image_area.width as u32,
-                            image_area.height as u32,
-                            false,
-                        );
-                        let colored_para = Paragraph::new(Text::from(colored_lines));
-                        f.render_widget(colored_para, image_area);
+                        self.draw_prepared_image(f, image_area, &id, image, ImageMode::Colored, 2)
                     }
                     ThumbnailRenderMode::Grayscale => {
-                        let ascii_lines = self.cached_image_lines(
-                            entry.map_or("manual-preview", |entry| entry.id.as_str()),
-                            image,
-                            image_area.width as u32,
-                            image_area.height as u32,
-                            true,
-                        );
-                        let ascii_para = Paragraph::new(Text::from(ascii_lines))
-                            .style(Style::default().fg(Color::DarkGray));
-                        f.render_widget(ascii_para, image_area);
+                        self.draw_prepared_image(f, image_area, &id, image, ImageMode::Grayscale, 2)
                     }
                     ThumbnailRenderMode::Off => {}
                 }
@@ -3213,7 +3198,7 @@ impl App {
         &self,
         f: &mut Frame,
         info: &crate::pikpak::FileInfoResponse,
-        image: Option<&image::DynamicImage>,
+        image: Option<&std::sync::Arc<image::DynamicImage>>,
         has_thumbnail: bool,
     ) {
         let has_thumb = has_thumbnail;
@@ -3365,7 +3350,7 @@ impl App {
 
         if has_thumb {
             use crate::config::ThumbnailRenderMode;
-            use ratatui_image::{StatefulImage, picker::Picker};
+            use ratatui_image::picker::Picker;
 
             let inner_h = area.height.saturating_sub(2);
             let footer_h = footer_lines.len() as u16;
@@ -3445,79 +3430,34 @@ impl App {
                 } else {
                     thumb_area
                 };
+                let key = match &self.input {
+                    InputMode::InfoView {
+                        request_id,
+                        target_id,
+                        ..
+                    } => format!("info:{request_id}:{target_id}"),
+                    _ => format!("info:{}", info.id.as_deref().unwrap_or_default()),
+                };
                 match render_mode {
                     ThumbnailRenderMode::Auto => {
                         if let Some(picker) = auto_picker {
-                            let render_rect = center_image_rect(img, img_rect);
-                            let key = match &self.input {
-                                InputMode::InfoView {
-                                    request_id,
-                                    target_id,
-                                    ..
-                                } => format!("{request_id}:{target_id}"),
-                                _ => info.id.clone().unwrap_or_default(),
-                            };
-                            let mut cache = self.image_render_cache.borrow_mut();
-                            let cells = (render_rect.width, render_rect.height);
-                            if cache.modal_protocol.as_ref().is_none_or(|(id, cached)| {
-                                id != &key
-                                    || cached.cells != cells
-                                    || cached.font_size != picker.font_size()
-                                    || cached.protocol_type != picker.protocol_type()
-                            }) {
-                                cache.modal_protocol = Some((
-                                    key,
-                                    super::image_render::InlineImageProtocol {
-                                        cells,
-                                        font_size: picker.font_size(),
-                                        protocol_type: picker.protocol_type(),
-                                        protocol: picker.new_resize_protocol(upscale_for_rect(
-                                            img,
-                                            render_rect,
-                                            picker.font_size(),
-                                        )),
-                                    },
-                                ));
-                            }
-                            f.render_stateful_widget(
-                                StatefulImage::default(),
-                                render_rect,
-                                &mut cache.modal_protocol.as_mut().unwrap().1.protocol,
+                            self.draw_prepared_image(
+                                f,
+                                center_image_rect(img, img_rect),
+                                &key,
+                                img,
+                                ImageMode::Native(picker),
+                                3,
                             );
                         } else {
-                            let colored_lines = self.cached_image_lines(
-                                info.id.as_deref().unwrap_or("info"),
-                                img,
-                                thumb_col_w as u32,
-                                image_rows as u32,
-                                false,
-                            );
-                            f.render_widget(Paragraph::new(Text::from(colored_lines)), img_rect);
+                            self.draw_prepared_image(f, img_rect, &key, img, ImageMode::Colored, 3);
                         }
                     }
                     ThumbnailRenderMode::ColoredHalf => {
-                        let colored_lines = self.cached_image_lines(
-                            info.id.as_deref().unwrap_or("info"),
-                            img,
-                            thumb_col_w as u32,
-                            image_rows as u32,
-                            false,
-                        );
-                        f.render_widget(Paragraph::new(Text::from(colored_lines)), img_rect);
+                        self.draw_prepared_image(f, img_rect, &key, img, ImageMode::Colored, 3)
                     }
                     ThumbnailRenderMode::Grayscale => {
-                        let ascii_lines = self.cached_image_lines(
-                            info.id.as_deref().unwrap_or("info"),
-                            img,
-                            thumb_col_w as u32,
-                            image_rows as u32,
-                            true,
-                        );
-                        f.render_widget(
-                            Paragraph::new(Text::from(ascii_lines))
-                                .style(Style::default().fg(Color::DarkGray)),
-                            img_rect,
-                        );
+                        self.draw_prepared_image(f, img_rect, &key, img, ImageMode::Grayscale, 3)
                     }
                     ThumbnailRenderMode::Off => {}
                 }

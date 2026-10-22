@@ -402,94 +402,21 @@ impl App {
         f: &mut Frame,
         area: Rect,
         url: &str,
-        image: &image::DynamicImage,
+        image: &std::sync::Arc<image::DynamicImage>,
     ) {
-        use crate::tui::image_render::InlineImageProtocol;
-        use ratatui_image::{StatefulImage, picker::ProtocolType};
-
-        if !self.has_overlay()
+        use ratatui_image::picker::ProtocolType;
+        let mode = if !self.has_overlay()
             && !self.show_help_sheet
             && !(self.show_logs_overlay && area.intersects(self.logs_overlay_area.get()))
-            && let Some(picker) = self
-                .configured_image_picker()
+        {
+            self.configured_image_picker()
                 .filter(|picker| picker.protocol_type() != ProtocolType::Halfblocks)
-        {
-            let cells = (area.width, area.height);
-            let mut protocols = self.browser.inline_protocols.borrow_mut();
-            let rebuild = protocols.get(url).is_none_or(|cached| {
-                cached.cells != cells
-                    || cached.font_size != picker.font_size()
-                    || cached.protocol_type != picker.protocol_type()
-            });
-            if rebuild {
-                protocols.insert(
-                    url.to_owned(),
-                    InlineImageProtocol {
-                        cells,
-                        font_size: picker.font_size(),
-                        protocol_type: picker.protocol_type(),
-                        protocol: picker.new_resize_protocol(upscale_for_rect(
-                            image,
-                            area,
-                            picker.font_size(),
-                        )),
-                    },
-                );
-            }
-            if let Some(cached) = protocols.get_mut(url) {
-                f.render_stateful_widget(StatefulImage::default(), area, &mut cached.protocol);
-                return;
-            }
-        }
-        // Draw after List applies the selection style, so selecting a row
-        // preserves thumbnail colors. Half blocks work on ordinary terminals.
-        let lines =
-            self.cached_image_lines(url, image, area.width as u32, area.height as u32, false);
-        f.render_widget(Paragraph::new(Text::from(lines)), area);
-    }
-
-    pub(super) fn draw_cached_preview_image(
-        &self,
-        f: &mut Frame,
-        area: Rect,
-        entry: &Entry,
-        image: &image::DynamicImage,
-        picker: &ratatui_image::picker::Picker,
-    ) -> bool {
-        use crate::tui::image_render::InlineImageProtocol;
-        if self.show_help_sheet
-            || (self.show_logs_overlay && area.intersects(self.logs_overlay_area.get()))
-        {
-            return false;
-        }
-        let cells = (area.width, area.height);
-        let mut protocols = self.browser.preview_protocols.borrow_mut();
-        if protocols.get(&entry.id).is_none_or(|cached| {
-            cached.cells != cells
-                || cached.font_size != picker.font_size()
-                || cached.protocol_type != picker.protocol_type()
-        }) {
-            protocols.insert(
-                entry.id.clone(),
-                InlineImageProtocol {
-                    cells,
-                    font_size: picker.font_size(),
-                    protocol_type: picker.protocol_type(),
-                    protocol: picker.new_resize_protocol(upscale_for_rect(
-                        image,
-                        area,
-                        picker.font_size(),
-                    )),
-                },
-            );
-        }
-        let cached = protocols.get_mut(&entry.id).unwrap();
-        f.render_stateful_widget(
-            ratatui_image::StatefulImage::default(),
-            area,
-            &mut cached.protocol,
-        );
-        true
+                .map(ImageMode::Native)
+                .unwrap_or(ImageMode::Colored)
+        } else {
+            ImageMode::Colored
+        };
+        self.draw_prepared_image(f, area, &format!("inline:{url}"), image, mode, 0);
     }
 
     pub(super) fn has_thumbnail_slot(entry: &Entry) -> bool {
@@ -712,9 +639,11 @@ mod tests {
                 entry("readme", EntryKind::File, "README.md"),
             ],
         );
-        let image = image::DynamicImage::ImageRgba8(image::RgbaImage::from_fn(24, 24, |x, y| {
-            image::Rgba([(x * 8) as u8, (y * 8) as u8, 180, 255])
-        }));
+        let image = std::sync::Arc::new(image::DynamicImage::ImageRgba8(
+            image::RgbaImage::from_fn(24, 24, |x, y| {
+                image::Rgba([(x * 8) as u8, (y * 8) as u8, 180, 255])
+            }),
+        ));
         for id in [
             "beach", "cat", "photo0", "photo1", "photo2", "photo3", "photo4", "photo5",
         ] {
@@ -742,6 +671,21 @@ mod tests {
     fn render(app: &App, width: u16, height: u16) -> Terminal<TestBackend> {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         terminal.draw(|frame| app.draw(frame)).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let was_pending = app.image_render_cache.borrow().pending_visible();
+        while app.image_render_cache.borrow().pending_visible() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "image worker did not finish"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(1));
+            let mut cache = app.image_render_cache.borrow_mut();
+            cache.poll();
+            cache.finish_frame();
+        }
+        if was_pending {
+            terminal.draw(|f| app.draw(f)).unwrap();
+        }
         terminal
     }
 
@@ -1025,7 +969,7 @@ mod tests {
             "https://example.invalid/pending".into(),
             Cached {
                 value: PreviewState::ThumbnailImage {
-                    image: image::DynamicImage::new_rgb8(16, 9),
+                    image: std::sync::Arc::new(image::DynamicImage::new_rgb8(16, 9)),
                 },
                 touched: Instant::now(),
             },
@@ -1178,13 +1122,18 @@ mod tests {
             "native image id and encoding must remain stable between frames"
         );
         assert_eq!(second.backend().buffer()[(6, 1)].symbol(), "b");
-        assert_eq!(app.browser.inline_protocols.borrow().len(), 1);
+        assert!(
+            app.image_render_cache
+                .borrow()
+                .has_native("inline:https://example.invalid/beach", None)
+        );
         app.config.inline_thumbnail_size = InlineThumbnailSize::Small;
         let resized = render(&app, 40, 10);
         assert_eq!(resized.backend().buffer()[(8, 1)].symbol(), "b");
-        assert_eq!(
-            app.browser.inline_protocols.borrow()["https://example.invalid/beach"].cells,
-            (4, 2)
+        assert!(
+            app.image_render_cache
+                .borrow()
+                .has_native("inline:https://example.invalid/beach", Some((4, 2)))
         );
         app.input = InputMode::ConfirmDelete;
         let overlay = render(&app, 40, 10);
@@ -1213,7 +1162,9 @@ mod tests {
         app.show_logs_overlay = true;
         render(&app, 120, 20);
         assert!(
-            app.browser.preview_protocols.borrow().is_empty(),
+            !app.image_render_cache
+                .borrow()
+                .has_native("preview:photo0", None),
             "a covered pane must not mark an image as transmitted"
         );
         app.show_logs_overlay = false;
@@ -1223,10 +1174,9 @@ mod tests {
         assert_ne!(first.backend().buffer(), second.backend().buffer());
         assert_eq!(second.backend().buffer(), third.backend().buffer());
         assert!(
-            app.browser
-                .preview_protocols
+            app.image_render_cache
                 .borrow()
-                .contains_key("photo0")
+                .has_native("preview:photo0", None)
         );
     }
 
