@@ -2046,7 +2046,7 @@ dependencies = [
 
 [[package]]
 name = "pikpaktui"
-version = "0.0.64"
+version = "0.0.65"
 dependencies = [
  "anyhow",
  "base64",
