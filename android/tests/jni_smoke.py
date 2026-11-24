@@ -38,9 +38,18 @@ public class NativeClient {
 """
 
 
-def smoke(library, work):
-    source = work / "NativeClient.java"
+def prepare_java_client(work, library):
+    source = work / "com" / "snaix" / "pikpak" / "NativeClient.java"
+    source.parent.mkdir(parents=True, exist_ok=True)
     source.write_text(JAVA_CLIENT)
+    subprocess.run(["javac", "-J-XX:-UsePerfData", f"-J-Djava.io.tmpdir={work}",
+                    "--release", "17", "-d", str(work), str(source)], check=True, cwd=work)
+    return ["java", "-XX:-UsePerfData", f"-Djava.io.tmpdir={work}", "--enable-native-access=ALL-UNNAMED",
+            "-cp", str(work), "com.snaix.pikpak.NativeClient", str(library)]
+
+
+def smoke(library, work):
+    java = prepare_java_client(work, library)
     session = work / "旧会话.json"
     session.write_text(json.dumps(dict(access_token="test", refresh_token="old", expires_at_unix=0)))
     upload = work / "📁.bin"
@@ -82,8 +91,7 @@ def smoke(library, work):
     ])
 
     lines = [req if isinstance(req, str) else json.dumps(req, ensure_ascii=False) for req, _ in cases]
-    run = subprocess.run(["java", "-XX:-UsePerfData", f"-Djava.io.tmpdir={work}",
-                          str(source), str(library)], cwd=work, input="\n".join(lines) + "\n",
+    run = subprocess.run(java, cwd=work, input="\n".join(lines) + "\n",
                          text=True, encoding="utf-8", stdout=subprocess.PIPE, check=True, timeout=60)
     for (req, expected), line in zip(cases, run.stdout.splitlines(), strict=True):
         reply = json.loads(line)

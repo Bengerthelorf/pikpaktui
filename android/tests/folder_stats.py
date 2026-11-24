@@ -12,7 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-from jni_smoke import JAVA_CLIENT
+from jni_smoke import prepare_java_client
 
 FILES = "/drive/v1/files"
 LIBRARY = Path(sys.argv.pop(1)).resolve(strict=True)
@@ -70,15 +70,14 @@ class FolderScans(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         cls.addClassCleanup(tmp.cleanup)
         cls.work = Path(tmp.name)
-        source = cls.work / "NativeClient.java"
-        source.write_text(JAVA_CLIENT)
+        cls.java = prepare_java_client(cls.work, LIBRARY)
         cls.http = ThreadingHTTPServer(("127.0.0.1", 0), Endpoint)
         cls.addClassCleanup(cls.http.server_close)
         threading.Thread(target=cls.http.serve_forever, daemon=True).start()
         cls.addClassCleanup(cls.http.shutdown)
         base = f"http://127.0.0.1:{cls.http.server_port}"
         cls.jvm = subprocess.Popen(
-            ["java", "-XX:-UsePerfData", f"-Djava.io.tmpdir={cls.work}", str(source), str(LIBRARY)],
+            cls.java,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, cwd=cls.work,
             env=dict(os.environ, PIKPAK_AUTH_BASE_URL=base, PIKPAK_DRIVE_BASE_URL=base,
                      NO_PROXY="127.0.0.1", no_proxy="127.0.0.1"))
@@ -166,8 +165,7 @@ class FolderScans(unittest.TestCase):
         payload = "\n".join(map(json.dumps, (dict(op="init", path=str(session)), request))) + "\n"
         base = f"http://127.0.0.1:{self.http.server_port}"
         result = subprocess.run(
-            ["java", "-XX:-UsePerfData", f"-Djava.io.tmpdir={self.work}",
-             str(self.work / "NativeClient.java"), str(LIBRARY)],
+            self.java,
             cwd=self.work, input=payload, capture_output=True, text=True, check=True, timeout=15,
             env=dict(os.environ, PIKPAK_DRIVE_BASE_URL=base, PIKPAK_AUTH_BASE_URL=base,
                      NO_PROXY="127.0.0.1", no_proxy="127.0.0.1"))
