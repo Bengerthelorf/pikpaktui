@@ -134,4 +134,56 @@ mod tests {
         );
         assert_eq!(std::env::var_os("PIKPAKTUI_PLAY_NAME"), before);
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn child_process_receives_literal_arguments_and_context() {
+        let context = PlayContext {
+            name: "--movie 'one' \"two\" $(printf injected) {path}.mkv".into(),
+            path: "/TV Shows/数据 'one' \"two\" $(printf injected).mkv".into(),
+            id: "file 'one' \"two\" $(printf injected) {name}".into(),
+        };
+        let url = "https://example.invalid/video path?name='one'&literal=$(printf injected)";
+        // The shell program is fixed; all player data reaches it as positional
+        // arguments or environment values, never as shell source. NUL records
+        // let the assertion distinguish separate arguments from joined text.
+        let script = r#"printf '%s\0' "$#" "$0" "$@" "$PIKPAKTUI_PLAY_NAME" "$PIKPAKTUI_PLAY_PATH" "$PIKPAKTUI_PLAY_ID""#;
+        let output = build_command(
+            "/bin/sh",
+            &[
+                "-c".into(),
+                script.into(),
+                "player-context-probe".into(),
+                "{name}".into(),
+                "{path}".into(),
+                "{id}".into(),
+            ],
+            url,
+            &context,
+        )
+        .unwrap()
+        .env_remove("ENV")
+        .env_remove("BASH_ENV")
+        .output()
+        .unwrap();
+
+        assert!(output.status.success(), "{output:?}");
+        assert!(output.stderr.is_empty(), "{output:?}");
+        let expected = [
+            "5",
+            "player-context-probe",
+            &context.name,
+            &context.path,
+            &context.id,
+            "--",
+            url,
+            &context.name,
+            &context.path,
+            &context.id,
+        ]
+        .into_iter()
+        .flat_map(|value| value.bytes().chain(std::iter::once(0)))
+        .collect::<Vec<_>>();
+        assert_eq!(output.stdout, expected);
+    }
 }
