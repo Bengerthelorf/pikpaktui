@@ -388,6 +388,8 @@ pikpaktui share -S --parent-id FOLDER_ID --file-id FILE_ID -n -J "https://mypikp
 pikpaktui share -S --parent-id FOLDER_ID --file-id FILE_ID -t /Downloads "https://mypikpak.com/s/XXXX"
 ```
 
+转存成功表示服务端已完成转存，且选中文件已放入 `--to` 指定目录（默认网盘根目录）。如果无法确认转存完成或目标位置，命令会报错并附上可用的任务或文件 ID。重试前请先核对这些结果，因为文件可能已经转存。
+
 `/s/XXXX/folder/file` 这样的网页深链接会被明确拒绝，避免意外转存整个分享。请使用分享根链接和明确的 ID。`-n -J` 输出含 `dry_run`、`would_save`、`to`、`files` 的 JSON 预览，不执行保存。递归遍历及转存、下载、删除流程可通过脚本组合。
 
 

@@ -399,6 +399,8 @@ pikpaktui share -S --parent-id FOLDER_ID --file-id FILE_ID -n -J "https://mypikp
 pikpaktui share -S --parent-id FOLDER_ID --file-id FILE_ID -t /Downloads "https://mypikpak.com/s/XXXX"
 ```
 
+A successful save confirms that restoration has completed and the selected files have been placed in `--to` (the drive root by default). If completion or placement cannot be confirmed, the command reports an error with the available task/file IDs. Check those results before retrying: files may already have been restored.
+
 Deep web URLs such as `/s/XXXX/folder/file` are rejected instead of silently saving the entire share. Use the root share URL with explicit IDs. `-n -J` returns a JSON preview with `dry_run`, `would_save`, `to`, and `files`; it performs no save. Recursive traversal and save/download/delete workflows can be composed in scripts.
 
 

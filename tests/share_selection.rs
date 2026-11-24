@@ -28,6 +28,21 @@ impl Request {
     }
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum RestoreBehavior {
+    Complete,
+    CompleteFailure,
+    AsyncComplete,
+    TaskFailure,
+    Unknown,
+    MissingMapping,
+    MissingSelected,
+    ExtraMapping,
+    DuplicateDestination,
+    MoveFailure,
+    SecondBatchFailure,
+}
+
 struct Fixture {
     home: PathBuf,
     config: PathBuf,
@@ -39,6 +54,10 @@ struct Fixture {
 
 impl Fixture {
     fn new(duplicate_id: bool) -> Self {
+        Self::with_restore(duplicate_id, RestoreBehavior::Complete)
+    }
+
+    fn with_restore(duplicate_id: bool, behavior: RestoreBehavior) -> Self {
         static NEXT_HOME: AtomicUsize = AtomicUsize::new(0);
         let home = loop {
             let sequence = NEXT_HOME.fetch_add(1, Ordering::Relaxed);
@@ -66,6 +85,9 @@ impl Fixture {
         let captured = Arc::clone(&requests);
         let stopped = Arc::clone(&stop);
         let handle = thread::spawn(move || {
+            let mut restore_count = 0;
+            let mut task_polls = 0;
+            let mut restored_mapping = json!({});
             while !stopped.load(Ordering::SeqCst) {
                 let (mut stream, _) = match listener.accept() {
                     Ok(connection) => connection,
@@ -113,19 +135,72 @@ impl Fixture {
                     serde_json::from_slice(&bytes[header_end..header_end + content_len]).unwrap()
                 };
                 let request = Request { method, url, body };
+                let mut status = "200 OK";
                 let response = match request.url.path() {
                     "/drive/v1/share" => json!({"share_status":"OK", "pass_code_token":"share-token"}),
                     "/drive/v1/share/detail" => match (request.query("parent_id").as_deref(), request.query("page_token").as_deref()) {
                         (Some("nested"), None) => json!({"files":[{"id":"first", "name":"first.txt", "kind":"drive#file", "size":"7"}], "next_page_token":"next"}),
                         (Some("nested"), Some("next")) => json!({"files":[{"id":if duplicate_id { "first" } else { "second" }, "name":"second.txt", "kind":"drive#file", "size":"9"}]}),
+                        (Some(""), None) if behavior == RestoreBehavior::SecondBatchFailure => json!({"files": (0..501).map(|i| json!({"id":format!("file-{i}"),"name":format!("file-{i}.txt"),"kind":"drive#file","size":"1"})).collect::<Vec<_>>()}),
                         (Some(""), None) => json!({"files":[{"id":"nested", "name":"docs", "kind":"drive#folder"}, {"id":"other", "name":"unselected.txt", "kind":"drive#file", "size":"11"}]}),
                         _ => panic!("unexpected folder request: {request:?}"),
                     },
-                    "/drive/v1/share/restore" => json!({}),
+                    "/drive/v1/share/restore" => {
+                        restore_count += 1;
+                        restored_mapping = Value::Object(request.body["file_ids"].as_array().unwrap().iter().map(|id| {
+                            let id = id.as_str().unwrap();
+                            (id.to_owned(), json!(format!("saved-{id}")))
+                        }).collect());
+                        match behavior {
+                            RestoreBehavior::CompleteFailure => json!({"share_status":"OK","restore_status":"RESTORE_COMPLETE","file_id":"shared-default","params":{"trace_file_ids":restored_mapping.to_string(),"error_detail":"file_space_not_enough"}}),
+                            RestoreBehavior::Unknown => json!({}),
+                            RestoreBehavior::MissingMapping => json!({"share_status":"OK","restore_status":"RESTORE_COMPLETE","file_id":"shared-default"}),
+                            RestoreBehavior::AsyncComplete | RestoreBehavior::TaskFailure => json!({"share_status":"OK","restore_status":"RESTORE_START","restore_task_id":"restore-task","file_id":"shared-default","params":{}}),
+                            RestoreBehavior::SecondBatchFailure if restore_count == 2 => {
+                                status = "400 Bad Request";
+                                json!({"error":"file_space_not_enough"})
+                            },
+                            _ => {
+                                if behavior == RestoreBehavior::MissingSelected {
+                                    restored_mapping.as_object_mut().unwrap().remove("second");
+                                } else if behavior == RestoreBehavior::ExtraMapping {
+                                    restored_mapping["unselected"] = json!("saved-unselected");
+                                } else if behavior == RestoreBehavior::DuplicateDestination {
+                                    for id in restored_mapping.as_object_mut().unwrap().values_mut() {
+                                        *id = json!("saved-same");
+                                    }
+                                }
+                                json!({"share_status":"OK","restore_status":"RESTORE_COMPLETE","file_id":"shared-default","params":{"trace_file_ids":restored_mapping.to_string()}})
+                            }
+                        }
+                    },
+                    "/drive/v1/tasks/restore-task" => {
+                        task_polls += 1;
+                        if behavior == RestoreBehavior::TaskFailure {
+                            json!({"id":"restore-task","phase":"PHASE_TYPE_ERROR","message":"restore failed","params":{"error_detail":"file_space_not_enough"}})
+                        } else if task_polls == 1 {
+                            // Early mappings are not proof that the task completed.
+                            json!({"id":"restore-task","phase":"PHASE_TYPE_RUNNING","params":{"trace_file_ids":restored_mapping.to_string()}})
+                        } else {
+                            json!({"id":"restore-task","phase":"PHASE_TYPE_COMPLETE","params":{"trace_file_ids":restored_mapping.to_string()}})
+                        }
+                    },
+                    "/drive/v1/files" => json!({"files":[
+                        {"id":"destination-id","name":"destination","kind":"drive#folder","size":"0"},
+                        {"id":"regular-file","name":"report.txt","kind":"drive#file","size":"10"}
+                    ]}),
+                    "/drive/v1/files:batchMove" => {
+                        if behavior == RestoreBehavior::MoveFailure {
+                            status = "400 Bad Request";
+                            json!({"error":"destination unavailable"})
+                        } else {
+                            json!({})
+                        }
+                    },
                     _ => panic!("unexpected request: {request:?}"),
                 }.to_string();
                 captured.lock().unwrap().push(request);
-                write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", response.len(), response).unwrap();
+                write!(stream, "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", response.len(), response).unwrap();
             }
         });
         Self {
@@ -237,14 +312,40 @@ fn save_selected_nested_ids_across_pages_deduplicates_restore_payload() {
         json!([{"id":"second", "name":"second.txt"}, {"id":"first", "name":"first.txt"}])
     );
     let requests = fixture.requests.lock().unwrap();
-    assert_eq!(requests.len(), 4);
+    assert_eq!(requests.len(), 5);
     assert_eq!(requests[1].query("parent_id").as_deref(), Some("nested"));
     assert_eq!(requests[2].query("page_token").as_deref(), Some("next"));
     assert_eq!(requests[3].method, "POST");
     assert_eq!(requests[3].url.path(), "/drive/v1/share/restore");
     assert_eq!(
         requests[3].body,
-        json!({"share_id":"SHARE", "pass_code_token":"share-token", "file_ids":["second", "first"], "to":{"parent_id":""}})
+        json!({"share_id":"SHARE", "pass_code_token":"share-token", "file_ids":["second", "first"], "params":{"trace_file_ids":"second,first"}})
+    );
+    assert_eq!(requests[4].url.path(), "/drive/v1/files:batchMove");
+    assert_eq!(
+        requests[4].body,
+        json!({"ids":["saved-second","saved-first"],"to":{"parent_id":""}})
+    );
+}
+
+#[test]
+fn save_to_regular_file_fails_before_restore_in_preview_and_write_modes() {
+    let fixture = Fixture::new(false);
+    for dry_run in [true, false] {
+        let mut args = vec!["-S", "--to", "/report.txt", "SHARE"];
+        if dry_run {
+            args.push("--dry-run");
+        }
+        let result = fixture.run(&args);
+        assert!(!result.status.success());
+        assert!(String::from_utf8_lossy(&result.stderr).contains("folder not found"));
+    }
+    let requests = fixture.requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert!(
+        requests
+            .iter()
+            .all(|request| request.method == "GET" && request.url.path() == "/drive/v1/files")
     );
 }
 
@@ -465,4 +566,183 @@ fn incompatible_selectors_modes_and_unknown_options_fail_before_network() {
         );
     }
     assert!(fixture.requests.lock().unwrap().is_empty());
+}
+
+#[test]
+fn restore_waits_for_completion_then_moves_only_selected_new_ids() {
+    let fixture = Fixture::with_restore(false, RestoreBehavior::AsyncComplete);
+    let result = Fixture::output_json(fixture.run(&[
+        "-S",
+        "-J",
+        "--parent-id",
+        "nested",
+        "--file-id",
+        "second",
+        "-t",
+        "/destination",
+        "SHARE",
+    ]));
+    assert_eq!(result["saved"], 1);
+    assert_eq!(result["to"], "/destination");
+    let requests = fixture.requests.lock().unwrap();
+    let writes: Vec<_> = requests.iter().filter(|r| r.method == "POST").collect();
+    assert_eq!(writes.len(), 2);
+    assert_eq!(writes[0].body["file_ids"], json!(["second"]));
+    assert_eq!(writes[0].body["params"]["trace_file_ids"], "second");
+    assert!(writes[0].body.get("to").is_none());
+    assert_eq!(
+        writes[1].body,
+        json!({"ids":["saved-second"],"to":{"parent_id":"destination-id"}})
+    );
+    let polls: Vec<_> = requests
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| r.url.path() == "/drive/v1/tasks/restore-task")
+        .collect();
+    assert_eq!(polls.len(), 2, "must wait beyond an early trace mapping");
+    assert_eq!(
+        requests.last().unwrap().url.path(),
+        "/drive/v1/files:batchMove"
+    );
+}
+
+#[test]
+fn restore_task_failure_is_not_reported_as_saved_or_retried() {
+    let fixture = Fixture::with_restore(false, RestoreBehavior::TaskFailure);
+    let result = fixture.run(&["-S", "-J", "SHARE"]);
+    assert!(!result.status.success());
+    assert!(result.stdout.is_empty());
+    let error = String::from_utf8_lossy(&result.stderr);
+    assert!(error.contains("restore-task"), "{error}");
+    assert!(error.contains("file_space_not_enough"), "{error}");
+    let requests = fixture.requests.lock().unwrap();
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|r| r.url.path() == "/drive/v1/share/restore")
+            .count(),
+        1
+    );
+    assert!(
+        requests
+            .iter()
+            .all(|r| r.url.path() != "/drive/v1/files:batchMove")
+    );
+}
+
+#[test]
+fn restore_unknown_or_incomplete_mapping_never_reports_saved_or_moves_files() {
+    for behavior in [
+        RestoreBehavior::Unknown,
+        RestoreBehavior::MissingMapping,
+        RestoreBehavior::MissingSelected,
+        RestoreBehavior::ExtraMapping,
+        RestoreBehavior::DuplicateDestination,
+    ] {
+        let fixture = Fixture::with_restore(false, behavior);
+        let result = fixture.run(&["-S", "-J", "--parent-id", "nested", "SHARE"]);
+        assert!(!result.status.success());
+        assert!(result.stdout.is_empty());
+        let error = String::from_utf8_lossy(&result.stderr);
+        assert!(
+            error.contains("accepted") || error.contains("restored"),
+            "{error}"
+        );
+        assert!(error.contains("resubmit"), "{error}");
+        let requests = fixture.requests.lock().unwrap();
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|r| r.url.path() == "/drive/v1/share/restore")
+                .count(),
+            1
+        );
+        assert!(
+            requests
+                .iter()
+                .all(|r| r.url.path() != "/drive/v1/files:batchMove")
+        );
+    }
+}
+
+#[test]
+fn move_failure_preserves_restored_ids_and_does_not_repeat_restore() {
+    let fixture = Fixture::with_restore(false, RestoreBehavior::MoveFailure);
+    let result = fixture.run(&[
+        "-S",
+        "-J",
+        "--parent-id",
+        "nested",
+        "--file-id",
+        "second",
+        "SHARE",
+    ]);
+    assert!(!result.status.success());
+    assert!(result.stdout.is_empty());
+    let error = String::from_utf8_lossy(&result.stderr);
+    assert!(error.contains("saved-second"), "{error}");
+    assert!(error.contains("restored"), "{error}");
+    assert!(error.contains("resubmit"), "{error}");
+    let requests = fixture.requests.lock().unwrap();
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|r| r.url.path() == "/drive/v1/share/restore")
+            .count(),
+        1
+    );
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|r| r.url.path() == "/drive/v1/files:batchMove")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn restore_batches_keep_completed_progress_and_never_replay_first_batch() {
+    let fixture = Fixture::with_restore(false, RestoreBehavior::SecondBatchFailure);
+    let result = fixture.run(&["-S", "-J", "SHARE"]);
+    assert!(!result.status.success());
+    assert!(result.stdout.is_empty());
+    let error = String::from_utf8_lossy(&result.stderr);
+    assert!(error.contains("500/501"), "{error}");
+    let requests = fixture.requests.lock().unwrap();
+    let restores: Vec<_> = requests
+        .iter()
+        .filter(|r| r.url.path() == "/drive/v1/share/restore")
+        .collect();
+    assert_eq!(restores.len(), 2);
+    assert_eq!(restores[0].body["file_ids"].as_array().unwrap().len(), 500);
+    assert_eq!(restores[1].body["file_ids"], json!(["file-500"]));
+    let moves: Vec<_> = requests
+        .iter()
+        .filter(|r| r.url.path() == "/drive/v1/files:batchMove")
+        .collect();
+    assert_eq!(moves.len(), 1);
+    assert_eq!(moves[0].body["ids"].as_array().unwrap().len(), 500);
+}
+
+#[test]
+fn completed_restore_with_error_detail_is_not_moved_or_reported_as_saved() {
+    let fixture = Fixture::with_restore(false, RestoreBehavior::CompleteFailure);
+    let result = fixture.run(&["-S", "-J", "SHARE"]);
+    assert!(!result.status.success());
+    assert!(result.stdout.is_empty());
+    let error = String::from_utf8_lossy(&result.stderr);
+    assert!(error.contains("file_space_not_enough"), "{error}");
+    let requests = fixture.requests.lock().unwrap();
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|r| r.url.path() == "/drive/v1/share/restore")
+            .count(),
+        1
+    );
+    assert!(
+        requests
+            .iter()
+            .all(|r| r.url.path() != "/drive/v1/files:batchMove")
+    );
 }

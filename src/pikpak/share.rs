@@ -1,10 +1,73 @@
 use anyhow::{Context, Result, anyhow};
 use std::collections::HashSet;
+use std::time::{Duration, Instant};
+
+use super::mutation::{MutationProgress, batch_mutation_error, pending};
 
 use super::{
     CreateShareResponse, MyShare, PikPak, ShareEntry, ShareInfoResponse, ShareListResponse,
     json_or_api_error,
 };
+
+fn valid_restore_id(id: &str) -> bool {
+    !id.is_empty()
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+}
+
+fn restore_receipt(value: &serde_json::Value) -> String {
+    let id = |key: &str| {
+        value[key]
+            .as_str()
+            .filter(|id| valid_restore_id(id))
+            .unwrap_or("unknown")
+    };
+    format!(
+        "task {}, result folder {}",
+        id("restore_task_id"),
+        id("file_id")
+    )
+}
+
+fn restore_error_detail(value: &serde_json::Value) -> Option<String> {
+    match value["params"].get("error_detail") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(detail)) if detail.is_empty() => None,
+        Some(serde_json::Value::String(detail)) => Some(super::sanitize(detail)),
+        Some(detail) => Some(super::sanitize(&detail.to_string())),
+    }
+}
+
+fn restore_result_ids(value: &serde_json::Value, requested: &[&str]) -> Result<Vec<String>> {
+    let raw = value["params"]["trace_file_ids"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing trace_file_ids mapping"))?;
+    let trace: serde_json::Value =
+        serde_json::from_str(raw).context("invalid trace_file_ids JSON")?;
+    let mapping = trace
+        .as_object()
+        .ok_or_else(|| anyhow!("trace_file_ids must be an ID mapping"))?;
+    if mapping.len() != requested.len() {
+        return Err(anyhow!(
+            "trace_file_ids does not exactly cover the selected files"
+        ));
+    }
+    let mut result = Vec::with_capacity(requested.len());
+    let mut seen = HashSet::new();
+    for source in requested {
+        let destination = mapping
+            .get(*source)
+            .and_then(serde_json::Value::as_str)
+            .filter(|id| valid_restore_id(id))
+            .ok_or_else(|| anyhow!("missing or invalid restored ID for a selected file"))?;
+        if !seen.insert(destination) {
+            return Err(anyhow!("trace_file_ids contains duplicate restored IDs"));
+        }
+        result.push(destination.to_owned());
+    }
+    Ok(result)
+}
 
 impl PikPak {
     pub fn share_info(&self, share_id: &str, pass_code: &str) -> Result<ShareInfoResponse> {
@@ -35,21 +98,164 @@ impl PikPak {
         file_ids: &[&str],
         to_parent_id: &str,
     ) -> Result<()> {
-        let result = self.batch_mutation(
-            "save share",
-            "drive/v1/share/restore",
-            file_ids,
-            "file_ids",
-            serde_json::json!({"share_id": share_id, "pass_code_token": pass_code_token,
-                "to": {"parent_id": to_parent_id}}),
-        );
-        result.map_err(|e| {
-            if format!("{e:#}").contains("file_restore_own") {
-                anyhow!("cannot save: these files already belong to your account")
-            } else {
-                e
+        if file_ids.iter().any(|id| !valid_restore_id(id))
+            || (!to_parent_id.is_empty() && !valid_restore_id(to_parent_id))
+            || file_ids.iter().copied().collect::<HashSet<_>>().len() != file_ids.len()
+        {
+            return Err(anyhow!(
+                "save share requires distinct valid file IDs and a valid destination ID"
+            ));
+        }
+        let mut completed = 0;
+        let mut placed_ids = HashSet::new();
+        for chunk in file_ids.chunks(500) {
+            let mut accepted = false;
+            let result = (|| {
+                let payload = serde_json::json!({
+                    "share_id": share_id,
+                    "pass_code_token": pass_code_token,
+                    "file_ids": chunk,
+                    "params": { "trace_file_ids": chunk.join(",") },
+                });
+                let rb = self
+                    .http
+                    .post(self.drive_url("drive/v1/share/restore"))
+                    .bearer_auth(self.access_token()?)
+                    .json(&payload);
+                let response = self.send_authed("save share", rb).map_err(|error| {
+                    if error.downcast_ref::<reqwest::Error>().is_some() {
+                        // A lost response does not prove the POST was rejected.
+                        accepted = true;
+                        self.clear_ls_cache();
+                        pending(format!(
+                            "save share request outcome unknown; files may already be restored. Check the cloud drive before resubmitting: {error:#}"
+                        ))
+                    } else if format!("{error:#}").contains("file_restore_own") {
+                        error.context("cannot save: these files already belong to your account")
+                    } else {
+                        error
+                    }
+                })?;
+                accepted = true;
+                self.clear_ls_cache();
+                let value: serde_json::Value = response.json().map_err(|error| {
+                    pending(format!(
+                        "save share accepted but its response could not be read; files may already be restored. Check the cloud drive before resubmitting: {error}"
+                    ))
+                })?;
+                let receipt = restore_receipt(&value);
+                if let Some(detail) = restore_error_detail(&value) {
+                    return Err(anyhow!(
+                        "save share accepted ({receipt}) but failed: {detail}; files may have been partially restored, check before resubmitting"
+                    ));
+                }
+                if value["share_status"].as_str() != Some("OK") {
+                    return Err(pending(format!(
+                        "save share accepted ({receipt}) but share status is missing or unsuccessful; files may already be restored. Check before resubmitting"
+                    )));
+                }
+                let completed_response = match value["restore_status"].as_str() {
+                    Some("RESTORE_COMPLETE") => value,
+                    Some("RESTORE_START") => {
+                        let task_id = value["restore_task_id"]
+                            .as_str()
+                            .filter(|id| valid_restore_id(id))
+                            .ok_or_else(|| pending(format!(
+                                "save share accepted ({receipt}) but task identity is missing or invalid; files may already be restored. Check before resubmitting"
+                            )))?;
+                        self.wait_share_restore_task(task_id)?
+                    }
+                    _ => {
+                        return Err(pending(format!(
+                            "save share accepted ({receipt}) with unknown restore status; files may already be restored. Check before resubmitting"
+                        )));
+                    }
+                };
+                let restored_ids = restore_result_ids(&completed_response, chunk)
+                    .map_err(|error| pending(format!(
+                        "save share accepted ({receipt}) but restored file IDs could not be verified: {error:#}. Files may already be restored; check before resubmitting"
+                    )))?;
+                if restored_ids.iter().any(|id| placed_ids.contains(id)) {
+                    return Err(pending(format!(
+                        "save share accepted ({receipt}) but returned IDs from an earlier completed batch; check the cloud drive before resubmitting"
+                    )));
+                }
+                let restored_refs: Vec<&str> = restored_ids.iter().map(String::as_str).collect();
+                // Share restore always uses the service's default folder. Only
+                // move exact new IDs from its receipt, never names or file_id
+                // (which identifies the shared default container).
+                self.mv(&restored_refs, to_parent_id).with_context(|| format!(
+                    "share files were restored ({receipt}) as [{}], but placement in destination '{}' failed or is unconfirmed; do not resubmit the share restore",
+                    restored_ids.join(", "),
+                    if to_parent_id.is_empty() { "/" } else { to_parent_id },
+                ))?;
+                placed_ids.extend(restored_ids);
+                Ok(())
+            })();
+            if let Err(cause) = result {
+                let pending = super::mutation_progress(&cause).pending;
+                return Err(batch_mutation_error(
+                    "save share",
+                    file_ids.len(),
+                    MutationProgress {
+                        completed_items: completed,
+                        accepted,
+                        pending,
+                    },
+                    cause,
+                ));
             }
-        })
+            completed += chunk.len();
+        }
+        Ok(())
+    }
+
+    fn wait_share_restore_task(&self, task_id: &str) -> Result<serde_json::Value> {
+        let deadline = Instant::now() + Duration::from_secs(60);
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(pending(format!(
+                    "save share accepted as task {task_id}, still processing; files may already be restored. Check this task before resubmitting"
+                )));
+            }
+            let task: serde_json::Value = (|| {
+                let rb = self
+                    .http
+                    .get(format!("{}/{task_id}", self.drive_url("drive/v1/tasks")))
+                    .bearer_auth(self.access_token()?)
+                    .timeout(remaining.min(Duration::from_secs(10)));
+                let response = self.send_authed("share restore task poll", rb)?;
+                json_or_api_error(response, "share restore task poll")
+            })().map_err(|error| pending(format!(
+                "save share accepted as task {task_id}; completion check failed and files may already be restored. Check this task before resubmitting: {error:#}"
+            )))?;
+            if task["id"].as_str() != Some(task_id) {
+                return Err(pending(format!(
+                    "save share accepted as task {task_id}, but task lookup returned a different or missing identity. Check before resubmitting"
+                )));
+            }
+            let error_detail = restore_error_detail(&task);
+            if error_detail.is_some() || task["phase"].as_str() == Some("PHASE_TYPE_ERROR") {
+                return Err(anyhow!(
+                    "save share accepted as task {task_id} but failed: {} ({}); files may have been partially restored, check before resubmitting",
+                    super::sanitize(task["message"].as_str().unwrap_or("restore task failed")),
+                    error_detail.as_deref().unwrap_or("PHASE_TYPE_ERROR"),
+                ));
+            }
+            match task["phase"].as_str() {
+                Some("PHASE_TYPE_COMPLETE") => return Ok(task),
+                Some("PHASE_TYPE_PENDING" | "PHASE_TYPE_RUNNING") => {}
+                _ => {
+                    return Err(pending(format!(
+                        "save share accepted as task {task_id}, but its phase is paused, missing or unknown; completion is unconfirmed. Check before resubmitting"
+                    )));
+                }
+            }
+            std::thread::sleep(
+                Duration::from_secs(1).min(deadline.saturating_duration_since(Instant::now())),
+            );
+        }
     }
 
     pub fn create_share(

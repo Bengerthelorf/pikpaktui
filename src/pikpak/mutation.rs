@@ -58,8 +58,23 @@ pub fn mutation_progress(error: &anyhow::Error) -> MutationProgress {
     }
 }
 
-fn pending(message: impl Into<String>) -> anyhow::Error {
+pub(super) fn pending(message: impl Into<String>) -> anyhow::Error {
     PendingMutation(message.into()).into()
+}
+
+pub(super) fn batch_mutation_error(
+    op: &str,
+    total: usize,
+    progress: MutationProgress,
+    cause: anyhow::Error,
+) -> anyhow::Error {
+    BatchMutationError {
+        op: op.into(),
+        total,
+        progress,
+        cause,
+    }
+    .into()
 }
 
 #[cfg(test)]
@@ -108,17 +123,16 @@ impl PikPak {
             })();
             if let Err(cause) = result {
                 let pending = mutation_progress(&cause).pending;
-                return Err(BatchMutationError {
-                    op: op.into(),
-                    total: ids.len(),
-                    progress: MutationProgress {
+                return Err(batch_mutation_error(
+                    op,
+                    ids.len(),
+                    MutationProgress {
                         completed_items: completed,
                         accepted,
                         pending,
                     },
                     cause,
-                }
-                .into());
+                ));
             }
             completed += chunk.len();
         }

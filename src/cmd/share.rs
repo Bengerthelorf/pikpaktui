@@ -421,7 +421,7 @@ fn run_save(args: &[String]) -> Result<()> {
     let client = super::cli_client()?;
 
     let to_parent_id = match to_path {
-        Some(path) => client.resolve_path(path)?,
+        Some(path) => client.resolve_folder(path)?,
         None => String::new(),
     };
     let dest_display = to_path.unwrap_or("/");

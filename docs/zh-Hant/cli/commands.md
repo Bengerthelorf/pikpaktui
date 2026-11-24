@@ -372,6 +372,8 @@ pikpaktui share -S --parent-id FOLDER_ID --file-id FILE_ID -n -J "https://mypikp
 pikpaktui share -S --parent-id FOLDER_ID --file-id FILE_ID -t /Downloads "https://mypikpak.com/s/XXXX"
 ```
 
+轉存成功表示伺服器已完成轉存，且選取的檔案已放入 `--to` 指定目錄（預設網盤根目錄）。如果無法確認轉存完成或目標位置，命令會報錯並附上可用的任務或檔案 ID。重試前請先核對這些結果，因為檔案可能已經轉存。
+
 `/s/XXXX/folder/file` 這類網頁深連結會被明確拒絕，避免意外轉存整個分享。請使用分享根連結與明確的 ID。`-n -J` 輸出含 `dry_run`、`would_save`、`to`、`files` 的 JSON 預覽，不執行儲存。遞迴遍歷及轉存、下載、刪除流程可透過腳本組合。
 
 
