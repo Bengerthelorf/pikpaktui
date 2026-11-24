@@ -130,6 +130,42 @@ fn browsing_scans_selected_then_visible_folders_and_global_sort_includes_the_res
 }
 
 #[test]
+fn cached_index_values_survive_failed_checks_but_never_leak_across_views() {
+    use super::folder_stats::IndexUpdate;
+    use std::collections::HashMap;
+    let mut app = app();
+    app.entries = vec![Entry {
+        kind: EntryKind::Folder,
+        ..entry("one")
+    }];
+    let start = |app: &mut App| {
+        app.folder_stats
+            .next_folder(&app.entries, [0].into_iter(), false)
+            .unwrap()
+            .1
+    };
+    let value = crate::pikpak::FolderStats {
+        total_size_bytes: 15,
+        latest_modified_time: None,
+        is_empty: false,
+    };
+    let snapshot = || HashMap::from([("one".to_owned(), value.clone())]);
+    let token = start(&mut app);
+    app.apply_folder_index(&token, IndexUpdate::Cached(snapshot()));
+    app.apply_folder_index(&token, IndexUpdate::Failed("offline".into()));
+    assert_eq!(app.folder_stats.completed("one"), Some(&value));
+    assert!(app.folder_stats.is_cached("one"));
+    app.folder_stats.leave_listing();
+    let new_token = start(&mut app);
+    app.apply_folder_index(&token, IndexUpdate::Synced(snapshot()));
+    assert!(app.folder_stats.completed("one").is_none());
+    app.apply_folder_index(&new_token, IndexUpdate::Cached(snapshot()));
+    app.apply_folder_index(&new_token, IndexUpdate::Synced(HashMap::new()));
+    assert!(app.folder_stats.completed("one").is_none());
+    assert!(!app.folder_stats.is_cached("one"));
+}
+
+#[test]
 fn folder_own_timestamp_does_not_launch_a_recursive_scan() {
     let mut app = app();
     app.input = InputMode::Normal;

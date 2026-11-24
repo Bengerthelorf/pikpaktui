@@ -5,7 +5,7 @@ order: 2
 ---
 
 
-All commands require a valid session. Run `pikpaktui` (TUI) to log in first, or use [`login`](#login).
+Cloud queries require a valid session. Run `pikpaktui` (TUI) to log in first, or use [`login`](#login).
 
 ---
 
@@ -21,10 +21,14 @@ pikpaktui ls [options] [path]
 |------|-------------|
 | `-l`, `--long` | Long format — shows ID, size, date, and name |
 | `-J`, `--json` | Output as JSON array |
-| `-s`, `--sort <field>` | Sort by: `name`, `size`, `created`, `type`, `extension`, `none` |
+| `-s`, `--sort <field>` | Sort by `name`, `size`, `created`, `modified`, `content-modified`, `type`, `extension`, `none` |
+| `--folder-stats` | Include recursive sizes and content modification times in long and JSON output. |
+| `--no-folder-stats` | Disable statistics for this invocation, overriding `cli_folder_stats = true` in `config.toml`. Conflicts with `--sort=content-modified`. |
 | `-r`, `--reverse` | Reverse sort order |
 | `--tree` | Recursive tree view |
 | `--depth=N` | Limit tree depth to N levels |
+
+The `size` sort uses recursive folder sizes with `--folder-stats`. The `content-modified` sort enables folder statistics automatically and orders by the newest descendant file. Ordinary files use their own size and modification time. The `modified` sort uses each entry’s own modification time. With folder statistics, `-l` shows the recursive size and content time (own time with `--sort=modified`) and `-J` adds a `folder_stats` object to directory entries.
 
 **Examples:**
 
@@ -38,7 +42,25 @@ pikpaktui ls --tree /                     # full recursive tree
 pikpaktui ls --tree --depth=2 "/My Pack"  # tree, max 2 levels
 pikpaktui ls --tree -l /Movies            # tree with sizes and dates
 pikpaktui ls /Movies --json               # JSON output
+pikpaktui ls -l --folder-stats --sort=size /Movies
+pikpaktui ls --sort=content-modified -J /Movies
 pikpaktui ls /Movies --json | jq '.[] | select(.size > 1073741824)'
+```
+
+---
+
+## stats
+
+Query one folder by path or PikPak ID. Omit the target for the drive root. The default query synchronizes the account index, using a complete scan the first time and deltas on subsequent queries. Accounts or services that cannot supply an index use a normal recursive listing.
+
+`--cached` reads the last committed local result offline and accepts a folder ID or the root. A missing result exits with an error. `--refresh` rebuilds the full account index before returning the requested folder.
+
+`-J` returns `total_size_bytes` as an unsigned decimal string, `latest_modified_time` as an RFC 3339 string or `null`, and `is_empty` as a boolean. An empty folder has zero bytes, no time and `is_empty=true`. A folder containing a zero-byte file has `is_empty=false`.
+
+```bash
+pikpaktui stats /Movies
+pikpaktui stats --cached --folder-id ID -J
+pikpaktui stats --refresh --json /
 ```
 
 ---

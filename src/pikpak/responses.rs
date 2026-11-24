@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ShareListResponse {
     #[serde(default)]
     pub data: Vec<MyShare>,
@@ -8,7 +8,7 @@ pub struct ShareListResponse {
     pub next_page_token: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct MyShare {
     pub share_id: String,
     pub share_url: String,
@@ -32,7 +32,7 @@ pub struct MyShare {
     pub share_status: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct CreateShareResponse {
     pub share_id: String,
     pub share_url: String,
@@ -42,7 +42,7 @@ pub struct CreateShareResponse {
     pub share_text: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ShareEntry {
     pub id: String,
     pub name: String,
@@ -50,6 +50,9 @@ pub struct ShareEntry {
     pub kind: String,
     #[serde(default)]
     pub size: Option<String>,
+    #[cfg(pikpak_android_jni)]
+    #[serde(default)]
+    pub thumbnail_link: Option<String>,
 }
 
 impl ShareEntry {
@@ -59,7 +62,7 @@ impl ShareEntry {
 }
 
 /// One page of a folder inside a share (drive/v1/share/detail).
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ShareDetailResponse {
     #[serde(default)]
     pub files: Vec<ShareEntry>,
@@ -67,19 +70,19 @@ pub struct ShareDetailResponse {
     pub next_page_token: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ShareInfoResponse {
     pub share_status: String,
     #[serde(default)]
     pub pass_code_token: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct QuotaInfo {
     pub quota: Option<QuotaDetail>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct QuotaDetail {
     #[serde(default)]
     pub limit: Option<String>,
@@ -89,12 +92,12 @@ pub struct QuotaDetail {
     pub usage_in_trash: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct TransferQuotaResponse {
     pub base: Option<TransferQuotaBase>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct TransferQuotaBase {
     pub offline: Option<TransferBand>,
     pub download: Option<TransferBand>,
@@ -106,13 +109,13 @@ pub struct TransferQuotaBase {
     pub expire_time: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct TransferBand {
     pub total_assets: Option<u64>,
     pub assets: Option<u64>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct OfflineTaskResponse {
     #[serde(default)]
     pub task: Option<OfflineTask>,
@@ -136,9 +139,57 @@ pub struct OfflineTask {
     pub message: Option<String>,
     #[serde(default)]
     pub created_time: Option<String>,
+    #[cfg(pikpak_android_jni)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thumbnail_link: Option<String>,
+    #[cfg(pikpak_android_jni)]
+    #[serde(
+        default,
+        deserialize_with = "task_preview_resource",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub reference_resource: Option<OfflineTaskPreviewResource>,
 }
 
-#[derive(Debug, Deserialize)]
+#[cfg(pikpak_android_jni)]
+#[derive(Debug, Clone, Serialize)]
+pub struct OfflineTaskPreviewResource {
+    pub id: Option<String>,
+    pub name: Option<String>,
+    pub thumbnail_link: String,
+    pub modified_time: Option<String>,
+    pub created_time: Option<String>,
+}
+
+#[cfg(pikpak_android_jni)]
+fn task_preview_resource<'de, D>(
+    deserializer: D,
+) -> Result<Option<OfflineTaskPreviewResource>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    let file = value
+        .get("file")
+        .filter(|item| item.is_object())
+        .unwrap_or(&value);
+    let field = |key: &str| {
+        file.get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+    };
+    Ok(
+        field("thumbnail_link").map(|thumbnail_link| OfflineTaskPreviewResource {
+            id: field("id"),
+            name: field("name"),
+            thumbnail_link,
+            modified_time: field("modified_time"),
+            created_time: field("created_time"),
+        }),
+    )
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct OfflineListResponse {
     #[serde(default)]
     pub tasks: Vec<OfflineTask>,
@@ -148,7 +199,7 @@ pub struct OfflineListResponse {
     pub expires_in: Option<u64>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct EventsResponse {
     #[serde(default)]
     pub events: Vec<EventEntry>,
@@ -178,13 +229,13 @@ pub struct EventRefResource {
     pub mime_type: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct VipInfoResponse {
     #[serde(default)]
     pub data: Option<VipData>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct VipData {
     #[serde(default, rename = "type")]
     pub vip_type: Option<String>,
@@ -232,19 +283,33 @@ mod tests {
                     "progress": 42,
                     "file_id": "FID1",
                     "file_size": "123456",
-                    "message": "downloading"
+                    "message": "downloading",
+                    "thumbnail_link": "https://example.invalid/task.jpg",
+                    "reference_resource": {"id":"FID1","thumbnail_link":"https://example.invalid/file.jpg","web_content_link":"https://example.invalid/original.mkv"}
                 },
-                { "id": "TASK2", "name": "done.zip", "phase": "PHASE_TYPE_COMPLETE" }
+                { "id": "TASK2", "name": "done.zip", "phase": "PHASE_TYPE_COMPLETE", "reference_resource": "unavailable" }
             ]
         }"#;
         let resp: OfflineListResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.tasks.len(), 2);
         assert_eq!(resp.tasks[0].progress, 42);
         assert_eq!(resp.tasks[0].file_id.as_deref(), Some("FID1"));
+        #[cfg(pikpak_android_jni)]
+        {
+            let task = serde_json::to_value(&resp.tasks[0]).unwrap();
+            assert_eq!(task["thumbnail_link"], "https://example.invalid/task.jpg");
+            assert_eq!(
+                task["reference_resource"]["thumbnail_link"],
+                "https://example.invalid/file.jpg"
+            );
+            assert!(task["reference_resource"].get("web_content_link").is_none());
+        }
         // Second task omits the optional fields; defaults apply.
         assert_eq!(resp.tasks[1].phase, "PHASE_TYPE_COMPLETE");
         assert_eq!(resp.tasks[1].progress, 0);
         assert!(resp.tasks[1].file_id.is_none());
+        #[cfg(pikpak_android_jni)]
+        assert!(resp.tasks[1].reference_resource.is_none());
     }
 
     #[test]

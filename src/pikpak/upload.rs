@@ -820,7 +820,7 @@ mod tests {
     }
 
     fn upload_test_client(base_url: String, session_path: &Path) -> PikPak {
-        let mut client = PikPak::new().unwrap();
+        let mut client = PikPak::with_session_path(session_path.to_path_buf()).unwrap();
         client.drive_base_url = base_url.clone();
         client.auth_base_url = base_url;
         client.session_path = session_path.to_path_buf();
@@ -960,8 +960,7 @@ mod tests {
         let link = root.join("link");
         symlink(&target, &link).unwrap();
 
-        let mut client = PikPak::new().unwrap();
-        client.session_path = root.join("missing-session.json");
+        let client = PikPak::with_session_path(root.join("missing-session.json")).unwrap();
         let err = client
             .upload_dir_controlled("parent", &link, None)
             .unwrap_err();
@@ -984,8 +983,7 @@ mod tests {
         let link = root.join("link.txt");
         symlink(&target, &link).unwrap();
 
-        let mut client = PikPak::new().unwrap();
-        client.session_path = root.join("missing-session.json");
+        let client = PikPak::with_session_path(root.join("missing-session.json")).unwrap();
         let err = client.upload_file(Some("parent"), &link).unwrap_err();
 
         assert!(
@@ -1006,8 +1004,7 @@ mod tests {
         fs::write(outside.join("two.txt"), b"two").unwrap();
         symlink(&outside, root.join("escape")).unwrap();
 
-        let mut client = PikPak::new().unwrap();
-        client.session_path = root.join("missing-session.json");
+        let client = PikPak::with_session_path(root.join("missing-session.json")).unwrap();
         let result = client.upload_dir_inner("parent", &root, None).unwrap();
 
         assert_eq!(result, (0, 1));

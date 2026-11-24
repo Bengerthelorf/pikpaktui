@@ -46,6 +46,7 @@ inline_thumbnails = true   # Tiny image before filename; v toggles
 inline_thumbnail_size = "tiny"  # "tiny" | "small" | "medium" | "large"; [ / ] resize
 thumbnail_placeholders = true  # Reserve a grey image card while waiting or unavailable
 folder_stats = false        # Scan folders recursively for size and latest file modification
+cli_folder_stats = false    # Use recursive folder statistics for CLI ls
 
 # Preview
 show_preview = true         # Include preview when width allows; false = browser panes only
@@ -109,6 +110,8 @@ update_check = "notify"
 ### Folder statistics
 
 Enable **Browser Settings → Folder Statistics** and press `s` to save. The browser then uses the sum of descendant file sizes for `size` and offers `content-modified` to sort folders by their most recently modified file. The `modified` field always refers to the entry's own modification time. Disabling folder statistics switches an active `content-modified` sort to `modified`.
+
+Set `cli_folder_stats = true` for CLI listings, or use `ls --folder-stats` for one command. Use `ls --no-folder-stats` to skip statistics for one listing. The TUI and CLI share the per-account SQLite index under `folder-index/` in the configuration directory. Both settings default to false. An explicit `stats` command works with either setting. To read the last saved result offline, use `stats --cached --folder-id ID`.
 
 ### Thumbnail settings
 

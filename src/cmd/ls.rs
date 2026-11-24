@@ -1,15 +1,23 @@
-use anyhow::{Result, anyhow};
+use std::collections::HashMap;
+use std::sync::atomic::AtomicBool;
+
+use anyhow::{Result, anyhow, ensure};
+use serde::Serialize;
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 use crate::config::SortField;
-use crate::pikpak::{EntryKind, PikPak};
+use crate::pikpak::{
+    Entry, EntryKind, FolderStats, FolderStatsSession, PikPak, RootListing, UnsupportedIndex,
+};
 
-const USAGE: &str = "Usage: pikpaktui ls [-l|--long] [-J|--json] [-s|--sort=<field>] [-r|--reverse] [--tree] [--depth=N] [path]\n\nSort fields: name, size, created, type, extension, none";
+const USAGE: &str = "Usage: pikpaktui ls [-l|--long] [-J|--json] [-s|--sort=<field>] [-r|--reverse] [--folder-stats|--no-folder-stats] [--tree] [--depth=N] [path]\n\nSort fields: name, size, created, modified, content-modified, type, extension, none";
 
 #[derive(Debug, PartialEq, Eq)]
 struct LsArgs {
     path: String,
     long: bool,
     json: bool,
+    folder_stats: bool,
     sort_field: SortField,
     reverse: bool,
     tree: bool,
@@ -21,19 +29,22 @@ fn parse_sort_field(s: &str) -> Result<SortField> {
         "name" => Ok(SortField::Name),
         "size" => Ok(SortField::Size),
         "created" => Ok(SortField::Created),
+        "modified" => Ok(SortField::Modified),
+        "content-modified" => Ok(SortField::ContentModified),
         "type" => Ok(SortField::Type),
         "extension" | "ext" => Ok(SortField::Extension),
         "none" => Ok(SortField::None),
         _ => Err(anyhow!(
-            "unknown sort field: {s}\nValid fields: name, size, created, type, extension, none"
+            "unknown sort field: {s}\nValid fields: name, size, created, modified, content-modified, type, extension, none"
         )),
     }
 }
 
-fn parse_args(args: &[String]) -> Result<LsArgs> {
+fn parse_args(args: &[String], default_stats: bool) -> Result<LsArgs> {
     let mut path: Option<String> = None;
     let mut long = false;
     let mut json = false;
+    let mut folder_stats = None;
     let mut sort_field = SortField::default();
     let mut reverse = false;
     let mut tree = false;
@@ -69,6 +80,10 @@ fn parse_args(args: &[String]) -> Result<LsArgs> {
                 }
                 "-r" | "--reverse" => {
                     reverse = true;
+                    continue;
+                }
+                "--folder-stats" | "--no-folder-stats" => {
+                    folder_stats = Some(arg == "--folder-stats");
                     continue;
                 }
                 "--tree" => {
@@ -126,10 +141,16 @@ fn parse_args(args: &[String]) -> Result<LsArgs> {
         tree = true;
     }
 
+    ensure!(
+        folder_stats != Some(false) || sort_field != SortField::ContentModified,
+        "--no-folder-stats conflicts with --sort=content-modified"
+    );
     Ok(LsArgs {
         path: path.unwrap_or_else(|| "/".to_string()),
         long,
         json,
+        folder_stats: folder_stats.unwrap_or(default_stats)
+            || sort_field == SortField::ContentModified,
         sort_field,
         reverse,
         tree,
@@ -137,78 +158,175 @@ fn parse_args(args: &[String]) -> Result<LsArgs> {
     })
 }
 
-#[allow(clippy::too_many_arguments)]
-fn print_tree(
-    client: &PikPak,
-    folder_id: &str,
-    prefix: &str,
-    sort_field: SortField,
-    reverse: bool,
-    long: bool,
-    nerd_font: bool,
-    depth: usize,
-    max_depth: Option<usize>,
-) -> Result<()> {
-    use crate::theme;
+// One synchronization serves every directory in this invocation, including
+// tree output. Legacy services share a single scoped traversal session.
+#[derive(Default)]
+enum StatSource {
+    #[default]
+    Unchecked,
+    Indexed,
+    Scoped(Box<FolderStatsSession>),
+}
 
-    if max_depth.is_some_and(|d| depth > d) {
-        return Ok(());
-    }
-
-    let mut entries = client.ls(folder_id)?;
-    crate::config::sort_entries(&mut entries, sort_field, reverse);
-
-    let count = entries.len();
-    for (i, entry) in entries.iter().enumerate() {
-        let is_last = i + 1 == count;
-        let connector = if is_last { "└── " } else { "├── " };
-        let cat = theme::categorize(entry);
-        let icon = theme::cli_icon(cat, nerd_font);
-        let name_display = format!("{}{}", icon, entry.name);
-        let colored_name = theme::cli_colored(&name_display, cat);
-
-        if long {
-            println!(
-                "{}{}{}{}",
-                super::long_entry_prefix(entry),
-                prefix,
-                connector,
-                colored_name
-            );
-        } else {
-            println!("{}{}{}", prefix, connector, colored_name);
+impl StatSource {
+    fn read(
+        &mut self,
+        client: &PikPak,
+        folder_id: &str,
+        entries: &[Entry],
+    ) -> Result<HashMap<String, FolderStats>> {
+        let ids: Vec<_> = entries
+            .iter()
+            .filter(|e| e.kind == EntryKind::Folder)
+            .map(|e| e.id.clone())
+            .collect();
+        if ids.is_empty() {
+            return Ok(HashMap::new());
         }
-
-        if entry.kind == EntryKind::Folder {
-            let child_prefix = if is_last {
-                format!("{}    ", prefix)
+        let cancel = AtomicBool::new(false);
+        if matches!(self, Self::Unchecked) {
+            let result = if folder_id.is_empty() {
+                client.sync_folder_index_for_root(
+                    &cancel,
+                    false,
+                    &RootListing::from_entries(entries)?,
+                )
             } else {
-                format!("{}│   ", prefix)
+                client.sync_folder_index(&cancel, false)
             };
-            print_tree(
-                client,
-                &entry.id,
-                &child_prefix,
-                sort_field,
-                reverse,
-                long,
-                nerd_font,
-                depth + 1,
-                max_depth,
-            )?;
+            *self = match result {
+                Ok(()) => Self::Indexed,
+                Err(error) if error.is::<UnsupportedIndex>() => Self::Scoped(Box::default()),
+                Err(error) => return Err(error),
+            };
+        }
+        match self {
+            Self::Indexed => {
+                let totals = client.cached_folder_stats_batch(&ids)?;
+                for id in ids {
+                    ensure!(
+                        totals.contains_key(&id),
+                        "folder {id:?} absent from synchronized index"
+                    );
+                }
+                Ok(totals)
+            }
+            Self::Scoped(session) => ids
+                .into_iter()
+                .map(|id| {
+                    let stats = session.stats(client, &id, &cancel)?;
+                    Ok((id, stats))
+                })
+                .collect(),
+            Self::Unchecked => unreachable!("source selected above"),
         }
     }
+}
 
-    Ok(())
+struct Listing<'a> {
+    client: &'a PikPak,
+    args: &'a LsArgs,
+    nerd_font: bool,
+    source: StatSource,
+}
+
+impl Listing<'_> {
+    fn entries(&mut self, folder_id: &str) -> Result<(Vec<Entry>, HashMap<String, FolderStats>)> {
+        let mut entries = self.client.ls(folder_id)?;
+        let (sort, reverse) = (self.args.sort_field, self.args.reverse);
+        if !self.args.folder_stats {
+            crate::config::sort_entries(&mut entries, sort, reverse);
+            return Ok((entries, HashMap::new()));
+        }
+        let totals = self.source.read(self.client, folder_id, &entries)?;
+        crate::config::sort_entries_with_stats(&mut entries, sort, reverse, true, |id| {
+            totals.get(id)
+        });
+        Ok((entries, totals))
+    }
+
+    fn long_prefix(&self, entry: &Entry, totals: &HashMap<String, FolderStats>) -> String {
+        if !self.args.folder_stats && self.args.sort_field != SortField::Modified {
+            return super::long_entry_prefix(entry);
+        }
+        let stats = totals.get(&entry.id);
+        let bytes = match entry.kind {
+            EntryKind::File => Some(entry.size),
+            EntryKind::Folder => stats.map(|s| s.total_size_bytes),
+        };
+        let stamp = if self.args.sort_field == SortField::Modified || entry.kind == EntryKind::File
+        {
+            let own = entry.modified_time.as_str();
+            OffsetDateTime::parse(own, &Rfc3339).ok().map(|_| own)
+        } else {
+            stats.and_then(|s| s.latest_modified_time.as_deref())
+        };
+        super::long_prefix(entry, bytes, stamp.unwrap_or_default())
+    }
+
+    fn print_tree(&mut self, folder_id: &str, prefix: &str, depth: usize) -> Result<()> {
+        use crate::theme;
+        if self.args.max_depth.is_some_and(|max| depth > max) {
+            return Ok(());
+        }
+        let (entries, totals) = self.entries(folder_id)?;
+
+        let count = entries.len();
+        for (i, entry) in entries.iter().enumerate() {
+            let is_last = i + 1 == count;
+            let connector = if is_last { "└── " } else { "├── " };
+            let cat = theme::categorize(entry);
+            let icon = theme::cli_icon(cat, self.nerd_font);
+            let name_display = format!("{}{}", icon, entry.name);
+            let colored_name = theme::cli_colored(&name_display, cat);
+
+            if self.args.long {
+                println!(
+                    "{}{}{}{}",
+                    self.long_prefix(entry, &totals),
+                    prefix,
+                    connector,
+                    colored_name
+                );
+            } else {
+                println!("{}{}{}", prefix, connector, colored_name);
+            }
+
+            if entry.kind == EntryKind::Folder {
+                let child_prefix = if is_last {
+                    format!("{}    ", prefix)
+                } else {
+                    format!("{}│   ", prefix)
+                };
+                self.print_tree(&entry.id, &child_prefix, depth + 1)?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Serialize)]
+struct EntryWithStats<'a> {
+    #[serde(flatten)]
+    entry: &'a Entry,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    folder_stats: Option<&'a FolderStats>,
 }
 
 pub fn run(args: &[String]) -> Result<()> {
-    let parsed = parse_args(args)?;
     let config = super::cli_config();
+    let parsed = parse_args(args, config.cli_folder_stats)?;
     let nerd_font = config.cli_nerd_font;
     let client = super::cli_client()?;
     let folder_id = client.resolve_path(&parsed.path)?;
 
+    let mut listing = Listing {
+        client: &client,
+        args: &parsed,
+        nerd_font,
+        source: StatSource::default(),
+    };
     if parsed.tree {
         let root_label = parsed.path.trim_end_matches('/');
         let root_label = if root_label.is_empty() {
@@ -217,25 +335,24 @@ pub fn run(args: &[String]) -> Result<()> {
             root_label
         };
         println!("{}", root_label);
-        print_tree(
-            &client,
-            &folder_id,
-            "",
-            parsed.sort_field,
-            parsed.reverse,
-            parsed.long,
-            nerd_font,
-            1,
-            parsed.max_depth,
-        )?;
-        return Ok(());
+        return listing.print_tree(&folder_id, "", 1);
     }
 
-    let mut entries = client.ls(&folder_id)?;
-    crate::config::sort_entries(&mut entries, parsed.sort_field, parsed.reverse);
+    let (entries, totals) = listing.entries(&folder_id)?;
 
     if parsed.json {
-        super::print_entries_json(&entries);
+        if parsed.folder_stats {
+            let rows: Vec<_> = entries
+                .iter()
+                .map(|entry| EntryWithStats {
+                    entry,
+                    folder_stats: totals.get(&entry.id),
+                })
+                .collect();
+            println!("{}", serde_json::to_string_pretty(&rows)?);
+        } else {
+            super::print_entries_json(&entries);
+        }
         return Ok(());
     }
 
@@ -245,7 +362,7 @@ pub fn run(args: &[String]) -> Result<()> {
     }
 
     if parsed.long {
-        super::print_entries_long(&entries, nerd_font);
+        super::print_entries_with_prefix(&entries, nerd_font, |e| listing.long_prefix(e, &totals));
     } else {
         super::print_entries_short(&entries, nerd_font);
     }
@@ -266,11 +383,12 @@ mod tests {
     #[test]
     fn parse_defaults_to_root_short_output() {
         assert_eq!(
-            parse_args(&s(&[])).unwrap(),
+            parse_args(&s(&[]), false).unwrap(),
             LsArgs {
                 path: "/".to_string(),
                 long: false,
                 json: false,
+                folder_stats: false,
                 sort_field: SortField::Name,
                 reverse: false,
                 tree: false,
@@ -282,11 +400,12 @@ mod tests {
     #[test]
     fn parse_supports_path_and_long_in_any_order() {
         assert_eq!(
-            parse_args(&s(&["/foo", "-l"])).unwrap(),
+            parse_args(&s(&["/foo", "-l"]), false).unwrap(),
             LsArgs {
                 path: "/foo".to_string(),
                 long: true,
                 json: false,
+                folder_stats: false,
                 sort_field: SortField::Name,
                 reverse: false,
                 tree: false,
@@ -294,11 +413,12 @@ mod tests {
             }
         );
         assert_eq!(
-            parse_args(&s(&["-l", "/foo"])).unwrap(),
+            parse_args(&s(&["-l", "/foo"]), false).unwrap(),
             LsArgs {
                 path: "/foo".to_string(),
                 long: true,
                 json: false,
+                folder_stats: false,
                 sort_field: SortField::Name,
                 reverse: false,
                 tree: false,
@@ -310,11 +430,12 @@ mod tests {
     #[test]
     fn parse_sort_field_flag() {
         assert_eq!(
-            parse_args(&s(&["--sort=size"])).unwrap(),
+            parse_args(&s(&["--sort=size"]), false).unwrap(),
             LsArgs {
                 path: "/".to_string(),
                 long: false,
                 json: false,
+                folder_stats: false,
                 sort_field: SortField::Size,
                 reverse: false,
                 tree: false,
@@ -322,11 +443,12 @@ mod tests {
             }
         );
         assert_eq!(
-            parse_args(&s(&["-s", "created"])).unwrap(),
+            parse_args(&s(&["-s", "created"]), false).unwrap(),
             LsArgs {
                 path: "/".to_string(),
                 long: false,
                 json: false,
+                folder_stats: false,
                 sort_field: SortField::Created,
                 reverse: false,
                 tree: false,
@@ -334,11 +456,12 @@ mod tests {
             }
         );
         assert_eq!(
-            parse_args(&s(&["--sort", "extension"])).unwrap(),
+            parse_args(&s(&["--sort", "extension"]), false).unwrap(),
             LsArgs {
                 path: "/".to_string(),
                 long: false,
                 json: false,
+                folder_stats: false,
                 sort_field: SortField::Extension,
                 reverse: false,
                 tree: false,
@@ -350,11 +473,12 @@ mod tests {
     #[test]
     fn parse_reverse_flag() {
         assert_eq!(
-            parse_args(&s(&["-r", "--sort=size"])).unwrap(),
+            parse_args(&s(&["-r", "--sort=size"]), false).unwrap(),
             LsArgs {
                 path: "/".to_string(),
                 long: false,
                 json: false,
+                folder_stats: false,
                 sort_field: SortField::Size,
                 reverse: true,
                 tree: false,
@@ -362,11 +486,12 @@ mod tests {
             }
         );
         assert_eq!(
-            parse_args(&s(&["--reverse"])).unwrap(),
+            parse_args(&s(&["--reverse"]), false).unwrap(),
             LsArgs {
                 path: "/".to_string(),
                 long: false,
                 json: false,
+                folder_stats: false,
                 sort_field: SortField::Name,
                 reverse: true,
                 tree: false,
@@ -378,11 +503,12 @@ mod tests {
     #[test]
     fn parse_tree_flag() {
         assert_eq!(
-            parse_args(&s(&["--tree", "/Movies"])).unwrap(),
+            parse_args(&s(&["--tree", "/Movies"]), false).unwrap(),
             LsArgs {
                 path: "/Movies".to_string(),
                 long: false,
                 json: false,
+                folder_stats: false,
                 sort_field: SortField::Name,
                 reverse: false,
                 tree: true,
@@ -390,11 +516,12 @@ mod tests {
             }
         );
         assert_eq!(
-            parse_args(&s(&["--depth=2", "/Movies"])).unwrap(),
+            parse_args(&s(&["--depth=2", "/Movies"]), false).unwrap(),
             LsArgs {
                 path: "/Movies".to_string(),
                 long: false,
                 json: false,
+                folder_stats: false,
                 sort_field: SortField::Name,
                 reverse: false,
                 tree: true,
@@ -402,11 +529,12 @@ mod tests {
             }
         );
         assert_eq!(
-            parse_args(&s(&["--depth", "3"])).unwrap(),
+            parse_args(&s(&["--depth", "3"]), false).unwrap(),
             LsArgs {
                 path: "/".to_string(),
                 long: false,
                 json: false,
+                folder_stats: false,
                 sort_field: SortField::Name,
                 reverse: false,
                 tree: true,
@@ -414,11 +542,12 @@ mod tests {
             }
         );
         assert_eq!(
-            parse_args(&s(&["--tree", "-l"])).unwrap(),
+            parse_args(&s(&["--tree", "-l"]), false).unwrap(),
             LsArgs {
                 path: "/".to_string(),
                 long: true,
                 json: false,
+                folder_stats: false,
                 sort_field: SortField::Name,
                 reverse: false,
                 tree: true,
@@ -429,25 +558,25 @@ mod tests {
 
     #[test]
     fn parse_sort_rejects_invalid_field() {
-        let err = parse_args(&s(&["--sort=bogus"])).unwrap_err();
+        let err = parse_args(&s(&["--sort=bogus"]), false).unwrap_err();
         assert!(err.to_string().contains("unknown sort field"));
     }
 
     #[test]
     fn parse_sort_requires_value() {
-        let err = parse_args(&s(&["--sort"])).unwrap_err();
+        let err = parse_args(&s(&["--sort"]), false).unwrap_err();
         assert!(err.to_string().contains("--sort requires a value"));
     }
 
     #[test]
     fn parse_rejects_unknown_options() {
-        let err = parse_args(&s(&["-a"])).unwrap_err();
+        let err = parse_args(&s(&["-a"]), false).unwrap_err();
         assert!(err.to_string().contains("unknown option for ls"));
     }
 
     #[test]
     fn parse_rejects_multiple_paths() {
-        let err = parse_args(&s(&["/a", "/b"])).unwrap_err();
+        let err = parse_args(&s(&["/a", "/b"]), false).unwrap_err();
         assert!(err.to_string().contains("at most one path"));
     }
 

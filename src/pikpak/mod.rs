@@ -6,6 +6,8 @@ mod drive_stats;
 mod file_info;
 mod files;
 mod folder_stats;
+mod index_store;
+mod index_sync;
 pub(crate) mod interactive;
 mod models;
 mod mutation;
@@ -19,12 +21,24 @@ mod upload;
 pub(crate) use upload::{UploadControl, pikpak_hash};
 
 use auth::{CaptchaInitResponse, SigninResponse};
+#[cfg(pikpak_android_jni)]
+mod mobile_session;
+#[cfg(pikpak_android_jni)]
+pub(crate) use download::DownloadControl;
 #[cfg(test)]
 pub(crate) use download::part_path;
 pub(crate) use download::{finish_partial_download, prepare_partial_download};
 pub(crate) use drive_stats::RootListing;
 pub use file_info::{FileInfoResponse, PlayOption};
 pub use folder_stats::{FolderStats, FolderStatsError};
+#[cfg(not(pikpak_android_jni))]
+pub(crate) use index_sync::UnsupportedIndex;
+#[cfg(pikpak_android_jni)]
+pub(crate) use mobile_session::{
+    LoginChallenge, LoginSessionSaveError, RefreshError, SignInRequired,
+};
+#[cfg(pikpak_android_jni)]
+use mobile_session::{lock_file_exclusive, refresh_token_rejected};
 pub use models::{Entry, EntryKind, SessionToken};
 pub use mutation::mutation_progress;
 #[cfg(test)]
@@ -102,7 +116,14 @@ pub struct PikPak {
 }
 
 impl PikPak {
+    #[cfg(not(pikpak_android_jni))]
     pub fn new() -> Result<Self> {
+        let base =
+            crate::config::config_dir().ok_or_else(|| anyhow!("unable to locate config dir"))?;
+        Self::with_session_path(base.join("session.json"))
+    }
+
+    pub(crate) fn with_session_path(session_path: PathBuf) -> Result<Self> {
         let mut client = Self {
             http: reqwest::blocking::Client::builder()
                 .user_agent(USER_AGENT)
@@ -118,7 +139,7 @@ impl PikPak {
                 .unwrap_or_else(|_| DEFAULT_CLIENT_ID.to_string()),
             client_secret: env::var("PIKPAK_CLIENT_SECRET")
                 .unwrap_or_else(|_| DEFAULT_CLIENT_SECRET.to_string()),
-            session_path: default_session_path()?,
+            session_path,
             device_id: String::new(),
             captcha_token: Mutex::new(String::new()),
             captcha_expires_at_unix: Mutex::new(0),
@@ -142,12 +163,17 @@ impl PikPak {
         Ok(client)
     }
 
+    #[cfg(pikpak_android_jni)]
+    pub(crate) fn uses_session_path(&self, path: &Path) -> bool {
+        self.session_path == path
+    }
+
     pub fn load_session(&self) -> Result<Option<SessionToken>> {
-        if !self.session_path.exists() {
-            return Ok(None);
+        let raw = match fs::read_to_string(&self.session_path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            result => result,
         }
-        let raw = fs::read_to_string(&self.session_path)
-            .with_context(|| format!("failed to read session {}", self.session_path.display()))?;
+        .with_context(|| format!("failed to read session {}", self.session_path.display()))?;
         let token: SessionToken =
             serde_json::from_str(&raw).context("failed to parse session json")?;
         Ok(Some(token))
@@ -173,8 +199,11 @@ impl PikPak {
             .open(&lock_path)
             .with_context(|| format!("failed to open session lock {}", lock_path.display()))?;
         set_file_owner_only(&lock_path);
-        file.lock()
-            .with_context(|| format!("failed to lock session {}", lock_path.display()))?;
+        #[cfg(pikpak_android_jni)]
+        let locked = lock_file_exclusive(&file);
+        #[cfg(not(pikpak_android_jni))]
+        let locked = file.lock();
+        locked.with_context(|| format!("failed to lock session {}", lock_path.display()))?;
         Ok(file)
     }
 
@@ -190,6 +219,12 @@ impl PikPak {
         fs::rename(&tmp_path, &self.session_path)
             .with_context(|| format!("failed to rename session {}", self.session_path.display()))?;
         set_file_owner_only(&self.session_path);
+        #[cfg(all(unix, pikpak_android_jni))]
+        if let Some(parent) = self.session_path.parent() {
+            fs::File::open(parent)?
+                .sync_all()
+                .context("failed to sync the session directory")?;
+        }
         Ok(())
     }
 
@@ -210,7 +245,17 @@ impl PikPak {
         }
     }
 
+    #[cfg(any(test, not(pikpak_android_jni)))]
     pub fn login(&mut self, email: &str, password: &str) -> Result<()> {
+        self.login_with_challenge_token(email, password, None)
+    }
+
+    pub fn login_with_challenge_token(
+        &mut self,
+        email: &str,
+        password: &str,
+        challenge_token: Option<&str>,
+    ) -> Result<()> {
         if email.trim().is_empty() {
             return Err(anyhow!("email is empty"));
         }
@@ -219,28 +264,15 @@ impl PikPak {
         }
 
         self.device_id = md5_hex(email);
-
-        let captcha = self.init_captcha(email)?;
-        let captcha_expires_in =
-            i64::try_from(captcha.expires_in).context("captcha expires_in overflow")?;
-        let captcha_expires_at_unix = now_unix().saturating_add(captcha_expires_in);
-        let login_captcha = captcha
-            .captcha_token
-            // An empty token would sail through and fail signin with an opaque
-            // 4xx, and it would shadow the documented env escape hatch.
-            .filter(|t| !t.is_empty())
-            .or_else(|| {
-                env::var("PIKPAK_CAPTCHA_TOKEN")
-                    .ok()
-                    .filter(|t| !t.is_empty())
-            })
-            .ok_or_else(|| {
-                let hint = captcha.url.as_deref().unwrap_or("<no challenge url>");
-                anyhow!(
-                    "captcha token unavailable; set PIKPAK_CAPTCHA_TOKEN. url={}",
-                    sanitize(hint)
-                )
-            })?;
+        let (login_captcha, captcha_expires_at_unix) = if let Some(value) = challenge_token {
+            (value.to_owned(), now_unix())
+        } else {
+            let captcha = self.init_captcha(email)?;
+            let expires_in =
+                i64::try_from(captcha.expires_in).context("captcha expires_in overflow")?;
+            let token = captcha.login_token()?;
+            (token, now_unix().saturating_add(expires_in))
+        };
         *self.captcha_token.lock().unwrap_or_else(|e| e.into_inner()) = login_captcha.clone();
         *self
             .captcha_expires_at_unix
@@ -257,11 +289,12 @@ impl PikPak {
             "grant_type": "password",
         });
 
-        let response = self
+        let request = self
             .http
             .post(&url)
             .header("x-device-id", &self.device_id)
-            .json(&payload)
+            .json(&payload);
+        let response = interactive::bound(request)
             .send()
             .context("signin request failed")?;
 
@@ -291,8 +324,10 @@ impl PikPak {
             user_id: signin.sub,
         };
 
-        self.save_session(&token)?;
-        Ok(())
+        let saved = self.save_session(&token);
+        #[cfg(pikpak_android_jni)]
+        let saved = saved.context(LoginSessionSaveError);
+        saved
     }
 
     fn init_captcha(&self, email: &str) -> Result<CaptchaInitResponse> {
@@ -306,11 +341,12 @@ impl PikPak {
             "meta": { "username": email },
         });
 
-        let response = self
+        let request = self
             .http
             .post(&url)
             .header("x-device-id", &self.device_id)
-            .json(&payload)
+            .json(&payload);
+        let response = interactive::bound(request)
             .send()
             .context("captcha init failed")?;
 
@@ -329,6 +365,7 @@ impl PikPak {
             .context("invalid captcha json")
     }
 
+    #[cfg(not(pikpak_android_jni))]
     fn access_token(&self) -> Result<String> {
         let session = self
             .load_session()?
@@ -343,7 +380,7 @@ impl PikPak {
                 .load_session()?
                 .ok_or_else(|| anyhow!("not logged in, please login first"))?;
             if session.is_expired(now_unix() + 300) {
-                match self.refresh_session(&session.refresh_token) {
+                match self.refresh_session_inner(None) {
                     Ok(new_token) => return Ok(new_token),
                     Err(e) => {
                         return Err(anyhow!(
@@ -358,11 +395,14 @@ impl PikPak {
         Ok(session.access_token)
     }
 
-    /// Use the refresh_token to obtain a new access_token without requiring
-    /// the user's password. Saves the updated session to disk and returns
-    /// the new access_token.
-    fn refresh_session(&self, _refresh_token_hint: &str) -> Result<String> {
-        self.refresh_session_inner(None)
+    #[cfg(pikpak_android_jni)]
+    fn access_token(&self) -> Result<String> {
+        let session = self.load_session()?.ok_or(SignInRequired)?;
+        if session.is_expired(now_unix()) {
+            let _guard = interactive::lock(&self.refresh_lock)?;
+            return self.refresh_session_inner(None);
+        }
+        Ok(session.access_token)
     }
 
     fn refresh_rejected_token(&self, rejected: &str) -> Result<String> {
@@ -376,13 +416,20 @@ impl PikPak {
         // stale one it observed before waiting.
         let _guard = interactive::lock(&self.session_lock)?;
         let _file_guard = self.lock_session_file()?;
-        let mut session = self
-            .load_session()?
-            .ok_or_else(|| anyhow!("not logged in, please login first"))?;
-        if !session.is_expired(now_unix() + 300)
+        #[cfg(pikpak_android_jni)]
+        let missing = || anyhow!(SignInRequired);
+        #[cfg(not(pikpak_android_jni))]
+        let missing = || anyhow!("not logged in, please login first");
+        let mut session = self.load_session()?.ok_or_else(missing)?;
+        let refresh_ahead = if cfg!(pikpak_android_jni) { 0 } else { 300 };
+        if !session.is_expired(now_unix() + refresh_ahead)
             && rejected.is_none_or(|old| old != session.access_token)
         {
             return Ok(session.access_token);
+        }
+        #[cfg(pikpak_android_jni)]
+        if session.refresh_token.trim().is_empty() {
+            return Err(SignInRequired.into());
         }
 
         let url = self.auth_url("v1/auth/token");
@@ -404,7 +451,15 @@ impl PikPak {
 
         let status = response.status();
         if !status.is_success() {
+            #[cfg(pikpak_android_jni)]
+            if status.is_server_error() || status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                return Err(RefreshError::Unavailable.into());
+            }
             let body = response.text().unwrap_or_default();
+            #[cfg(pikpak_android_jni)]
+            if refresh_token_rejected(&body) {
+                return Err(RefreshError::Rejected.into());
+            }
             return Err(anyhow!(
                 "token refresh failed ({}): {}",
                 status,
@@ -412,16 +467,33 @@ impl PikPak {
             ));
         }
 
+        #[cfg(not(pikpak_android_jni))]
         let refreshed: SigninResponse = response.json().context("invalid token refresh json")?;
+        #[cfg(pikpak_android_jni)]
+        let refreshed: auth::RefreshResponse =
+            response.json().context("invalid token refresh json")?;
         let expires_in = i64::try_from(refreshed.expires_in).context("expires_in overflow")?;
+        #[cfg(pikpak_android_jni)]
+        if expires_in == 0 || refreshed.access_token.trim().is_empty() {
+            return Err(RefreshError::Unavailable.into());
+        }
         let access_token = refreshed.access_token;
-        let refresh_token = refreshed.refresh_token;
         let refreshed_user_id = refreshed.sub;
 
         // Only token fields change; captcha/device fields remain the latest
         // values loaded after acquiring the cross-process session lock.
         session.access_token = access_token.clone();
-        session.refresh_token = refresh_token;
+        #[cfg(not(pikpak_android_jni))]
+        {
+            session.refresh_token = refreshed.refresh_token;
+        }
+        #[cfg(pikpak_android_jni)]
+        if let Some(refresh_token) = refreshed
+            .refresh_token
+            .filter(|token| !token.trim().is_empty())
+        {
+            session.refresh_token = refresh_token;
+        }
         session.expires_at_unix = now_unix().saturating_add(expires_in);
         if !self.device_id.is_empty() {
             session.device_id.clone_from(&self.device_id);
@@ -587,6 +659,9 @@ impl PikPak {
                 }
                 continue;
             }
+            if op == "sync_folder_index" && index_sync::rejects_cursor(status, &body) {
+                return Err(index_sync::ExpiredCursor.into());
+            }
             return Err(anyhow!("{} failed ({}): {}", op, status, sanitize(&body)));
         }
     }
@@ -702,6 +777,12 @@ impl PikPak {
     /// Drop the lifetime listing cache that backs `ls_cached` and path
     /// resolution. Mutations call this on success so later path lookups see the
     /// new tree instead of a stale snapshot.
+    #[cfg(pikpak_android_jni)]
+    pub(crate) fn listing_generation(&self) -> std::sync::Weak<()> {
+        let cache = self.ls_cache.lock().unwrap_or_else(|e| e.into_inner());
+        std::sync::Arc::downgrade(&cache.generation)
+    }
+
     fn clear_ls_cache(&self) {
         let mut cache = self.ls_cache.lock().unwrap_or_else(|e| e.into_inner());
         cache.generation = std::sync::Arc::new(());
@@ -786,11 +867,6 @@ fn json_or_api_error<T: serde::de::DeserializeOwned>(
         .with_context(|| format!("invalid {op} json"))
 }
 
-fn default_session_path() -> Result<PathBuf> {
-    let base = crate::config::config_dir().ok_or_else(|| anyhow!("unable to locate config dir"))?;
-    Ok(base.join("session.json"))
-}
-
 #[cfg(unix)]
 fn set_file_owner_only(path: &Path) {
     use std::os::unix::fs::PermissionsExt;
@@ -812,7 +888,10 @@ fn write_owner_only(path: &Path, data: &[u8]) -> std::io::Result<()> {
         .truncate(true)
         .mode(0o600)
         .open(path)?;
-    f.write_all(data)
+    f.write_all(data)?;
+    #[cfg(pikpak_android_jni)]
+    f.sync_all()?;
+    Ok(())
 }
 
 #[cfg(not(unix))]
@@ -1994,6 +2073,39 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
+    #[cfg(pikpak_android_jni)]
+    #[test]
+    fn controlled_download_keeps_partial_bytes_for_a_new_attempt() {
+        let server = start_mock_download_server(b"hello", false, 2);
+        let dir = temp_test_dir("controlled-download-part-resume");
+        let dest = dir.join("file.bin");
+        let (part, _) = prepare_partial_download(&dest, "file", 5).unwrap();
+        std::fs::write(&part, b"he").unwrap();
+        let client = test_client(server.base_url, dir.join("session.json"));
+
+        let paused = DownloadControl::default();
+        paused.stop();
+        assert!(
+            client
+                .download_to_controlled("file", &dest, &paused)
+                .is_err()
+        );
+        assert_eq!(std::fs::read(&part).unwrap(), b"he");
+
+        let resumed = DownloadControl::default();
+        assert_eq!(
+            client
+                .download_to_controlled("file", &dest, &resumed)
+                .unwrap(),
+            5
+        );
+        assert_eq!(resumed.progress(), (5, 5));
+        assert_eq!(std::fs::read(&dest).unwrap(), b"hello");
+        assert!(!part.exists());
+        server.handle.join().unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn download_to_fetches_bounded_ranges_and_commits_them_in_order() {
         let content: &'static [u8] = Box::leak(
@@ -2428,7 +2540,7 @@ mod tests {
             })
             .unwrap();
 
-        assert_eq!(client.refresh_session("old-refresh").unwrap(), "new-access");
+        assert_eq!(client.access_token().unwrap(), "new-access");
         handle.join().unwrap();
         let saved = client.load_session().unwrap().unwrap();
         assert_eq!(saved.access_token, "new-access");
@@ -2436,6 +2548,41 @@ mod tests {
         assert_eq!(saved.captcha_token, "new-captcha");
         assert_eq!(saved.captcha_expires_at_unix, fresh_expiry);
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(pikpak_android_jni)]
+    #[test]
+    fn expired_session_only_requires_sign_in_when_refresh_credentials_are_rejected() {
+        let cases = [
+            (
+                503,
+                "Service Unavailable",
+                r#"{"error_code":"invalid_grant"}"#,
+                "unavailable",
+            ),
+            (400, "Bad Request", r#"{"error":"invalid_grant"}"#, "auth"),
+            (
+                403,
+                "Forbidden",
+                r#"{"error":"risk_limited"}"#,
+                "restricted",
+            ),
+        ];
+        for (status, reason, body, expected) in cases {
+            let (base_url, handle) = start_canned_server(status, reason, body.as_bytes().to_vec());
+            let dir = temp_test_dir("refresh-error-classification");
+            let mut client = test_client(base_url.clone(), dir.join("session.json"));
+            client.auth_base_url = base_url;
+            client
+                .update_session(|session| session.expires_at_unix = 0)
+                .unwrap();
+
+            let error = client.star(&["fixture-id"]).unwrap_err();
+            handle.join().unwrap();
+            assert_eq!(crate::error_payload(error)["code"], expected);
+            assert!(client.load_session().unwrap().is_some());
+            std::fs::remove_dir_all(dir).unwrap();
+        }
     }
 
     #[test]

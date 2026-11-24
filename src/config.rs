@@ -751,6 +751,9 @@ pub struct TuiConfig {
     /// Calculate recursive sizes and content modification times in the browser.
     #[serde(default)]
     pub folder_stats: bool,
+    /// Use the shared folder index by default in CLI listings.
+    #[serde(default)]
+    pub cli_folder_stats: bool,
     #[serde(default)]
     pub lazy_preview: bool,
     #[serde(default = "default_preview_max_size")]
@@ -854,6 +857,7 @@ impl Default for TuiConfig {
             inline_thumbnail_size: InlineThumbnailSize::default(),
             thumbnail_placeholders: true,
             folder_stats: false,
+            cli_folder_stats: false,
             lazy_preview: false,
             preview_max_size: default_preview_max_size(),
             custom_colors: CustomColors::default(),
@@ -1159,6 +1163,7 @@ mod browser_config_tests {
         assert_eq!(config.inline_thumbnail_size.dimensions(), (2, 1));
         assert!(config.thumbnail_placeholders);
         assert!(!config.folder_stats);
+        assert!(!config.cli_folder_stats);
         assert_eq!(config.playback_quality, PlaybackQuality::Original);
         assert!(config.player_args.is_empty());
     }
@@ -1222,6 +1227,7 @@ player_args = ["--title={name}", "two words", "--path={path}"]"#;
             assert_eq!(restored.inline_thumbnail_size.dimensions(), (8, 4));
             assert!(!restored.thumbnail_placeholders);
             assert!(restored.folder_stats);
+            assert!(!restored.cli_folder_stats);
             assert_eq!(restored.thumbnail_size, ThumbnailSize::Large);
         }
     }
@@ -1255,6 +1261,7 @@ player_args = ["--title={name}", "two words", "--path={path}"]"#;
                     .unwrap();
                 let config: TuiConfig = toml::from_str(example).unwrap();
                 assert!(!config.folder_stats);
+                assert!(!config.cli_folder_stats);
                 assert!(config.thumbnail_placeholders);
                 assert!(config.inline_thumbnails);
                 assert_eq!(config.inline_thumbnail_size, InlineThumbnailSize::Tiny);

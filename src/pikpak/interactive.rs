@@ -1,6 +1,9 @@
 //! Per-worker read deadlines. Transfers retain their normal long timeout.
 use std::cell::Cell;
+use std::io::{self, ErrorKind};
 use std::sync::{Mutex, MutexGuard, TryLockError};
+#[cfg(pikpak_android_jni)]
+use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::{Duration, Instant};
 
 thread_local! {
@@ -40,17 +43,58 @@ pub(crate) fn lock<T>(mutex: &Mutex<T>) -> anyhow::Result<MutexGuard<'_, T>> {
     if DEADLINE.get().is_none() {
         return Ok(mutex.lock().unwrap_or_else(|e| e.into_inner()));
     }
+    Ok(wait_for_lock(|| match mutex.try_lock() {
+        Ok(guard) => Ok(guard),
+        Err(TryLockError::Poisoned(error)) => Ok(error.into_inner()),
+        Err(TryLockError::WouldBlock) => Err(ErrorKind::WouldBlock.into()),
+    })?)
+}
+
+#[cfg(pikpak_android_jni)]
+fn client_lock_error<T>(error: TryLockError<T>) -> io::Error {
+    match error {
+        TryLockError::Poisoned(_) => io::Error::other("PikPak client lock is poisoned"),
+        TryLockError::WouldBlock => ErrorKind::WouldBlock.into(),
+    }
+}
+
+#[cfg(pikpak_android_jni)]
+pub(crate) fn read<T>(lock: &RwLock<T>) -> anyhow::Result<RwLockReadGuard<'_, T>> {
+    if DEADLINE.get().is_none() {
+        return lock
+            .read()
+            .map_err(|_| anyhow::anyhow!("PikPak client lock is poisoned"));
+    }
+    Ok(wait_for_lock(|| {
+        lock.try_read().map_err(client_lock_error)
+    })?)
+}
+
+#[cfg(pikpak_android_jni)]
+pub(crate) fn write<T>(lock: &RwLock<T>) -> anyhow::Result<RwLockWriteGuard<'_, T>> {
+    if DEADLINE.get().is_none() {
+        return lock
+            .write()
+            .map_err(|_| anyhow::anyhow!("PikPak client lock is poisoned"));
+    }
+    Ok(wait_for_lock(|| {
+        lock.try_write().map_err(client_lock_error)
+    })?)
+}
+
+pub(crate) fn wait_for_lock<T>(mut attempt: impl FnMut() -> io::Result<T>) -> io::Result<T> {
     loop {
-        match mutex.try_lock() {
-            Ok(guard) => return Ok(guard),
-            Err(TryLockError::Poisoned(error)) => return Ok(error.into_inner()),
-            Err(TryLockError::WouldBlock) => {
-                anyhow::ensure!(
-                    DEADLINE.get().is_none_or(|end| Instant::now() < end),
-                    "preview timed out waiting for authentication"
-                );
+        match attempt() {
+            Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                if DEADLINE.get().is_some_and(|end| Instant::now() >= end) {
+                    return Err(io::Error::new(
+                        ErrorKind::TimedOut,
+                        "preview timed out waiting for authentication",
+                    ));
+                }
                 std::thread::sleep(Duration::from_millis(5));
             }
+            result => return result,
         }
     }
 }

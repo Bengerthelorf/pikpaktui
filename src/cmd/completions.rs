@@ -66,6 +66,7 @@ _pikpaktui() {
     local -a commands
     commands=(
         'ls:List files (colored grid; -l for long)'
+        'stats:Recursive folder statistics'
         'mv:Move file(s) (-t for batch)'
         'cp:Copy file(s) (-t for batch)'
         'rename:Rename a file or folder'
@@ -107,10 +108,17 @@ _pikpaktui() {
     case "$cmd" in
         ls)
             if [[ "${words[CURRENT]}" == -* ]]; then
-                compadd -- '-l' '--long' '-J' '--json' '-s' '--sort' '-r' '--reverse' '--tree' '--depth'
+                compadd -- '-l' '--long' '-J' '--json' '-s' '--sort' '-r' '--reverse' '--folder-stats' '--no-folder-stats' '--tree' '--depth'
             elif [[ "${words[CURRENT-1]}" == "-s" ]] || [[ "${words[CURRENT-1]}" == "--sort" ]]; then
-                compadd -- 'name' 'size' 'created' 'type' 'extension' 'none'
+                compadd -- 'name' 'size' 'created' 'modified' 'content-modified' 'type' 'extension' 'none'
             else
+                _pikpaktui_cloud_path
+            fi
+            ;;
+        stats)
+            if [[ "${words[CURRENT]}" == -* ]]; then
+                compadd -- '-J' '--json' '--cached' '--refresh' '--folder-id'
+            elif [[ "${words[CURRENT-1]}" != '--folder-id' && ${words[(I)--cached]} -eq 0 ]]; then
                 _pikpaktui_cloud_path
             fi
             ;;
@@ -327,7 +335,7 @@ _pikpaktui() {
     local cmd="${COMP_WORDS[1]}"
     COMPREPLY=()
 
-    local commands="ls mv cp rename rm mkdir download upload share offline tasks \
+    local commands="ls stats mv cp rename rm mkdir download upload share offline tasks \
 star unstar starred events trash untrash empty info link cat play quota vip \
 whoami login hash update completions help version"
 
@@ -339,10 +347,17 @@ whoami login hash update completions help version"
     case "$cmd" in
         ls)
             if [[ "$cur" == -* ]]; then
-                COMPREPLY=($(compgen -W "-l --long -J --json -s --sort -r --reverse --tree --depth" -- "$cur"))
+                COMPREPLY=($(compgen -W "-l --long -J --json -s --sort -r --reverse --folder-stats --no-folder-stats --tree --depth" -- "$cur"))
             elif [[ "$prev" == "-s" ]] || [[ "$prev" == "--sort" ]]; then
-                COMPREPLY=($(compgen -W "name size created type extension none" -- "$cur"))
+                COMPREPLY=($(compgen -W "name size created modified content-modified type extension none" -- "$cur"))
             else
+                _pikpaktui_cloud_path
+            fi
+            ;;
+        stats)
+            if [[ "$cur" == -* ]]; then
+                COMPREPLY=($(compgen -W "-J --json --cached --refresh --folder-id" -- "$cur"))
+            elif [[ "$prev" != --folder-id && " ${COMP_WORDS[*]} " != *" --cached "* ]]; then
                 _pikpaktui_cloud_path
             fi
             ;;
@@ -531,11 +546,12 @@ end
 complete -c pikpaktui -f
 
 # Top-level commands
-set -l subcommands ls mv cp rename rm mkdir download upload share offline tasks \
+set -l subcommands ls stats mv cp rename rm mkdir download upload share offline tasks \
     star unstar starred events trash untrash empty info link cat play quota vip \
     whoami login hash update completions help version
 
 complete -c pikpaktui -n "not __fish_seen_subcommand_from $subcommands" -a ls         -d "List files"
+complete -c pikpaktui -n "not __fish_seen_subcommand_from $subcommands" -a stats -d "Recursive folder statistics"
 complete -c pikpaktui -n "not __fish_seen_subcommand_from $subcommands" -a mv         -d "Move files"
 complete -c pikpaktui -n "not __fish_seen_subcommand_from $subcommands" -a cp         -d "Copy files"
 complete -c pikpaktui -n "not __fish_seen_subcommand_from $subcommands" -a rename     -d "Rename file"
@@ -583,10 +599,18 @@ complete -c pikpaktui -n "__pikpaktui_using_command share; and __pikpaktui_prev_
 complete -c pikpaktui -n "__pikpaktui_using_command share; and not __pikpaktui_prev_is -o -d --days --pass-code --file-id --parent-id" -a "(__pikpaktui_cloud_path)"
 complete -c pikpaktui -n "__pikpaktui_using_command offline; and __pikpaktui_prev_is -t --to" -a "(__pikpaktui_cloud_path)"
 
+complete -c pikpaktui -n "__pikpaktui_using_command stats; and not __pikpaktui_prev_is --folder-id; and not contains -- --cached (commandline -opc)" -a "(__pikpaktui_cloud_path)"
+complete -c pikpaktui -n "__pikpaktui_using_command stats" -s J -l json -d "JSON output"
+complete -c pikpaktui -n "__pikpaktui_using_command stats" -l cached -d "Read the local index"
+complete -c pikpaktui -n "__pikpaktui_using_command stats" -l refresh -d "Rebuild the account index"
+complete -c pikpaktui -n "__pikpaktui_using_command stats" -l folder-id -r -d "PikPak folder ID"
+
 # ls options
+complete -c pikpaktui -n "__pikpaktui_using_command ls" -l no-folder-stats -d "Disable recursive statistics for this call"
+complete -c pikpaktui -n "__pikpaktui_using_command ls" -l folder-stats -d "Include recursive folder statistics"
 complete -c pikpaktui -n "__pikpaktui_using_command ls" -s l -l long    -d "Long format"
 complete -c pikpaktui -n "__pikpaktui_using_command ls" -s J -l json    -d "JSON output"
-complete -c pikpaktui -n "__pikpaktui_using_command ls" -s s -l sort    -d "Sort by field" -a "name size created type extension none"
+complete -c pikpaktui -n "__pikpaktui_using_command ls" -s s -l sort    -d "Sort by field" -a "name size created modified content-modified type extension none"
 complete -c pikpaktui -n "__pikpaktui_using_command ls" -s r -l reverse -d "Reverse sort"
 complete -c pikpaktui -n "__pikpaktui_using_command ls" -l tree         -d "Tree view"
 complete -c pikpaktui -n "__pikpaktui_using_command ls" -l depth        -d "Max depth"
@@ -713,7 +737,7 @@ Register-ArgumentCompleter -Native -CommandName @('pikpaktui') -ScriptBlock {
     }
 
     $allCommands = @(
-        'ls','mv','cp','rename','rm','mkdir','download','upload','share',
+        'ls','stats','mv','cp','rename','rm','mkdir','download','upload','share',
         'offline','tasks','star','unstar','starred','events','trash','untrash',
         'empty','info','link','cat','play','quota','vip','whoami','login',
         'hash','update','completions','help','version'
@@ -756,11 +780,12 @@ Register-ArgumentCompleter -Native -CommandName @('pikpaktui') -ScriptBlock {
                     [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
                 }
         }
-        { $_ -in @('ls','mv','cp','rename','rm','mkdir','download','upload',
+        { $_ -in @('ls','stats','mv','cp','rename','rm','mkdir','download','upload',
                     'share','offline','star','unstar','info','link','cat','play','trash') } {
             if ($wordToComplete.StartsWith('-')) {
                 $opts = switch ($command) {
-                    'ls'       { @('-l','--long','-J','--json','-s','--sort','-r','--reverse','--tree','--depth') }
+                    'ls'       { @('-l','--long','-J','--json','-s','--sort','-r','--reverse','--folder-stats','--no-folder-stats','--tree','--depth') }
+                    'stats'    { @('-J','--json','--cached','--refresh','--folder-id') }
                     'mv'       { @('-t','-n','--dry-run') }
                     'cp'       { @('-t','-n','--dry-run') }
                     'rename'   { @('-n','--dry-run') }
@@ -780,6 +805,13 @@ Register-ArgumentCompleter -Native -CommandName @('pikpaktui') -ScriptBlock {
                 $opts | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
                     [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
                 }
+            } elseif ($command -eq 'stats' -and ($previous -eq '--folder-id' -or '--cached' -in $elements.Extent.Text)) {
+                return
+            } elseif ($command -eq 'ls' -and $previous -in @('-s','--sort')) {
+                @('name','size','created','modified','content-modified','type','extension','none') |
+                    Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
+                        [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
+                    }
             } elseif ($command -eq 'download' -and $previous -in @('-o','--output','-t')) {
                 Get-LocalPaths $wordToComplete
             } elseif ($command -eq 'upload' -and $previous -ne '-t') {

@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -12,6 +12,12 @@ use super::{App, InputMode, OpResult, browser::PaneKind};
 
 pub(super) type ScanResult = Result<FolderStats, FolderStatsError>;
 pub(super) type DriveScanResult = Result<HashMap<String, FolderStats>, FolderStatsError>;
+pub(super) enum IndexUpdate {
+    Cached(HashMap<String, FolderStats>),
+    Synced(HashMap<String, FolderStats>),
+    Failed(String),
+    Unavailable,
+}
 
 /// Reorder at most four times a second while individual folders finish.
 const RESORT_INTERVAL: Duration = Duration::from_millis(250);
@@ -23,6 +29,8 @@ pub(super) struct FolderStatsState {
     active: Option<Arc<AtomicBool>>,
     drive_scan_attempted: bool,
     drive_scan_active: bool,
+    index_attempted: bool,
+    cached_ids: HashSet<String>,
     results: HashMap<String, ScanResult>,
     sort_dirty_since: Option<Instant>,
 }
@@ -34,6 +42,10 @@ impl FolderStatsState {
 
     pub(super) fn failed(&self, id: &str) -> bool {
         self.results.get(id).is_some_and(Result::is_err)
+    }
+
+    pub(super) fn is_cached(&self, id: &str) -> bool {
+        self.cached_ids.contains(id)
     }
 
     pub(super) fn running(&self) -> bool {
@@ -51,6 +63,8 @@ impl FolderStatsState {
     pub(super) fn leave_listing(&mut self) {
         self.cancel_work();
         self.results.clear();
+        self.cached_ids.clear();
+        self.index_attempted = false;
         self.sort_dirty_since = None;
     }
 
@@ -144,6 +158,7 @@ impl FolderStatsState {
     }
 
     pub(super) fn record(&mut self, id: String, result: ScanResult) {
+        self.cached_ids.remove(&id);
         self.results.insert(id, result);
     }
 
@@ -209,6 +224,102 @@ impl Drop for FolderStatsState {
 }
 
 impl App {
+    fn start_folder_index(&mut self) -> bool {
+        if self.folder_stats.index_attempted {
+            return false;
+        }
+        self.folder_stats.index_attempted = true;
+        let ids: Vec<_> = self
+            .entries
+            .iter()
+            .filter(|entry| entry.kind == EntryKind::Folder)
+            .map(|entry| entry.id.clone())
+            .collect();
+        if ids.is_empty() {
+            return false;
+        }
+        let expected = if self.current_folder_id.is_empty() {
+            match RootListing::from_entries(&self.entries) {
+                Ok(root) => Some(root),
+                Err(_) => return false,
+            }
+        } else {
+            None
+        };
+        let active = self.folder_stats.begin();
+        let client = Arc::clone(&self.client);
+        let tx = self.result_tx.clone();
+        std::thread::spawn(move || {
+            let send = |update| {
+                tx.send(OpResult::FolderIndex(Arc::clone(&active), update))
+                    .is_ok()
+            };
+            if !client.folder_index_available() {
+                let _ = send(IndexUpdate::Unavailable);
+                return;
+            }
+            if let Ok(rows) = client.cached_folder_stats_batch(&ids)
+                && !rows.is_empty()
+                && !send(IndexUpdate::Cached(rows))
+            {
+                return;
+            }
+            let sync = match expected.as_ref() {
+                Some(root) => client.sync_folder_index_for_root(&active, false, root),
+                None => client.sync_folder_index(&active, false),
+            };
+            let update = match sync.and_then(|()| client.cached_folder_stats_batch(&ids)) {
+                Ok(rows) => IndexUpdate::Synced(rows),
+                Err(error) => IndexUpdate::Failed(format!("{error:#}")),
+            };
+            let _ = send(update);
+        });
+        true
+    }
+
+    pub(super) fn apply_folder_index(&mut self, token: &Arc<AtomicBool>, update: IndexUpdate) {
+        let state = &mut self.folder_stats;
+        if !state
+            .active
+            .as_ref()
+            .is_some_and(|active| Arc::ptr_eq(active, token))
+        {
+            return;
+        }
+        if matches!(update, IndexUpdate::Cached(_)) {
+            if token.load(Ordering::Relaxed) {
+                return;
+            }
+        } else if !state.accept() {
+            // A sort change can cancel the index without leaving the view.
+            state.index_attempted = false;
+            return;
+        }
+        match update {
+            IndexUpdate::Cached(rows) => {
+                for (id, stats) in rows {
+                    state.cached_ids.insert(id.clone());
+                    state.results.insert(id, Ok(stats));
+                }
+            }
+            IndexUpdate::Synced(rows) => {
+                state.results.clear();
+                state.cached_ids.clear();
+                state.drive_scan_attempted = true;
+                for (id, stats) in rows {
+                    state.record(id, Ok(stats));
+                }
+            }
+            IndexUpdate::Failed(error) => {
+                state.drive_scan_attempted = true;
+                self.push_log(format!("Folder index sync failed: {error}"));
+                return;
+            }
+            IndexUpdate::Unavailable => return,
+        }
+        self.resort_folder_stats();
+    }
+
     /// Each consumer keeps its own deadline while sharing the same normal-list data.
     pub(super) fn folder_lister(
         &self,
@@ -251,6 +362,9 @@ impl App {
             if !all && self.folder_stats.drive_scan_active {
                 self.folder_stats.cancel_work();
             }
+            return;
+        }
+        if self.start_folder_index() {
             return;
         }
         let session = Arc::clone(&self.folder_stats.session);

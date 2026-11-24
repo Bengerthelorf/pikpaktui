@@ -32,24 +32,35 @@ impl PikPak {
         &'a self,
         parent_id: &'a str,
     ) -> Result<impl Iterator<Item = Result<Option<Vec<T>>>> + 'a> {
+        let filters = r#"{"trashed":{"eq":false},"phase":{"eq":"PHASE_TYPE_COMPLETE"}}"#;
+        Ok(self
+            .filtered_list_pages(parent_id, filters.to_owned(), "ls")?
+            .map(|page| Ok(page?.files)))
+    }
+
+    pub(super) fn filtered_list_pages<'a, T: serde::de::DeserializeOwned + 'a>(
+        &'a self,
+        parent_id: &'a str,
+        filters: String,
+        op: &'static str,
+    ) -> Result<impl Iterator<Item = Result<NormalListPage<T>>> + 'a> {
         let token = self.access_token()?;
         let thumbnail_size = self.thumbnail_size();
         let url = self.drive_url("drive/v1/files");
-        let filters = r#"{"trashed":{"eq":false},"phase":{"eq":"PHASE_TYPE_COMPLETE"}}"#;
 
         let fetch = move |page_token: &str| -> Result<NormalListPage<T>> {
             let mut rb = self.http.get(&url).bearer_auth(&token).query(&[
                 ("parent_id", parent_id),
                 ("limit", "500"),
-                ("filters", filters),
+                ("filters", filters.as_str()),
                 ("thumbnail_size", thumbnail_size.as_str()),
                 ("with_audit", "true"),
             ]);
             if !page_token.is_empty() {
                 rb = rb.query(&[("page_token", page_token)]);
             }
-            let response = self.send_authed("ls", rb)?;
-            json_or_api_error(response, "ls")
+            let response = self.send_authed(op, rb)?;
+            json_or_api_error(response, op)
         };
 
         let mut next = Some(String::new());
@@ -57,14 +68,14 @@ impl PikPak {
         Ok(std::iter::from_fn(move || {
             let current = next.take()?;
             Some(fetch(&current).and_then(|page| {
-                if let Some(token) = page.next_page_token.filter(|t| !t.is_empty()) {
+                if let Some(token) = page.next_page_token.as_ref().filter(|t| !t.is_empty()) {
                     anyhow::ensure!(
                         seen.insert(token.clone()),
                         "ls pagination stuck: server repeated page token"
                     );
-                    next = Some(token);
+                    next = Some(token.clone());
                 }
-                Ok(page.files)
+                Ok(page)
             }))
         }))
     }

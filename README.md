@@ -32,7 +32,7 @@ CLI reference, TUI guide, configuration, shell completions, and more.
 ## Highlights
 
 - 🖥️ **Interactive TUI** — Configurable multi-column browser with sibling previews and inline image thumbnails, syntax highlighting, and keyboard-driven navigation
-- ⌨️ **Full CLI** — 29 subcommands (`ls`, `mv`, `cp`, `rm`, `download`, `upload`, `share`, `update`, and more) with colored output, JSON mode, and dry-run support
+- ⌨️ **Full CLI** — Commands such as `ls`, `stats`, `download`, `upload` and `share` with colored output, JSON mode, and dry-run support
 - 🎬 **Video Streaming** — Stream videos directly from PikPak to your local player (IINA, mpv, VLC)
 - 📥 **Cloud Downloads** — Add magnet links and URLs for offline downloading
 - 🔗 **Share Management** — Create, list, save, and delete share links with optional password protection
@@ -66,6 +66,8 @@ cargo install pikpaktui
 
 Download from [Releases](https://github.com/Bengerthelorf/pikpaktui/releases/latest) — available for Linux (x86_64/ARM64), macOS (Intel/Apple Silicon), Windows (x86_64/ARM64), and FreeBSD.
 
+Android clients can download the standalone arm64 JNI library from the same release. [Android JNI API v1 and build instructions](android/README.md)
+
 ### From Source
 
 ```bash
@@ -93,6 +95,7 @@ Use CLI subcommands directly:
 
 ```bash
 pikpaktui ls /
+pikpaktui stats --json /Movies
 pikpaktui download "/My Pack/video.mp4"
 pikpaktui upload ./local.txt "/My Pack"
 pikpaktui share -p -d 7 /movie.mkv

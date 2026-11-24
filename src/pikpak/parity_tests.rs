@@ -114,14 +114,153 @@ fn server_rejection_refreshes_a_locally_unexpired_token() {
 
 #[test]
 fn repeated_authentication_rejection_stops_after_one_refresh() {
-    let (base, requests, handle) =
-        scripted_server(vec![(401, REJECTED), (200, REFRESHED), (401, REJECTED)]);
+    let (base, requests, handle) = scripted_server(vec![
+        (401, REJECTED),
+        (200, REFRESHED),
+        (401, r#"{"error":"login required"}"#),
+    ]);
     let dir = temp_test_dir("parity-bounded-auth-retry");
     let mut client = test_client(base.clone(), dir.join("session.json"));
     client.auth_base_url = base;
-    assert!(client.quota().unwrap_err().to_string().contains("401"));
+    let error = client.quota().unwrap_err();
+    assert!(error.to_string().contains("401"));
+    #[cfg(pikpak_android_jni)]
+    assert_eq!(crate::error_payload(error)["code"], "request");
+    assert_eq!(
+        client.load_session().unwrap().unwrap().refresh_token,
+        "rotated-refresh"
+    );
     handle.join().unwrap();
     assert_eq!(requests.lock().unwrap().len(), 3);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[cfg(pikpak_android_jni)]
+#[test]
+fn login_challenge_and_answer_use_the_same_session_path() {
+    let verify_url = "https://example.invalid/verify";
+    let (base, requests, handle) = scripted_server(vec![
+        (200, r#"{"url":"https://example.invalid/verify"}"#),
+        (200, REFRESHED),
+    ]);
+    let dir = temp_test_dir("jni-login-challenge");
+    let path = dir.join("session.json");
+    let mut client = PikPak::with_session_path(path.clone()).unwrap();
+    client.auth_base_url = base;
+    let first = client.login_with_challenge_token("fixture@example.invalid", "fixture", None);
+    assert_eq!(
+        crate::error_payload(first.unwrap_err()),
+        serde_json::json!({
+            "error": "PikPak requires verification", "code": "challenge", "challenge": verify_url
+        })
+    );
+    assert!(!path.exists());
+    client
+        .login_with_challenge_token("fixture@example.invalid", "fixture", Some("solved"))
+        .unwrap();
+    let saved = PikPak::with_session_path(path)
+        .unwrap()
+        .load_session()
+        .unwrap()
+        .unwrap();
+    assert_eq!(saved.refresh_token, "rotated-refresh");
+    handle.join().unwrap();
+    let requests = requests.lock().unwrap();
+    assert!(requests[0].starts_with("POST /v1/shield/captcha/init "));
+    assert!(requests[1].starts_with("POST /v1/auth/signin "));
+    assert!(requests[1].contains(r#""captcha_token":"solved""#));
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[cfg(not(pikpak_android_jni))]
+#[test]
+fn desktop_refreshes_before_the_saved_access_token_expires() {
+    let (base, requests, handle) = scripted_server(vec![(200, REFRESHED)]);
+    let dir = temp_test_dir("desktop-proactive-refresh");
+    let mut client = test_client(base.clone(), dir.join("session.json"));
+    client.auth_base_url = base;
+    client
+        .update_session(|session| session.expires_at_unix = now_unix() + 30)
+        .unwrap();
+    assert_eq!(client.access_token().unwrap(), "fresh-access");
+    handle.join().unwrap();
+    assert!(requests.lock().unwrap()[0].starts_with("POST /v1/auth/token "));
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[cfg(pikpak_android_jni)]
+#[test]
+fn refresh_without_a_new_refresh_token_retains_the_saved_credential_after_restart() {
+    let (base, requests, handle) = scripted_server(vec![
+        (200, r#"{"access_token":"fresh-access","expires_in":3600}"#),
+        (200, r#"{"quota":{"limit":"100","usage":"1"}}"#),
+        (
+            200,
+            r#"{"access_token":"second-access","refresh_token":"","expires_in":3600}"#,
+        ),
+        (200, r#"{"quota":{"limit":"100","usage":"1"}}"#),
+    ]);
+    let dir = temp_test_dir("parity-unrotated-refresh");
+    let path = dir.join("session.json");
+    let mut client = test_client(base.clone(), path.clone());
+    client.auth_base_url.clone_from(&base);
+    client
+        .update_session(|session| session.expires_at_unix = 0)
+        .unwrap();
+    client.quota().unwrap();
+    drop(client);
+
+    let mut restarted = PikPak::with_session_path(path).unwrap();
+    restarted.auth_base_url.clone_from(&base);
+    restarted.drive_base_url = base;
+    restarted
+        .update_session(|session| session.expires_at_unix = 0)
+        .unwrap();
+    restarted.quota().unwrap();
+
+    handle.join().unwrap();
+    let requests = requests.lock().unwrap();
+    for index in [0, 2] {
+        assert!(requests[index].starts_with("POST /v1/auth/token "));
+        assert!(requests[index].contains(r#""refresh_token":"test-refresh""#));
+    }
+    assert_eq!(
+        restarted.load_session().unwrap().unwrap().refresh_token,
+        "test-refresh"
+    );
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[cfg(pikpak_android_jni)]
+#[test]
+fn still_valid_access_token_does_not_require_a_refresh_to_browse() {
+    let (base, requests, handle) = scripted_server(vec![(200, r#"{"quota":{"limit":"100"}}"#)]);
+    let dir = temp_test_dir("parity-valid-access-token");
+    let mut client = test_client(base.clone(), dir.join("session.json"));
+    client.auth_base_url = base;
+    client
+        .update_session(|session| session.expires_at_unix = now_unix() + 30)
+        .unwrap();
+    client.quota().unwrap();
+    handle.join().unwrap();
+    assert!(requests.lock().unwrap()[0].starts_with("GET /drive/v1/about"));
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[cfg(pikpak_android_jni)]
+#[test]
+fn interactive_session_lock_wait_is_bounded() {
+    let dir = temp_test_dir("parity-session-deadline");
+    let path = dir.join("session.json");
+    let first = test_client(String::new(), path.clone());
+    let second = PikPak::with_session_path(path).unwrap();
+    let guard = first.lock_session_file().unwrap();
+    let error =
+        interactive::with_deadline(Duration::from_millis(35), || second.lock_session_file())
+            .unwrap_err();
+    assert_eq!(crate::error_payload(error)["code"], "timeout");
+    drop(guard);
+    assert!(second.lock_session_file().is_ok());
     fs::remove_dir_all(dir).unwrap();
 }
 

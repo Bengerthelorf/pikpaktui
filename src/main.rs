@@ -26,8 +26,8 @@ fn entry() -> Result<()> {
         return run_tui();
     }
 
-    // Hash accepts local names such as `--help` after the option separator.
-    let help_args = if args[0] == "hash" {
+    // These commands accept names such as `--help` after the option separator.
+    let help_args = if matches!(args[0].as_str(), "hash" | "stats") {
         args[1..]
             .split(|arg| arg == "--")
             .next()
@@ -54,6 +54,7 @@ fn entry() -> Result<()> {
         }
         "--help" | "-h" | "help" => cmd::help::run(),
         "ls" => cmd::ls::run(&args[1..]),
+        "stats" => cmd::stats::run(&args[1..]),
         "mv" => cmd::mv::run(&args[1..]),
         "cp" => cmd::cp::run(&args[1..]),
         "rename" => cmd::rename::run(&args[1..]),
@@ -106,7 +107,12 @@ fn cli_update_check(args: &[String]) -> Option<mpsc::Receiver<Option<String>>> {
         args.first().map(|s| s.as_str()),
         Some("hash" | "update" | "completions" | "__complete_path")
     );
-    if skip {
+    let offline_stats = args.first().is_some_and(|cmd| cmd == "stats")
+        && args[1..]
+            .iter()
+            .take_while(|arg| arg.as_str() != "--")
+            .any(|arg| arg == "--cached");
+    if skip || offline_stats {
         return None;
     }
 

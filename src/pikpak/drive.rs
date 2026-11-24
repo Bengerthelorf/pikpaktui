@@ -8,6 +8,8 @@ pub(super) struct NormalListPage<T> {
     #[serde(default = "Option::default", deserialize_with = "present_files")]
     pub(super) files: Option<Vec<T>>,
     pub(super) next_page_token: Option<String>,
+    // Older scoped listing endpoints omit this field; the index requires it.
+    pub(super) sync_time: Option<serde_json::Value>,
 }
 
 // A missing list is accepted by legacy per-folder callers. A present null

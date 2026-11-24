@@ -47,6 +47,7 @@ inline_thumbnails = true   # 檔名前的小縮圖；v 開關
 inline_thumbnail_size = "tiny"  # "tiny" | "small" | "medium" | "large"；[ / ] 調整
 thumbnail_placeholders = true  # 等待或不可用時保留灰色圖片佔位卡
 folder_stats = false        # 遞迴計算資料夾總大小及內容的最新修改時間
+cli_folder_stats = false    # 為 CLI 的 ls 預設啟用目錄統計
 
 # 預覽
 show_preview = true         # 寬度允許時顯示預覽；false = 僅檔案瀏覽面板
@@ -110,6 +111,8 @@ update_check = "notify"
 ### 資料夾統計
 
 在 **Browser Settings → Folder Statistics** 中啟用開關，按 `s` 儲存。啟用後，`size` 使用各層檔案的大小總和，也可選擇 `content-modified` 依資料夾內最新的檔案修改時間排序。`modified` 一律使用項目本身的修改時間。關閉統計時，目前的 `content-modified` 排序會切換為 `modified`。
+
+在 CLI 中設定 `cli_folder_stats = true` 可讓 `ls` 預設使用目錄統計。單次啟用使用 `ls --folder-stats`，單次停用使用 `ls --no-folder-stats`。TUI 和 CLI 在同一設定目錄下依帳號共用 `folder-index/` 中的 SQLite 索引。兩個開關預設皆為 `false`。直接執行 `stats` 即可查詢，`stats --cached --folder-id ID` 可離線讀取上次儲存的結果。
 
 ### 縮圖設定
 

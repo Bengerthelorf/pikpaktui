@@ -6,7 +6,7 @@ locale: zh
 ---
 
 
-pikpaktui 提供 29 条 CLI 子命令，适合脚本和自动化。云端操作需要有效会话，可使用 `pikpaktui login` 或 TUI 登录。`hash` 完全离线运行；帮助、补全和自更新无需 PikPak 会话。
+pikpaktui 提供 CLI 子命令，适合脚本和自动化。云端操作需要有效会话，可使用 `pikpaktui login` 或 TUI 登录。`hash` 完全离线运行；帮助、补全和自更新无需 PikPak 会话。
 
 ## 命令分组
 
@@ -15,6 +15,7 @@ pikpaktui 提供 29 条 CLI 子命令，适合脚本和自动化。云端操作�
 | 命令 | 说明 |
 |------|------|
 | [`ls`](/zh/cli/commands#ls) | 列出文件和文件夹 |
+| [`stats`](/zh/cli/commands#stats) | 查询单个目录的递归统计 |
 | [`mv`](/zh/cli/commands#mv) | 移动文件或文件夹 |
 | [`cp`](/zh/cli/commands#cp) | 复制文件或文件夹 |
 | [`rename`](/zh/cli/commands#rename) | 重命名文件或文件夹 |

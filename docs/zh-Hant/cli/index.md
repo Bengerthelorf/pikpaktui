@@ -6,7 +6,7 @@ locale: zh-Hant
 ---
 
 
-pikpaktui 提供 29 條 CLI 子指令，適合腳本與自動化。雲端操作需要有效工作階段，可使用 `pikpaktui login` 或 TUI 登入。`hash` 完全離線執行；說明、補全與自動更新無需 PikPak 工作階段。
+pikpaktui 提供 CLI 子指令，適合腳本與自動化。雲端操作需要有效工作階段，可使用 `pikpaktui login` 或 TUI 登入。`hash` 完全離線執行；說明、補全與自動更新無需 PikPak 工作階段。
 
 ## 指令分組
 
@@ -15,6 +15,7 @@ pikpaktui 提供 29 條 CLI 子指令，適合腳本與自動化。雲端操作�
 | 指令 | 說明 |
 |------|------|
 | [`ls`](/zh-Hant/cli/commands#ls) | 列出檔案與資料夾 |
+| [`stats`](/zh-Hant/cli/commands#stats) | 查詢單一資料夾的遞迴統計 |
 | [`mv`](/zh-Hant/cli/commands#mv) | 移動檔案或資料夾 |
 | [`cp`](/zh-Hant/cli/commands#cp) | 複製檔案或資料夾 |
 | [`rename`](/zh-Hant/cli/commands#rename) | 重新命名檔案或資料夾 |

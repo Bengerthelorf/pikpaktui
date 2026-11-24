@@ -6,7 +6,7 @@ locale: zh-Hant
 ---
 
 
-所有指令均需有效工作階段，請先執行 `pikpaktui`（TUI）登入，或使用 [`login`](#login)。
+雲端查詢需要有效工作階段，請先執行 `pikpaktui`（TUI）登入，或使用 [`login`](#login)。
 
 ---
 
@@ -22,10 +22,14 @@ pikpaktui ls [選項] [路徑]
 |------|------|
 | `-l`, `--long` | 長格式——顯示 ID、大小、日期與檔案名稱 |
 | `-J`, `--json` | 輸出 JSON 陣列 |
-| `-s`, `--sort <欄位>` | 按欄位排序：`name`、`size`、`created`、`type`、`extension`、`none` |
+| `-s`, `--sort <欄位>` | 按欄位排序：`name`、`size`、`created`、`modified`、`content-modified`、`type`、`extension`、`none` |
+| `--folder-stats` | 長格式和 JSON 輸出包含資料夾遞迴大小與內容修改時間。 |
+| `--no-folder-stats` | 本次關閉統計，覆寫 `config.toml` 中的 `cli_folder_stats = true`。與 `--sort=content-modified` 衝突。 |
 | `-r`, `--reverse` | 反向排序 |
 | `--tree` | 遞迴樹狀檢視 |
 | `--depth=N` | 限制樹深度為 N 層 |
+
+`--folder-stats --sort=size` 按資料夾遞迴大小排序。使用 `--sort=content-modified` 會自動啟用統計，按資料夾內最新檔案的修改時間排序。一般檔案使用自身的大小和修改時間。`modified` 按項目自身的修改時間排序。啟用統計後，`-l` 顯示遞迴大小與內容時間（`--sort=modified` 顯示自身時間），`-J` 會在資料夾項目中加入 `folder_stats` 物件。
 
 **範例：**
 
@@ -35,7 +39,25 @@ pikpaktui ls "/My Pack"                    # 列出指定資料夾
 pikpaktui ls -l /Movies                    # 長格式
 pikpaktui ls --sort=size -r /              # 按大小倒序
 pikpaktui ls --tree --depth=2 "/My Pack"   # 樹狀，最多 2 層
+pikpaktui ls -l --folder-stats --sort=size /Movies
+pikpaktui ls --sort=content-modified -J /Movies
 pikpaktui ls /Movies --json | jq '.[] | select(.size > 1073741824)'
+```
+
+---
+
+## stats
+
+按路徑或 PikPak 資料夾 ID 查詢單一資料夾，省略目標時查詢根目錄。預設先同步帳戶索引，首次完整掃描，後續使用增量更新。帳戶或服務無法提供索引時，預設查詢改用一般遞迴清單。
+
+`--cached` 離線讀取上次提交的本機統計，只接受資料夾 ID 或根目錄。找不到時指令會以錯誤結束。`--refresh` 先完整重建帳戶索引，再傳回指定資料夾的結果。
+
+`-J` 傳回十進位無號位元組數字串 `total_size_bytes`、RFC 3339 時間字串或 `null` 的 `latest_modified_time`，以及布林值 `is_empty`。空資料夾為 0 位元組、無時間且 `is_empty=true`。僅含零位元組檔案的資料夾為 `is_empty=false`。
+
+```bash
+pikpaktui stats /Movies
+pikpaktui stats --cached --folder-id ID -J
+pikpaktui stats --refresh --json /
 ```
 
 ---

@@ -21,6 +21,7 @@ pub mod rm;
 pub mod share;
 pub mod star;
 pub mod starred;
+pub mod stats;
 pub mod tasks;
 pub mod trash;
 pub mod unstar;
@@ -45,7 +46,7 @@ pub const COMMAND_GROUPS: &[(&str, &[&str])] = &[
     (
         "File Management",
         &[
-            "ls", "mv", "cp", "rename", "rm", "mkdir", "info", "link", "cat",
+            "ls", "stats", "mv", "cp", "rename", "rm", "mkdir", "info", "link", "cat",
         ],
     ),
     ("Playback", &["play"]),
@@ -97,6 +98,21 @@ pub fn command_help_text(cmd: &str) -> (&'static str, &'static str, String) {
                  {D}  pikpaktui hash -- -local-file{R}\n"
             ),
         ),
+        "stats" => (
+            "stats [-J|--json] [--cached|--refresh] [--folder-id ID | PATH]",
+            "Query recursive folder size and latest file modification",
+            format!(
+                "The default target is the drive root. Ordinary queries sync changes and use\n\
+                 normal folder traversal if the service cannot supply an index.\n\n\
+                 {G}  --folder-id ID   {D}Query a folder by its PikPak ID{R}\n\
+                 {G}  --cached         {D}Read the saved index offline. Supply an ID or the root{R}\n\
+                 {G}  --refresh        {D}Rebuild the full account index before reading{R}\n\
+                 {G}  -J, --json       {D}Print total_size_bytes, latest_modified_time and is_empty{R}\n\n\
+                 {B}EXAMPLES:{R}\n\
+                 {D}  pikpaktui stats /Movies{R}\n\
+                 {D}  pikpaktui stats --cached --folder-id ID -J{R}\n"
+            ),
+        ),
         "ls" => (
             "ls [options] [path]",
             "List files and folders",
@@ -104,13 +120,15 @@ pub fn command_help_text(cmd: &str) -> (&'static str, &'static str, String) {
                 "{B}OPTIONS:{R}\n\
                  {opt}  -l, --long       {d}Long format (id, size, date, name){R}\n\
                  {opt}  -J, --json       {d}Output as JSON{R}\n\
-                 {opt}  -s, --sort=FIELD {d}Sort by: name, size, created, type, extension, none{R}\n\
+                 {opt}  -s, --sort=FIELD {d}Sort by name, size, created, modified, content-modified, type, extension or none{R}\n\
+                 {opt}  --folder-stats   {d}Use recursive sizes and content times (-l or JSON). Implied by content-modified{R}\n\
+                 {opt}  --no-folder-stats {d}Override cli_folder_stats for this call. Conflicts with content-modified{R}\n\
                  {opt}  -r, --reverse    {d}Reverse sort order{R}\n\
                  {opt}  --tree           {d}Tree view{R}\n\
                  {opt}  --depth=N        {d}Max tree depth{R}\n\
                  \n{B}EXAMPLES:{R}\n\
                  {ex}  pikpaktui ls{R}\n\
-                 {ex}  pikpaktui ls -l /Movies{R}\n\
+                 {ex}  pikpaktui ls -l --folder-stats --sort=size /Movies{R}\n\
                  {ex}  pikpaktui ls --tree --depth=2 /{R}\n",
                 opt = G,
                 d = D,
@@ -754,12 +772,16 @@ pub fn print_entries_short(entries: &[pikpak::Entry], nerd_font: bool) {
 /// Returns the colored `id  size  date  ` prefix used in long-format output.
 /// Shared between `print_entries_long` and tree long mode.
 pub fn long_entry_prefix(e: &pikpak::Entry) -> String {
-    let size_str = if e.kind == pikpak::EntryKind::Folder {
-        format!("{:>9}", "-")
-    } else {
-        format!("{:>9}", format_size(e.size))
-    };
-    let date = format_date(&e.created_time);
+    long_prefix(
+        e,
+        (e.kind == pikpak::EntryKind::File).then_some(e.size),
+        &e.created_time,
+    )
+}
+
+fn long_prefix(e: &pikpak::Entry, size: Option<u64>, stamp: &str) -> String {
+    let size_str = format!("{:>9}", size.map_or_else(|| "-".into(), format_size));
+    let date = format_date(stamp);
     let colored_id = format!("\x1b[2m{}\x1b[0m", e.id);
     let colored_size = format!("\x1b[1;32m{}\x1b[0m", size_str);
     let colored_date = format!("\x1b[34m{:16}\x1b[0m", date);
@@ -768,6 +790,14 @@ pub fn long_entry_prefix(e: &pikpak::Entry) -> String {
 
 /// eza-style long format output: id, size, date, icon+name.
 pub fn print_entries_long(entries: &[pikpak::Entry], nerd_font: bool) {
+    print_entries_with_prefix(entries, nerd_font, long_entry_prefix);
+}
+
+fn print_entries_with_prefix(
+    entries: &[pikpak::Entry],
+    nerd_font: bool,
+    prefix: impl Fn(&pikpak::Entry) -> String,
+) {
     use crate::theme;
 
     for e in entries {
@@ -775,7 +805,7 @@ pub fn print_entries_long(entries: &[pikpak::Entry], nerd_font: bool) {
         let icon = theme::cli_icon(cat, nerd_font);
         let name_display = format!("{}{}", icon, e.name);
         let colored_name = theme::cli_colored(&name_display, cat);
-        println!("{}{}", long_entry_prefix(e), colored_name);
+        println!("{}{}", prefix(e), colored_name);
     }
 }
 

@@ -35,6 +35,7 @@ use ratatui::layout::{Constraint, Direction, Layout};
 use std::cell::{Cell, RefCell};
 use std::collections::{HashSet, VecDeque};
 use std::io;
+use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
@@ -283,6 +284,7 @@ enum OpResult {
     Browser(browser::BrowserRequest, Result<browser::BrowserPayload>),
     FolderStats(String, folder_stats::ScanResult),
     DriveStats(folder_stats::DriveScanResult),
+    FolderIndex(Arc<AtomicBool>, folder_stats::IndexUpdate),
     /// Main-pane folder listing. Folder and request ids prevent a delayed
     /// reply from replacing a newer listing, including A -> B -> A navigation.
     Ls(u64, String, Result<Vec<Entry>>),
@@ -892,6 +894,7 @@ impl App {
                         self.resort_folder_stats();
                     }
                 }
+                OpResult::FolderIndex(token, update) => self.apply_folder_index(&token, update),
                 OpResult::Ls(request_id, requested_folder_id, Ok(mut entries)) => {
                     if !folder_listing_matches(
                         &self.current_folder_id,

@@ -7,7 +7,6 @@ use super::drive_stats::RootListing;
 use super::folder_stats::{FolderTotals, check_cancelled};
 use super::{Entry, EntryKind, FolderStats, FolderStatsError, PikPak, interactive};
 
-const TTL: Duration = Duration::from_secs(60);
 const MAX_LISTINGS: usize = 64;
 const MAX_ENTRIES_PER_LISTING: usize = 500;
 const MAX_TOTALS: usize = 2048;
@@ -39,7 +38,7 @@ impl<T: Clone> Cache<T> {
     fn get(&self, id: &str, at: Instant) -> Option<Observed<T>> {
         self.values
             .get(id)
-            .filter(|v| at.saturating_duration_since(v.since) < TTL)
+            .filter(|v| at.saturating_duration_since(v.since) < FolderStatsSession::MAX_AGE)
             .cloned()
     }
 
@@ -181,6 +180,8 @@ fn read_error(folder_id: &str, message: &str) -> FolderStatsError {
 }
 
 impl FolderStatsSession {
+    pub(crate) const MAX_AGE: Duration = Duration::from_secs(60);
+
     fn lock(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(|e| e.into_inner())
     }
@@ -254,6 +255,27 @@ impl FolderStatsSession {
         id: &str,
         cancelled: &AtomicBool,
     ) -> Result<FolderStats, FolderStatsError> {
+        self.stats_inner(client, id, cancelled, true)
+    }
+
+    /// The JNI root batch has already been considered for this registration.
+    #[cfg(pikpak_android_jni)]
+    pub(crate) fn subtree_stats(
+        &self,
+        client: &PikPak,
+        id: &str,
+        cancelled: &AtomicBool,
+    ) -> Result<FolderStats, FolderStatsError> {
+        self.stats_inner(client, id, cancelled, false)
+    }
+
+    fn stats_inner(
+        &self,
+        client: &PikPak,
+        id: &str,
+        cancelled: &AtomicBool,
+        allow_drive: bool,
+    ) -> Result<FolderStats, FolderStatsError> {
         check_cancelled(cancelled)?;
         if id == "*" {
             return Err(read_error(id, "expected a folder ID, not the wildcard"));
@@ -265,7 +287,7 @@ impl FolderStatsSession {
         }
         let root = self.listing(client, id, cancelled, epoch, started, false)?;
         let root = Frame::new(id.to_owned(), root)?;
-        if id.is_empty() && root.direct.children.len() >= 2 {
+        if allow_drive && id.is_empty() && root.direct.children.len() >= 2 {
             let state = self.lock();
             state.check(epoch)?;
             let count = root.direct.children.len();
@@ -693,7 +715,7 @@ mod tests {
         let session = FolderStatsSession::default();
         let (a, dir_a, listener) = fixture();
         let epoch = session.begin(&a);
-        let oldest = Instant::now() - TTL + Duration::from_secs(5);
+        let oldest = Instant::now() - FolderStatsSession::MAX_AGE + Duration::from_secs(5);
         session.lock().totals.insert(
             "child",
             Observed {
@@ -713,7 +735,7 @@ mod tests {
         assert!(!result.is_empty);
         assert!(
             session
-                .cached_total("root", epoch, oldest + TTL)
+                .cached_total("root", epoch, oldest + FolderStatsSession::MAX_AGE)
                 .unwrap()
                 .is_none()
         );

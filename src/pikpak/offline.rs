@@ -41,6 +41,7 @@ impl PikPak {
 
         let rb = self.http.post(&url).bearer_auth(&token).json(&payload);
         let response = self.send_authed("offline download", rb)?;
+        self.clear_ls_cache();
         json_or_api_error(response, "offline download")
     }
 
@@ -148,6 +149,7 @@ impl PikPak {
 
         let rb = self.http.post(&url).bearer_auth(&token).json(&payload);
         let response = self.send_authed("offline task retry", rb)?;
+        self.clear_ls_cache();
         ensure_success(response, "offline task retry")
     }
 
@@ -166,6 +168,9 @@ impl PikPak {
             rb = rb.query(&[(k, v)]);
         }
         let response = self.send_authed("delete tasks", rb)?;
+        if delete_files {
+            self.clear_ls_cache();
+        }
         ensure_success(response, "delete tasks")
     }
 }

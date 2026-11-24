@@ -487,7 +487,13 @@ impl App {
         let marker_width = unicode_width::UnicodeWidthStr::width(star)
             + unicode_width::UnicodeWidthStr::width(cart);
         let text_width = (width as usize).saturating_sub(prefix_width + marker_width);
-        let metadata = self.browser_row_metadata(entry, active, text_width.saturating_sub(8));
+        let mut metadata = self.browser_row_metadata(entry, active, text_width.saturating_sub(8));
+        if self.config.folder_stats
+            && self.config.sort_field != crate::config::SortField::Modified
+            && self.folder_stats.is_cached(&entry.id)
+        {
+            metadata.push_str(" (cached)");
+        }
         let metadata = if metadata.is_empty() {
             metadata
         } else {

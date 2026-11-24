@@ -180,6 +180,40 @@ jobs:
           name: ${{ matrix.name }}
           path: dist/*
 
+  android-core:
+    name: Android JNI API v1 (arm64)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@1.91.0
+        with:
+          targets: aarch64-linux-android
+
+      - name: Test JNI API and shared protocol
+        run: |
+          cargo test --locked --manifest-path android/Cargo.toml
+          cargo build --locked --manifest-path android/Cargo.toml
+          python3 android/tests/jni_smoke.py android/target/debug/libpikpak_android.so
+          python3 android/tests/folder_stats.py android/target/debug/libpikpak_android.so
+
+      - name: Build and verify Android ELF
+        shell: bash
+        run: |
+          ndk_version=27.3.13750724
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$ndk_version"
+          ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$ndk_version" scripts/build-android-core.sh dist
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: android-core
+          path: dist/pikpaktui-android-arm64-v8a-api1.so
+          if-no-files-found: error
+
   release-guard:
     name: Validate Release Tag
     runs-on: ubuntu-latest
@@ -226,7 +260,7 @@ jobs:
   release:
     name: Create Release
     runs-on: ubuntu-latest
-    needs: [build, release-guard]
+    needs: [build, android-core, release-guard]
     if: startsWith(github.ref, 'refs/tags/')
     permissions:
       contents: write
@@ -245,6 +279,9 @@ jobs:
       - name: Prepare release assets
         run: |
           cd dist
+          android_asset=pikpaktui-android-arm64-v8a-api1.so
+          mv "android-core/$android_asset" .
+          rmdir android-core
           for dir in */; do
             name="${dir%/}"
             cd "$dir"
@@ -256,7 +293,7 @@ jobs:
             fi
             cd ..
           done
-          sha256sum *.tar.gz *.zip > sha256sums.txt
+          sha256sum *.tar.gz *.zip "$android_asset" > sha256sums.txt
 
       - name: Generate changelog
         id: changelog
@@ -320,6 +357,7 @@ jobs:
           echo "- **macOS Apple Silicon**: pikpaktui-aarch64-macos.tar.gz" >> CHANGELOG.md
           echo "- **Windows x86_64**: pikpaktui-x86_64-windows.zip" >> CHANGELOG.md
           echo "- **Windows ARM64**: pikpaktui-aarch64-windows.zip" >> CHANGELOG.md
+          echo "- **Android arm64 JNI API v1**: pikpaktui-android-arm64-v8a-api1.so" >> CHANGELOG.md
           echo "- **FreeBSD x86_64**: pikpaktui-x86_64-freebsd.tar.gz" >> CHANGELOG.md
 
       - name: Create Release
@@ -328,6 +366,7 @@ jobs:
           files: |
             dist/*.tar.gz
             dist/*.zip
+            dist/pikpaktui-android-arm64-v8a-api1.so
             dist/sha256sums.txt
           body_path: CHANGELOG.md
           draft: false

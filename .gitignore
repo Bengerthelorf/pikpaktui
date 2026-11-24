@@ -1,4 +1,5 @@
 /target
+/android/target/
 
 .DS_Store
 TODO.md

@@ -83,9 +83,9 @@ Image resizing and terminal-protocol encoding also run in the background. A load
 
 Open settings with `,`, turn on **Browser Settings → Folder Statistics**, then press `s` to save. Choose `size` to sort by total file bytes or `content-modified` to sort by the newest file modification anywhere inside each folder. The `modified` sort shows the entry’s own timestamp directly from the listing.
 
-Browsing and previews share directory reads with background statistics. Browsing prioritizes visible rows. Sorting by either recursive value covers all folders in the current listing. At the drive root, a cold sort can use one paginated drive-wide listing to calculate all folders. Returning to a recently visited folder can reuse completed results. Press `r` to discard cached statistics, refresh the listing and retry failures.
+When folder statistics are enabled, the first query builds a local SQLite index of the account’s normal drive by following every page. On later visits the browser displays saved totals immediately, marks them `cached` while checking, and requests changes since the last server sync. Press `r` to check again. A failed check leaves the last committed values available. Moves update both ancestor paths. Deleting the newest file can move a folder’s content time backward. The next sync after 72 hours includes a full listing to catch removals missing from the change feed.
 
-An empty folder has zero bytes and no content timestamp. A folder containing a zero-byte file is nonempty. Pending and failed scans have no sortable value.
+An empty folder has zero bytes and no content timestamp. A folder containing a zero-byte file is nonempty. Sorting uses the last completed value while a refresh is pending or fails. Folders without a completed result sort as unknown.
 
 ### Inline thumbnails
 

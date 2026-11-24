@@ -3581,7 +3581,12 @@ impl App {
             if let Some(stats) = self.folder_stats.completed(&folder.id) {
                 let size = format_size(stats.total_size_bytes);
                 let empty = if stats.is_empty { " (empty)" } else { "" };
-                lines.push(Line::from(format!("  Total size: {size}{empty}")));
+                let cached = if self.folder_stats.is_cached(&folder.id) {
+                    " (cached)"
+                } else {
+                    ""
+                };
+                lines.push(Line::from(format!("  Total size: {size}{empty}{cached}")));
                 lines.push(Line::from(format!(
                     "  Content modified: {}",
                     stats

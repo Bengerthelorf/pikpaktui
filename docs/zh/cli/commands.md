@@ -6,7 +6,7 @@ locale: zh
 ---
 
 
-所有命令均需有效会话，请先运行 `pikpaktui`（TUI）登录，或使用 [`login`](#login)。
+云端查询需要有效会话，请先运行 `pikpaktui`（TUI）登录，或使用 [`login`](#login)。
 
 ---
 
@@ -22,10 +22,14 @@ pikpaktui ls [选项] [路径]
 |------|------|
 | `-l`, `--long` | 长格式——显示 ID、大小、日期和文件名 |
 | `-J`, `--json` | 输出 JSON 数组 |
-| `-s`, `--sort <字段>` | 按字段排序：`name`、`size`、`created`、`type`、`extension`、`none` |
+| `-s`, `--sort <字段>` | 按字段排序：`name`、`size`、`created`、`modified`、`content-modified`、`type`、`extension`、`none` |
+| `--folder-stats` | 长格式和 JSON 输出包含目录递归大小与内容修改时间。 |
+| `--no-folder-stats` | 本次关闭统计，覆盖 `config.toml` 中的 `cli_folder_stats = true`。与 `--sort=content-modified` 冲突。 |
 | `-r`, `--reverse` | 反向排序 |
 | `--tree` | 递归树状视图 |
 | `--depth=N` | 限制树深度为 N 层 |
+
+`--folder-stats --sort=size` 按目录递归大小排序。使用 `--sort=content-modified` 会自动启用统计，按目录内最新文件的修改时间排序。普通文件使用自身的大小和修改时间。`modified` 按条目自身的修改时间排序。启用统计后，`-l` 显示递归大小及内容时间（`--sort=modified` 显示自身时间），`-J` 在目录条目中添加 `folder_stats` 对象。
 
 **示例：**
 
@@ -35,7 +39,25 @@ pikpaktui ls "/My Pack"                    # 列出指定文件夹
 pikpaktui ls -l /Movies                    # 长格式
 pikpaktui ls --sort=size -r /              # 按大小倒序
 pikpaktui ls --tree --depth=2 "/My Pack"   # 树状，最多 2 层
+pikpaktui ls -l --folder-stats --sort=size /Movies
+pikpaktui ls --sort=content-modified -J /Movies
 pikpaktui ls /Movies --json | jq '.[] | select(.size > 1073741824)'
+```
+
+---
+
+## stats
+
+按路径或 PikPak 文件夹 ID 查询单个目录，省略目标时查询根目录。默认先同步账户索引，首次完整扫描，后续使用增量更新。账户或服务无法提供索引时，默认查询改用普通递归列表。
+
+`--cached` 离线读取上次提交的本地统计，只接受文件夹 ID 或根目录。未命中时命令以错误退出。`--refresh` 先完整重建账户索引，再返回指定目录的结果。
+
+`-J` 返回十进制无符号字节数字符串 `total_size_bytes`、RFC 3339 时间字符串或 `null` 的 `latest_modified_time`，以及布尔值 `is_empty`。空目录为 0 字节、无时间且 `is_empty=true`。仅含零字节文件的目录为 `is_empty=false`。
+
+```bash
+pikpaktui stats /Movies
+pikpaktui stats --cached --folder-id ID -J
+pikpaktui stats --refresh --json /
 ```
 
 ---

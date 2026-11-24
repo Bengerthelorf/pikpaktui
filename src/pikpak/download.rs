@@ -4,6 +4,7 @@ use std::io;
 use std::io::Read as _;
 use std::io::Write as _;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
 
@@ -11,6 +12,33 @@ use super::{Entry, EntryKind, PikPak, sanitize_filename};
 
 const DEFAULT_DOWNLOAD_CONNECTIONS: usize = 4;
 const DEFAULT_DOWNLOAD_CHUNK_SIZE: u64 = 8 * 1024 * 1024;
+
+#[derive(Default)]
+pub(crate) struct DownloadControl {
+    stop: AtomicBool,
+    bytes: AtomicU64,
+    total: AtomicU64,
+}
+
+impl DownloadControl {
+    #[cfg(pikpak_android_jni)]
+    pub(crate) fn stop(&self) {
+        self.stop.store(true, Ordering::Relaxed);
+    }
+
+    #[cfg(pikpak_android_jni)]
+    pub(crate) fn progress(&self) -> (u64, u64) {
+        (
+            self.bytes.load(Ordering::Relaxed),
+            self.total.load(Ordering::Relaxed),
+        )
+    }
+
+    fn check(&self) -> Result<()> {
+        anyhow::ensure!(!self.stop.load(Ordering::Relaxed), "Download stopped");
+        Ok(())
+    }
+}
 
 /// Sidecar path for in-progress data: "name.ext" downloads as "name.ext.part"
 /// and is renamed only after the byte count checks out.
@@ -405,6 +433,7 @@ impl PikPak {
         url: &str,
         part: &Path,
         existing_size: u64,
+        control: Option<&DownloadControl>,
     ) -> Result<u64> {
         let (response, start_offset) = self.download_stream(url, existing_size)?;
         let mut file = if start_offset > 0 {
@@ -412,9 +441,25 @@ impl PikPak {
         } else {
             fs::File::create(part)?
         };
-        let mut reader: Box<dyn io::Read> = Box::new(response);
-        let bytes = io::copy(&mut reader, &mut file).context("download write failed")?;
-        Ok(start_offset + bytes)
+        let mut reader = response;
+        let Some(control) = control else {
+            let bytes = io::copy(&mut reader, &mut file).context("download write failed")?;
+            return Ok(start_offset + bytes);
+        };
+        let mut written = start_offset;
+        let mut buffer = [0u8; 64 * 1024];
+        control.bytes.store(written, Ordering::Relaxed);
+        loop {
+            control.check()?;
+            let read = reader.read(&mut buffer).context("download read failed")?;
+            if read == 0 {
+                return Ok(written);
+            }
+            file.write_all(&buffer[..read])
+                .context("download write failed")?;
+            written += read as u64;
+            control.bytes.store(written, Ordering::Relaxed);
+        }
     }
 
     pub(crate) fn download_to_with_connections_and_chunk_size(
@@ -424,6 +469,30 @@ impl PikPak {
         connections: usize,
         chunk_size: u64,
     ) -> Result<u64> {
+        self.download_to_inner(file_id, dest, connections, chunk_size, None)
+    }
+
+    #[cfg(pikpak_android_jni)]
+    pub(crate) fn download_to_controlled(
+        &self,
+        file_id: &str,
+        dest: &Path,
+        control: &DownloadControl,
+    ) -> Result<u64> {
+        self.download_to_inner(file_id, dest, 1, 0, Some(control))
+    }
+
+    fn download_to_inner(
+        &self,
+        file_id: &str,
+        dest: &Path,
+        connections: usize,
+        chunk_size: u64,
+        control: Option<&DownloadControl>,
+    ) -> Result<u64> {
+        if let Some(control) = control {
+            control.check()?;
+        }
         let info = self.file_info(file_id)?;
         let mut download_url = info
             .download_url()
@@ -432,6 +501,11 @@ impl PikPak {
         let total_size = info.file_size();
 
         let (part, initial_part_size) = prepare_partial_download(dest, file_id, total_size)?;
+        if let Some(control) = control {
+            control.check()?;
+            control.total.store(total_size, Ordering::Relaxed);
+            control.bytes.store(initial_part_size, Ordering::Relaxed);
+        }
         if total_size > 0 && initial_part_size == total_size {
             finish_partial_download(dest, &part)?;
             return Ok(total_size);
@@ -454,12 +528,17 @@ impl PikPak {
                     chunk_size,
                 ) {
                     Ok(Some(written)) => Ok(written),
-                    Ok(None) => self.download_sequential_attempt(&download_url, &part, part_size),
+                    Ok(None) => {
+                        self.download_sequential_attempt(&download_url, &part, part_size, control)
+                    }
                     Err(e) => Err(e),
                 }
             } else {
-                self.download_sequential_attempt(&download_url, &part, part_size)
+                self.download_sequential_attempt(&download_url, &part, part_size, control)
             };
+            if let Some(control) = control {
+                control.check()?;
+            }
 
             match attempt {
                 Ok(w) if total_size == 0 || w == total_size => break w,

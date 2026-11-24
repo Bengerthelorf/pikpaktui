@@ -5,7 +5,7 @@ order: 1
 ---
 
 
-pikpaktui provides 29 CLI subcommands for scripting and automation. Cloud operations require a valid session; use `pikpaktui login` or the TUI to log in. `hash` works entirely offline. Help, completions, and self-update do not require a PikPak session.
+pikpaktui provides CLI subcommands for scripting and automation. Cloud operations require a valid session; use `pikpaktui login` or the TUI to log in. `hash` works entirely offline. Help, completions, and self-update do not require a PikPak session.
 
 ## Command Groups
 
@@ -14,6 +14,7 @@ pikpaktui provides 29 CLI subcommands for scripting and automation. Cloud operat
 | Command | Description |
 |---------|-------------|
 | [`ls`](/cli/commands#ls) | List files and folders |
+| [`stats`](/cli/commands#stats) | Look up recursive folder statistics |
 | [`mv`](/cli/commands#mv) | Move files or folders |
 | [`cp`](/cli/commands#cp) | Copy files or folders |
 | [`rename`](/cli/commands#rename) | Rename a file or folder |

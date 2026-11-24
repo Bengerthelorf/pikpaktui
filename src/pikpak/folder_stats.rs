@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use serde::{Serialize, Serializer};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
-use super::{FolderStatsSession, PikPak};
+use super::{FolderStatsSession, PikPak, index_sync::UnsupportedIndex};
 
 /// A completed scan of a folder in the normal (non-trash) drive listing.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -89,9 +89,11 @@ pub(super) fn check_cancelled(cancelled: &AtomicBool) -> Result<(), FolderStatsE
 impl PikPak {
     /// Scan by folder ID (the empty string selects the drive root).
     ///
-    /// A new session reads fresh data. An entire-drive query can use a
-    /// wildcard listing when multiple root folders need statistics. Share a
-    /// `FolderStatsSession` between calls to reuse completed observations.
+    /// For an identified account, synchronize its durable index before
+    /// reading this folder. Use `cached_folder_stats` for an offline read, or
+    /// sync once and use the batch lookup for multiple folders. When the
+    /// account has no stable ID or the service cannot supply a synchronization
+    /// watermark, use the normal paginated folder traversal.
     /// Run this blocking operation on a worker and set its flag to cancel.
     /// An in-flight request must return or time out before its worker exits.
     pub fn folder_stats(
@@ -99,7 +101,25 @@ impl PikPak {
         folder_id: &str,
         cancelled: &AtomicBool,
     ) -> Result<FolderStats, FolderStatsError> {
-        FolderStatsSession::default().stats(self, folder_id, cancelled)
+        check_cancelled(cancelled)?;
+        let result = self.sync_folder_index(cancelled, false);
+        check_cancelled(cancelled)?;
+        if result.as_ref().is_err_and(|e| e.is::<UnsupportedIndex>()) {
+            return FolderStatsSession::default().stats(self, folder_id, cancelled);
+        }
+        let stats = result.and_then(|()| {
+            self.cached_folder_stats(folder_id)?
+                .ok_or_else(|| anyhow::anyhow!("folder absent from synchronized index"))
+        });
+        check_cancelled(cancelled)?;
+        stats.map_err(|error| {
+            error
+                .downcast::<FolderStatsError>()
+                .unwrap_or_else(|source| FolderStatsError::ReadFolder {
+                    folder_id: folder_id.to_owned(),
+                    source,
+                })
+        })
     }
 }
 

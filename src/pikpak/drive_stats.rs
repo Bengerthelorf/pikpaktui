@@ -53,9 +53,9 @@ struct DriveIndex {
 
 /// Independent observations from a normal root listing. Only the directory
 /// IDs and direct file statistics are needed, even for a very large root.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct RootListing {
-    pub(super) folders: HashSet<String>,
+    pub(crate) folders: HashSet<String>,
     pub(super) files: FolderStats,
     pub(super) file_count: usize,
 }

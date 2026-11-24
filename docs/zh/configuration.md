@@ -47,6 +47,7 @@ inline_thumbnails = true   # 文件名前的小缩略图；v 开关
 inline_thumbnail_size = "tiny"  # "tiny" | "small" | "medium" | "large"；[ / ] 调整
 thumbnail_placeholders = true  # 等待或不可用时保留灰色图片占位卡
 folder_stats = false        # 递归计算文件夹总大小和内容最新修改时间
+cli_folder_stats = false    # 为 CLI 的 ls 默认启用目录统计
 
 # 预览
 show_preview = true         # 宽度允许时显示预览；false = 仅文件浏览面板
@@ -98,6 +99,8 @@ exec mpv --force-media-title="$PIKPAKTUI_PLAY_NAME" "$@"
 ### 文件夹统计
 
 在 **Browser Settings → Folder Statistics** 中打开开关，按 `s` 保存。启用后，`size` 使用各层文件大小之和，还可以选择 `content-modified` 按文件夹内最新的文件修改时间排序。`modified` 始终使用条目自身的修改时间。关闭统计时，当前的 `content-modified` 排序会切换为 `modified`。
+
+在 CLI 中设置 `cli_folder_stats = true` 可让 `ls` 默认使用目录统计。单次开启用 `ls --folder-stats`，单次关闭用 `ls --no-folder-stats`。TUI 和 CLI 在同一配置目录下按账号共用 `folder-index/` 中的 SQLite 索引。两个开关默认均为 `false`。显式运行 `stats` 可直接查询，`stats --cached --folder-id ID` 可以离线读取上次保存的结果。
 
 ### 缩略图设置
 
