@@ -3,7 +3,8 @@ use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 
 struct Fixture {
     config: PathBuf,
@@ -12,15 +13,17 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
-        let config = std::env::temp_dir().join(format!(
-            "pikpaktui-stats-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir(&config).unwrap();
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let config = loop {
+            let seq = NEXT.fetch_add(1, Ordering::Relaxed);
+            let path =
+                std::env::temp_dir().join(format!("pikpaktui-stats-{}-{seq}", std::process::id()));
+            match std::fs::create_dir(&path) {
+                Ok(()) => break path,
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => panic!("create {}: {error}", path.display()),
+            }
+        };
         std::fs::write(
             config.join("session.json"),
             json!({
