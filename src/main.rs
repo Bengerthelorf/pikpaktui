@@ -1,6 +1,6 @@
 mod cmd;
 mod config;
-mod pikpak;
+pub mod pikpak;
 mod player;
 mod theme;
 mod tui;

@@ -1,19 +1,30 @@
 use anyhow::{Context, Result, anyhow};
+use std::collections::HashSet;
 
 use super::drive::{DriveFileResponse, DriveListResponse};
 use super::{Entry, FileInfoResponse, PikPak, ensure_success, json_or_api_error};
 
 impl PikPak {
     pub fn ls(&self, parent_id: &str) -> Result<Vec<Entry>> {
+        let mut entries = Vec::new();
+        for page in self.ls_pages(parent_id)? {
+            entries.extend(page?);
+        }
+        Ok(entries)
+    }
+
+    /// Fetch normal drive listings one page at a time. Dropping the iterator
+    /// leaves all subsequent pages unfetched.
+    pub(super) fn ls_pages<'a>(
+        &'a self,
+        parent_id: &'a str,
+    ) -> Result<impl Iterator<Item = Result<Vec<Entry>>> + 'a> {
         let token = self.access_token()?;
         let thumbnail_size = self.thumbnail_size();
         let url = self.drive_url("drive/v1/files");
-
         let filters = r#"{"trashed":{"eq":false},"phase":{"eq":"PHASE_TYPE_COMPLETE"}}"#;
-        let mut all_entries: Vec<Entry> = Vec::new();
-        let mut page_token: Option<String> = None;
 
-        loop {
+        let fetch = move |page_token: &str| -> Result<DriveListResponse> {
             let mut rb = self.http.get(&url).bearer_auth(&token).query(&[
                 ("parent_id", parent_id),
                 ("limit", "500"),
@@ -21,27 +32,32 @@ impl PikPak {
                 ("thumbnail_size", thumbnail_size.as_str()),
                 ("with_audit", "true"),
             ]);
-            if let Some(ref pt) = page_token {
-                rb = rb.query(&[("page_token", pt.as_str())]);
+            if !page_token.is_empty() {
+                rb = rb.query(&[("page_token", page_token)]);
             }
             let response = self.send_authed("ls", rb)?;
-            let payload: DriveListResponse = json_or_api_error(response, "ls")?;
-            let next = payload.next_page_token.filter(|t| !t.is_empty());
+            json_or_api_error(response, "ls")
+        };
 
-            all_entries.extend(payload.files.into_iter().map(|f| f.into_entry()));
-
-            match next {
-                // A server echoing the same token forever would hang the
-                // client and grow the list without bound.
-                Some(t) if page_token.as_deref() == Some(t.as_str()) => {
-                    return Err(anyhow!("ls pagination stuck: server repeated page token"));
+        let mut next = Some(String::new());
+        let mut seen = HashSet::new();
+        Ok(std::iter::from_fn(move || {
+            let current = next.take()?;
+            Some(fetch(&current).and_then(|page| {
+                if let Some(token) = page.next_page_token.filter(|t| !t.is_empty()) {
+                    anyhow::ensure!(
+                        seen.insert(token.clone()),
+                        "ls pagination stuck: server repeated page token"
+                    );
+                    next = Some(token);
                 }
-                Some(t) => page_token = Some(t),
-                None => break,
-            }
-        }
-
-        Ok(all_entries)
+                Ok(page
+                    .files
+                    .into_iter()
+                    .map(|file| file.into_entry())
+                    .collect())
+            }))
+        }))
     }
 
     /// Like `ls()` but caches results by parent_id for the lifetime of this client.

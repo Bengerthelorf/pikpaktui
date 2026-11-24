@@ -8,13 +8,39 @@ use anyhow::Result;
 use ratatui::layout::Rect;
 use unicode_width::UnicodeWidthStr;
 
-use crate::config::{ColumnCount, SortField, TuiConfig, sort_entries};
+use crate::config::{ColumnCount, TuiConfig, sort_entries_with_stats};
 use crate::pikpak::{Entry, EntryKind};
 use crate::theme::{self, FileCategory};
 
+use super::folder_stats::FolderStatsState;
 use super::{
     App, InputMode, OpResult, PreviewState, fetch_and_render_thumbnail, highlight_content,
 };
+
+impl FolderStatsState {
+    pub(super) fn sort_listing(&self, entries: &mut [Entry], config: &TuiConfig) {
+        sort_entries_with_stats(
+            entries,
+            config.sort_field,
+            config.sort_reverse,
+            config.folder_stats,
+            |id| self.completed(id),
+        );
+    }
+
+    pub(super) fn sort_preserving_selection(
+        &self,
+        entries: &mut [Entry],
+        selected: &mut usize,
+        config: &TuiConfig,
+    ) {
+        let id = entries.get(*selected).map(|entry| entry.id.clone());
+        self.sort_listing(entries, config);
+        *selected = id
+            .and_then(|id| entries.iter().position(|entry| entry.id == id))
+            .unwrap_or_else(|| (*selected).min(entries.len().saturating_sub(1)));
+    }
+}
 
 const MAX_LOADS: usize = 3;
 const MAX_DIRECTORIES: usize = 64;
@@ -302,16 +328,9 @@ impl BrowserState {
             .map(|(_, entry)| entry)
     }
 
-    pub fn resort(&mut self, field: SortField, reverse: bool) {
+    pub fn resort(&mut self, stats: &FolderStatsState, config: &TuiConfig) {
         for snapshot in self.directories.values_mut() {
-            let selected_id = snapshot
-                .entries
-                .get(snapshot.selected)
-                .map(|e| e.id.clone());
-            sort_entries(&mut snapshot.entries, field, reverse);
-            snapshot.selected = selected_id
-                .and_then(|id| snapshot.entries.iter().position(|e| e.id == id))
-                .unwrap_or(0);
+            stats.sort_preserving_selection(&mut snapshot.entries, &mut snapshot.selected, config);
         }
     }
 
@@ -333,8 +352,9 @@ impl BrowserState {
         }
     }
 
+    #[cfg(test)]
     fn begin_load(&mut self, key: LoadKey, name: String) -> Option<BrowserRequest> {
-        self.begin_load_with_priority(key, name, false)
+        self.begin_load_with_priority(key, name, false, MAX_LOADS)
     }
 
     fn begin_load_with_priority(
@@ -342,13 +362,14 @@ impl BrowserState {
         key: LoadKey,
         name: String,
         current_preview: bool,
+        capacity: usize,
     ) -> Option<BrowserRequest> {
         // Reserve a slot for directory/current-file previews; speculative row
         // thumbnails must not occupy the entire worker budget.
-        if self.in_flight.len() >= MAX_LOADS
+        if self.in_flight.len() >= capacity
             || (matches!(key, LoadKey::InlineImage(_))
                 && !current_preview
-                && self.in_flight.len() >= MAX_LOADS - 1)
+                && self.in_flight.len() >= capacity - 1)
             || !self.needs_load(&key)
         {
             return None;
@@ -685,6 +706,7 @@ impl App {
             .position(|e| e.id == self.current_folder_id)
             .unwrap_or(0);
         self.parent_listing_request = None;
+        self.resort_folder_stats();
         self.on_cursor_move();
         if !snapshot.is_some_and(|s| s.generation == self.browser.generation) {
             self.browser.restore_selection =
@@ -849,6 +871,7 @@ impl App {
 
     pub(super) fn schedule_browser_loads(&mut self) {
         self.browser.trim();
+        let capacity = MAX_LOADS - usize::from(self.folder_stats.running());
         for (key, name, entry) in self.browser_load_candidates() {
             // Current images share an InlineImage key with their row, but
             // deserve the reserved slot just like a text/file preview.
@@ -857,11 +880,9 @@ impl App {
                     .get(self.selected)
                     .is_some_and(|selected| selected.id == entry.id)
             });
-            let request = if current_preview {
-                self.browser.begin_load_with_priority(key, name, true)
-            } else {
-                self.browser.begin_load(key, name)
-            };
+            let request =
+                self.browser
+                    .begin_load_with_priority(key, name, current_preview, capacity);
             let Some(request) = request else {
                 continue;
             };
@@ -923,6 +944,9 @@ impl App {
                 let _ = tx.send(OpResult::Browser(request, result));
             });
         }
+        if self.browser.in_flight.len() < MAX_LOADS {
+            self.schedule_folder_stats();
+        }
     }
 
     pub(super) fn apply_browser_result(
@@ -939,11 +963,7 @@ impl App {
         }
         match result {
             Ok(BrowserPayload::Directory(mut entries)) => {
-                sort_entries(
-                    &mut entries,
-                    self.config.sort_field,
-                    self.config.sort_reverse,
-                );
+                self.folder_stats.sort_listing(&mut entries, &self.config);
                 if let LoadKey::Directory(id) = request.key {
                     if self
                         .breadcrumb
@@ -1422,7 +1442,8 @@ mod tests {
                 .begin_load_with_priority(
                     LoadKey::InlineImage("selected".into()),
                     "selected".into(),
-                    true
+                    true,
+                    MAX_LOADS
                 )
                 .is_some()
         );

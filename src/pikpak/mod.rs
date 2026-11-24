@@ -4,6 +4,7 @@ mod download;
 mod drive;
 mod file_info;
 mod files;
+mod folder_stats;
 pub(crate) mod interactive;
 mod models;
 mod mutation;
@@ -20,6 +21,7 @@ use auth::{CaptchaInitResponse, SigninResponse};
 pub(crate) use download::part_path;
 pub(crate) use download::{finish_partial_download, prepare_partial_download};
 pub use file_info::{FileInfoResponse, PlayOption};
+pub use folder_stats::{FolderStats, FolderStatsError};
 pub use models::{Entry, EntryKind, SessionToken};
 pub use mutation::mutation_progress;
 #[cfg(test)]

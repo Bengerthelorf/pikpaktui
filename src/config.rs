@@ -395,6 +395,8 @@ pub enum SortField {
     Name,
     Size,
     Created,
+    Modified,
+    ContentModified,
     Type,
     Extension,
     None,
@@ -406,6 +408,8 @@ impl SortField {
             Self::Name,
             Self::Size,
             Self::Created,
+            Self::Modified,
+            Self::ContentModified,
             Self::Type,
             Self::Extension,
             Self::None,
@@ -417,22 +421,42 @@ impl SortField {
             Self::Name => "name",
             Self::Size => "size",
             Self::Created => "created",
+            Self::Modified => "modified",
+            Self::ContentModified => "content-modified",
             Self::Type => "type",
             Self::Extension => "extension",
             Self::None => "none",
         }
     }
 
-    pub fn next(&self) -> Self {
-        let all = Self::all();
-        let idx = all.iter().position(|s| s == self).unwrap();
-        all[(idx + 1) % all.len()]
+    pub fn available(self, folder_stats: bool) -> Self {
+        if self == Self::ContentModified && !folder_stats {
+            Self::Modified
+        } else {
+            self
+        }
     }
 
-    pub fn prev(&self) -> Self {
+    pub fn next(&self, folder_stats: bool) -> Self {
         let all = Self::all();
-        let idx = all.iter().position(|s| s == self).unwrap();
-        all[(idx + all.len() - 1) % all.len()]
+        let idx = all
+            .iter()
+            .position(|s| *s == self.available(folder_stats))
+            .unwrap();
+        let mut next = all[(idx + 1) % all.len()];
+        if next != next.available(folder_stats) {
+            next = all[(idx + 2) % all.len()];
+        }
+        next
+    }
+
+    pub fn prev(&self, folder_stats: bool) -> Self {
+        let all = Self::all();
+        let idx = all
+            .iter()
+            .position(|s| *s == self.available(folder_stats))
+            .unwrap();
+        all[(idx + all.len() - 1) % all.len()].available(folder_stats)
     }
 }
 
@@ -724,6 +748,9 @@ pub struct TuiConfig {
     pub inline_thumbnail_size: InlineThumbnailSize,
     #[serde(default = "default_true")]
     pub thumbnail_placeholders: bool,
+    /// Calculate recursive sizes and content modification times in the browser.
+    #[serde(default)]
+    pub folder_stats: bool,
     #[serde(default)]
     pub lazy_preview: bool,
     #[serde(default = "default_preview_max_size")]
@@ -826,6 +853,7 @@ impl Default for TuiConfig {
             inline_thumbnails: true,
             inline_thumbnail_size: InlineThumbnailSize::default(),
             thumbnail_placeholders: true,
+            folder_stats: false,
             lazy_preview: false,
             preview_max_size: default_preview_max_size(),
             custom_colors: CustomColors::default(),
@@ -845,6 +873,11 @@ impl Default for TuiConfig {
 }
 
 impl TuiConfig {
+    pub fn toggle_folder_stats(&mut self) {
+        self.folder_stats = !self.folder_stats;
+        self.sort_field = self.sort_field.available(self.folder_stats);
+    }
+
     pub fn use_picker(&self) -> bool {
         self.move_mode != MoveMode::Input
     }
@@ -920,6 +953,7 @@ impl TuiConfig {
             let term = Self::detect_terminal();
             cfg.image_protocols.insert(term, proto);
         }
+        cfg.sort_field = cfg.sort_field.available(cfg.folder_stats);
         cfg
     }
 
@@ -947,8 +981,40 @@ impl TuiConfig {
 /// Sort a list of entries in-place based on the given sort field and direction.
 /// For all sort modes except `None`, folders are always sorted before files.
 pub fn sort_entries(entries: &mut [crate::pikpak::Entry], field: SortField, reverse: bool) {
-    use crate::pikpak::EntryKind;
+    sort_entries_with_stats(entries, field, reverse, false, |_| None);
+}
 
+/// Keep unavailable metadata at the end of its folder/file group in either
+/// direction. A completed folder with no valid time sorts ahead of an unfinished scan.
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+enum MetadataOrder<T> {
+    Descending(std::cmp::Reverse<T>),
+    Ascending(T),
+    NoValue,
+    Incomplete(String),
+}
+
+impl<T> MetadataOrder<T> {
+    fn known(value: T, reverse: bool) -> Self {
+        if reverse {
+            Self::Ascending(value)
+        } else {
+            Self::Descending(std::cmp::Reverse(value))
+        }
+    }
+}
+
+pub(crate) fn sort_entries_with_stats<'a>(
+    entries: &mut [crate::pikpak::Entry],
+    field: SortField,
+    reverse: bool,
+    folder_stats: bool,
+    completed: impl Fn(&str) -> Option<&'a crate::pikpak::FolderStats>,
+) {
+    use crate::pikpak::EntryKind;
+    use time::{OffsetDateTime, format_description::well_known::Rfc3339};
+
+    let field = field.available(folder_stats);
     match field {
         // No re-sort, but don't skip the reverse below: flipping the server
         // order is the only thing `reverse` can mean in this mode.
@@ -964,6 +1030,22 @@ pub fn sort_entries(entries: &mut [crate::pikpak::Entry], field: SortField, reve
                 kind_ord.then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
             });
         }
+        SortField::Size if folder_stats => {
+            entries.sort_by_cached_key(|entry| {
+                let size = match entry.kind {
+                    EntryKind::Folder => completed(&entry.id).map(|stats| stats.total_size_bytes),
+                    EntryKind::File => Some(entry.size),
+                };
+                (
+                    kind_order(&entry.kind),
+                    size.map_or_else(
+                        || MetadataOrder::Incomplete(entry.name.to_lowercase()),
+                        |n| MetadataOrder::known(n, reverse),
+                    ),
+                )
+            });
+            return;
+        }
         SortField::Size => {
             entries.sort_by(|a, b| {
                 let kind_ord = kind_order(&a.kind).cmp(&kind_order(&b.kind));
@@ -975,6 +1057,27 @@ pub fn sort_entries(entries: &mut [crate::pikpak::Entry], field: SortField, reve
                 let kind_ord = kind_order(&a.kind).cmp(&kind_order(&b.kind));
                 kind_ord.then_with(|| b.created_time.cmp(&a.created_time))
             });
+        }
+        SortField::Modified | SortField::ContentModified => {
+            entries.sort_by_cached_key(|entry| {
+                let order = kind_order(&entry.kind);
+                let timestamp =
+                    if field == SortField::ContentModified && entry.kind == EntryKind::Folder {
+                        let Some(stats) = completed(&entry.id) else {
+                            return (order, MetadataOrder::Incomplete(entry.name.to_lowercase()));
+                        };
+                        stats.latest_modified_time.as_deref()
+                    } else {
+                        Some(entry.modified_time.as_str())
+                    };
+                let value = timestamp
+                    .and_then(|value| OffsetDateTime::parse(value, &Rfc3339).ok())
+                    .map_or(MetadataOrder::NoValue, |time| {
+                        MetadataOrder::known(time, reverse)
+                    });
+                (order, value)
+            });
+            return;
         }
         SortField::Type => {
             entries.sort_by(|a, b| {
@@ -1055,6 +1158,7 @@ mod browser_config_tests {
         assert!(config.inline_thumbnails);
         assert_eq!(config.inline_thumbnail_size.dimensions(), (2, 1));
         assert!(config.thumbnail_placeholders);
+        assert!(!config.folder_stats);
         assert_eq!(config.playback_quality, PlaybackQuality::Original);
         assert!(config.player_args.is_empty());
     }
@@ -1095,7 +1199,7 @@ player_args = ["--title={name}", "two words", "--path={path}"]"#;
     }
 
     #[test]
-    fn fixed_and_auto_columns_round_trip_with_thumbnail_settings() {
+    fn fixed_and_auto_columns_round_trip_with_browser_settings() {
         for columns in [
             ColumnCount::Auto,
             ColumnCount::Fixed(1),
@@ -1107,6 +1211,7 @@ player_args = ["--title={name}", "two words", "--path={path}"]"#;
                 inline_thumbnails: false,
                 inline_thumbnail_size: InlineThumbnailSize::Large,
                 thumbnail_placeholders: false,
+                folder_stats: true,
                 thumbnail_size: ThumbnailSize::Large,
                 ..TuiConfig::default()
             };
@@ -1116,6 +1221,7 @@ player_args = ["--title={name}", "two words", "--path={path}"]"#;
             assert!(!restored.inline_thumbnails);
             assert_eq!(restored.inline_thumbnail_size.dimensions(), (8, 4));
             assert!(!restored.thumbnail_placeholders);
+            assert!(restored.folder_stats);
             assert_eq!(restored.thumbnail_size, ThumbnailSize::Large);
         }
     }
@@ -1148,6 +1254,7 @@ player_args = ["--title={name}", "two words", "--path={path}"]"#;
                     .next()
                     .unwrap();
                 let config: TuiConfig = toml::from_str(example).unwrap();
+                assert!(!config.folder_stats);
                 assert!(config.thumbnail_placeholders);
                 assert!(config.inline_thumbnails);
                 assert_eq!(config.inline_thumbnail_size, InlineThumbnailSize::Tiny);

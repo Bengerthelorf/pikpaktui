@@ -25,7 +25,7 @@ pub(super) struct DriveFile {
     size: Option<u64>,
     #[serde(default)]
     created_time: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_modified_time")]
     modified_time: Option<String>,
     #[serde(default)]
     tags: Vec<DriveFileTag>,
@@ -35,6 +35,16 @@ pub(super) struct DriveFile {
     phase: Option<String>,
     #[serde(default)]
     audit: Option<serde_json::Value>,
+}
+
+// A malformed optional timestamp must not hide the rest of a listed file.
+fn de_modified_time<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error> {
+    Ok(match serde_json::Value::deserialize(deserializer)? {
+        serde_json::Value::String(time) => Some(time),
+        _ => None,
+    })
 }
 
 #[derive(Deserialize)]

@@ -7,6 +7,69 @@ fn app() -> App {
 }
 
 #[test]
+fn cancelled_folder_scan_holds_slot_and_its_late_result_is_ignored() {
+    use std::sync::atomic::Ordering;
+    let mut app = app();
+    app.entries = vec![Entry {
+        kind: EntryKind::Folder,
+        ..entry("folder")
+    }];
+    let (id, token) = app.folder_stats.next_folder(&app.entries).unwrap();
+    app.invalidate_main_listing();
+    assert!(token.load(Ordering::Relaxed));
+    assert!(app.folder_stats.next_folder(&app.entries).is_none());
+
+    // A response can have been sent before the user refreshed the same folder.
+    let old_stats = crate::pikpak::FolderStats {
+        total_size_bytes: 99,
+        latest_modified_time: None,
+        is_empty: false,
+    };
+    app.result_tx
+        .send(OpResult::FolderStats(id.clone(), Ok(old_stats)))
+        .unwrap();
+    app.poll_results();
+    assert!(app.folder_stats.completed(&id).is_none());
+    assert!(!app.folder_stats.failed(&id));
+    assert!(app.folder_stats.next_folder(&app.entries).is_some());
+}
+
+#[test]
+fn folder_scan_queue_visits_all_folders_once_and_retries_failures_only_after_refresh() {
+    let mut app = app();
+    app.entries = vec![entry("file")];
+    for id in ["first", "second"] {
+        app.entries.push(Entry {
+            kind: EntryKind::Folder,
+            ..entry(id)
+        });
+    }
+    let (first, _) = app.folder_stats.next_folder(&app.entries).unwrap();
+    assert_eq!(first, "first");
+    app.result_tx
+        .send(OpResult::FolderStats(
+            first.clone(),
+            Err(crate::pikpak::FolderStatsError::SizeOverflow),
+        ))
+        .unwrap();
+    app.poll_results();
+    assert!(app.folder_stats.failed(&first));
+    let (second, _) = app.folder_stats.next_folder(&app.entries).unwrap();
+    assert_eq!(second, "second");
+    app.folder_stats.finish(
+        second,
+        Ok(crate::pikpak::FolderStats {
+            total_size_bytes: 0,
+            latest_modified_time: None,
+            is_empty: true,
+        }),
+    );
+    assert!(app.folder_stats.next_folder(&app.entries).is_none());
+    app.invalidate_main_listing();
+    assert_eq!(app.folder_stats.next_folder(&app.entries).unwrap().0, first);
+}
+
+#[test]
 fn text_preview_keeps_content_open_while_paging_and_scrolling() {
     let mut app = app();
     app.text_preview_page.set(10);

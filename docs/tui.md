@@ -50,7 +50,7 @@ restores its cursor and scroll position.
 | `u` | Upload a local file to the current folder |
 | `U` | Reopen active upload status |
 | `a` | Toggle current item in/out of cart |
-| `S` | Cycle sort field: name → size → created → type → extension → none |
+| `S` | Cycle sort field: name → size → created → modified → content-modified (with Folder Statistics enabled) → type → extension → none |
 | `R` | Toggle reverse sort order |
 | `A` | Open cart view |
 | `D` | Open downloads view |
@@ -78,6 +78,10 @@ Uploads run in the background with hashing, transfer and server-finalization sta
 Text preview popups support `j/k`, arrow keys, mouse scrolling, `PageUp/PageDown`, `Home/End` and `Esc/q` to close. Local path completion runs in the background. Empty, loading and failed folders have distinct messages; press `r` to retry a failed listing or preview.
 
 Image resizing and terminal-protocol encoding also run in the background. A loading card stays visible while an image is being prepared; scrolling, navigation and closing the view remain available.
+
+### Folder statistics
+
+Open settings with `,`, turn on **Browser Settings → Folder Statistics**, then press `s` to save. The browser scans the current directory’s subfolders in the background. Choose `size` to sort by total file bytes, `modified` for the entry’s own timestamp, or `content-modified` for the latest file modification anywhere inside each folder. An empty folder has zero bytes and no content timestamp. Pending or failed scans have no sortable value. Press `r` to refresh and retry.
 
 ### Inline thumbnails
 

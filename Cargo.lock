@@ -2064,6 +2064,8 @@ dependencies = [
  "sha1",
  "sha2",
  "syntect",
+ "thiserror 2.0.18",
+ "time",
  "toml",
  "unicode-width",
 ]

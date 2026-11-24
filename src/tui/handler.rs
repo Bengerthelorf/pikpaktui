@@ -20,7 +20,7 @@ use super::{
 /// Index of the last selectable Settings row. MUST match the item layout in
 /// `draw::draw_settings_overlay`, the index match in `handle_settings_key`, and
 /// the click map / `bool_items` in `handle_mouse_click` — keep all four in sync.
-const SETTINGS_LAST_INDEX: usize = 23;
+const SETTINGS_LAST_INDEX: usize = 24;
 const SETTINGS_COLOR_SCHEME_INDEX: usize = 2;
 const SETTINGS_IMAGE_PROTOCOL_INDEX: usize = 9;
 
@@ -877,7 +877,7 @@ impl App {
                 self.open_trash_view();
             }
             KeyCode::Char('S') => {
-                self.config.sort_field = self.config.sort_field.next();
+                self.config.sort_field = self.config.sort_field.next(self.config.folder_stats);
                 self.resort_entries();
                 let _ = self.config.save();
             }
@@ -2270,6 +2270,7 @@ impl App {
                                 13 => draft.cli_nerd_font = !draft.cli_nerd_font,
                                 20 => draft.inline_thumbnails = !draft.inline_thumbnails,
                                 22 => draft.thumbnail_placeholders = !draft.thumbnail_placeholders,
+                                24 => draft.toggle_folder_stats(),
                                 _ => {}
                             }
                             modified = true;
@@ -2786,11 +2787,11 @@ impl App {
                 },
                 10 => match code {
                     KeyCode::Left => {
-                        draft.sort_field = draft.sort_field.prev();
+                        draft.sort_field = draft.sort_field.prev(draft.folder_stats);
                         *modified = true;
                     }
                     KeyCode::Right => {
-                        draft.sort_field = draft.sort_field.next();
+                        draft.sort_field = draft.sort_field.next(draft.folder_stats);
                         *modified = true;
                     }
                     KeyCode::Enter => {
@@ -3020,6 +3021,15 @@ impl App {
                         *modified = true;
                     }
                     KeyCode::Enter | KeyCode::Esc => *editing = false,
+                    _ => {}
+                },
+                24 => match code {
+                    KeyCode::Char(' ') | KeyCode::Enter | KeyCode::Left | KeyCode::Right => {
+                        draft.toggle_folder_stats();
+                        *modified = true;
+                        *editing = false;
+                    }
+                    KeyCode::Esc => *editing = false,
                     _ => {}
                 },
                 _ => {}
@@ -3306,5 +3316,47 @@ mod browser_settings_tests {
         assert!(
             matches!(&app.input, InputMode::Settings { selected: 22, draft, modified: true, .. } if !draft.thumbnail_placeholders)
         );
+    }
+
+    #[test]
+    fn folder_stats_checkbox_edits_the_draft_and_resets_content_sort_when_disabled() {
+        use crate::config::SortField;
+
+        let mut app = App::new_login(PikPak::new().unwrap(), None, TuiConfig::default());
+        let mut draft = app.config.clone();
+        draft.folder_stats = true;
+        draft.sort_field = SortField::ContentModified;
+        app.input = InputMode::Settings {
+            selected: 23,
+            editing: false,
+            draft,
+            modified: false,
+        };
+        app.handle_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(100, 32)).unwrap();
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        let (y, row) = terminal
+            .backend()
+            .buffer()
+            .content
+            .chunks(100)
+            .map(|row| row.iter().map(|c| c.symbol()).collect::<String>())
+            .enumerate()
+            .find(|(_, row)| row.contains("Folder Statistics"))
+            .unwrap();
+        let checkbox = row.split_once("[✓]").unwrap().0.chars().count();
+        app.handle_mouse_click(checkbox as u16, y as u16, false);
+        assert!(
+            matches!(&app.input, InputMode::Settings { draft, modified: true, .. }
+            if !draft.folder_stats && draft.sort_field == SortField::Modified)
+        );
+        app.handle_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+        app.handle_key(KeyCode::Char(' '), KeyModifiers::NONE)
+            .unwrap();
+        assert!(
+            matches!(&app.input, InputMode::Settings { draft, editing: false, .. }
+            if draft.folder_stats && draft.sort_field == SortField::Modified)
+        );
+        assert!(!app.config.folder_stats);
     }
 }

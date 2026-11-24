@@ -3547,14 +3547,54 @@ impl App {
         f.render_widget(p, area);
     }
 
+    fn incomplete_folder_stats_label(&self, id: &str, active: bool) -> &'static str {
+        if self.folder_stats.failed(id) {
+            "failed"
+        } else if !active {
+            ""
+        } else if self.main_listing_error.is_some() {
+            "unavailable"
+        } else {
+            "pending"
+        }
+    }
+
     fn draw_info_folder_overlay(&self, f: &mut Frame, name: &str, entries: &[Entry]) {
         let visible = entries.len().min(20);
-        let total_lines = 2 + visible + 2; // padding + items + hint + padding
+        let folder = self.current_entry().filter(|e| {
+            self.config.folder_stats && Some(e.id.as_str()) == self.preview_target_id.as_deref()
+        });
+        let total_lines = 2 + visible + 2 + usize::from(folder.is_some()) * 4;
         let pct = ((total_lines as u16 * 100) / f.area().height.max(1)).clamp(25, 70);
         let area = centered_rect(60, pct, f.area());
         clear_overlay_area(f, area);
 
         let mut lines = vec![Line::from("")];
+
+        if let Some(folder) = folder {
+            let modified = if folder.modified_time.is_empty() {
+                "unknown"
+            } else {
+                &folder.modified_time
+            };
+            lines.push(Line::from(format!("  Folder modified: {modified}")));
+            if let Some(stats) = self.folder_stats.completed(&folder.id) {
+                let size = format_size(stats.total_size_bytes);
+                let empty = if stats.is_empty { " (empty)" } else { "" };
+                lines.push(Line::from(format!("  Total size: {size}{empty}")));
+                lines.push(Line::from(format!(
+                    "  Content modified: {}",
+                    stats
+                        .latest_modified_time
+                        .as_deref()
+                        .unwrap_or("no valid time")
+                )));
+            } else {
+                let status = self.incomplete_folder_stats_label(&folder.id, true);
+                lines.push(Line::from(format!("  Folder statistics: {status}")));
+            }
+            lines.push(Line::from(""));
+        }
 
         if entries.is_empty() {
             lines.push(Line::from(Span::styled(
@@ -3783,6 +3823,11 @@ impl App {
                         "Thumbnail Source Size".into(),
                         "Server image resolution; refreshes after saving".into(),
                         draft.thumbnail_size.as_str().into(),
+                    ),
+                    (
+                        "Folder Statistics".into(),
+                        "Scan folders for total size and latest file modification".into(),
+                        if draft.folder_stats { "[✓]" } else { "[ ]" }.into(),
                     ),
                 ],
             ),

@@ -43,7 +43,7 @@ locale: zh-Hant
 | `u` | 上傳本機檔案至目前資料夾 |
 | `U` | 查看進行中的上傳 |
 | `a` | 將目前項目加入/移出購物車 |
-| `S` | 循環切換排序欄位：name → size → created → type → extension → none |
+| `S` | 循環切換排序欄位：name → size → created → modified → content-modified（開啟目錄統計後）→ type → extension → none |
 | `R` | 切換反向排序 |
 | `A` | 開啟購物車檢視 |
 | `D` | 開啟下載管理檢視 |
@@ -70,6 +70,10 @@ locale: zh-Hant
 文字預覽彈窗支援 `j/k`、方向鍵、滑鼠捲動、`PageUp/PageDown`、`Home/End`，按 `Esc/q` 關閉。本機路徑補全在背景執行。空目錄、載入中和載入失敗會顯示不同提示；按 `r` 重試目錄或預覽載入。
 
 圖片縮放和終端協定編碼也在背景執行。圖片準備完成前沿用載入佔位卡片，期間仍可捲動、導覽和關閉視圖。
+
+### 目錄統計
+
+按 `,` 開啟設定，勾選 **Browser Settings → Folder Statistics**，按 `s` 儲存。瀏覽器會在背景遞迴統計目前目錄下的各個子目錄。用 `size` 依檔案總位元組數排序，`modified` 依項目本身的修改時間排序，`content-modified` 依目錄內各層檔案的最新修改時間排序。空目錄為零位元組，內容修改時間為空。統計中或失敗的目錄沒有可參與排序的統計值。按 `r` 可重新整理並重試。
 
 ### 檔名前的小縮圖
 

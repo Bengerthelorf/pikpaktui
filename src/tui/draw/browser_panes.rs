@@ -282,6 +282,7 @@ impl App {
                     entry,
                     area.width.saturating_sub(2 + marker_width),
                     max_height,
+                    active,
                 )
             })
             .collect();
@@ -449,7 +450,13 @@ impl App {
         }
     }
 
-    fn browser_list_item(&self, entry: &Entry, width: u16, max_height: u16) -> ListItem<'static> {
+    fn browser_list_item(
+        &self,
+        entry: &Entry,
+        width: u16,
+        max_height: u16,
+        active: bool,
+    ) -> ListItem<'static> {
         let category = theme::categorize(entry);
         let color = self.file_color(category);
         let icon = theme::icon(category, self.config.nerd_font);
@@ -479,18 +486,20 @@ impl App {
         };
         let marker_width = unicode_width::UnicodeWidthStr::width(star)
             + unicode_width::UnicodeWidthStr::width(cart);
-        let size = if entry.kind == EntryKind::File {
-            format!("  {}", format_size(entry.size))
-        } else {
-            String::new()
-        };
         let text_width = (width as usize).saturating_sub(prefix_width + marker_width);
-        let reserve_size = height == 1 && text_width > size.len() + 6;
-        let name_width = text_width.saturating_sub(if reserve_size { size.len() } else { 0 });
+        let metadata = self.browser_row_metadata(entry, active, text_width.saturating_sub(8));
+        let metadata = if metadata.is_empty() {
+            metadata
+        } else {
+            format!("  {metadata}")
+        };
+        let reserve_metadata = height == 1 && text_width > metadata.len() + 6;
+        let name_width =
+            text_width.saturating_sub(if reserve_metadata { metadata.len() } else { 0 });
         let names = wrap_thumbnail_name(&entry.name, name_width, height as usize);
-        let size_row = if reserve_size {
+        let metadata_row = if reserve_metadata {
             Some(0)
-        } else if names.len() < height as usize && size.len() <= text_width {
+        } else if names.len() < height as usize && metadata.len() <= text_width {
             Some(names.len())
         } else {
             None
@@ -534,15 +543,51 @@ impl App {
             if let Some(name) = names.get(row as usize) {
                 spans.push(Span::styled(name.clone(), Style::default().fg(color)));
             }
-            if size_row == Some(row as usize) {
+            if metadata_row == Some(row as usize) {
                 spans.push(Span::styled(
-                    size.clone(),
+                    metadata.clone(),
                     Style::default().fg(Color::DarkGray),
                 ));
             }
             lines.push(Line::from(spans));
         }
         ListItem::new(Text::from(lines))
+    }
+
+    fn browser_row_metadata(&self, entry: &Entry, active: bool, width: usize) -> String {
+        use crate::config::SortField;
+        use time::{OffsetDateTime, format_description::well_known::Rfc3339};
+
+        let field = self.config.sort_field.available(self.config.folder_stats);
+        let show_time = matches!(field, SortField::Modified | SortField::ContentModified);
+        let timestamp = if entry.kind == EntryKind::Folder
+            && self.config.folder_stats
+            && field != SortField::Modified
+        {
+            match self.folder_stats.completed(&entry.id) {
+                None => return self.incomplete_folder_stats_label(&entry.id, active).into(),
+                Some(stats) if !show_time => {
+                    return if stats.is_empty {
+                        "0 B (empty)".into()
+                    } else {
+                        format_size(stats.total_size_bytes)
+                    };
+                }
+                Some(stats) if stats.is_empty => return "empty".into(),
+                Some(stats) => stats.latest_modified_time.as_deref(),
+            }
+        } else if show_time {
+            Some(entry.modified_time.as_str())
+        } else if entry.kind == EntryKind::File {
+            return format_size(entry.size);
+        } else {
+            return String::new();
+        };
+        match timestamp.filter(|s| OffsetDateTime::parse(s, &Rfc3339).is_ok()) {
+            Some(time) if time.len() > width => time[..10].into(),
+            Some(time) => time.into(),
+            None => "no time".into(),
+        }
     }
 }
 
@@ -605,6 +650,139 @@ mod tests {
         let mut entry = entry(id, EntryKind::File, &format!("{id}.jpg"));
         entry.thumbnail_link = Some(format!("https://example.invalid/{id}"));
         entry
+    }
+
+    #[test]
+    fn folder_stats_sort_complete_values_first_and_keep_selection_by_id() {
+        use crate::{config::SortField, pikpak::FolderStats};
+        let mut app = fixture();
+        app.config.folder_stats = true;
+        app.entries = ["unknown", "small", "large", "empty"]
+            .map(|id| entry(id, EntryKind::Folder, id))
+            .to_vec();
+        app.entries[1].modified_time = "2026-11-03T00:00:00Z".into();
+        for (id, bytes, time) in [
+            ("small", 1, Some("2026-11-01T00:30:00Z")),
+            ("large", 60, Some("2026-11-01T03:00:00+04:00")),
+            ("empty", 0, None),
+        ] {
+            app.folder_stats.record(
+                id.into(),
+                Ok(FolderStats {
+                    total_size_bytes: bytes,
+                    latest_modified_time: time.map(str::to_owned),
+                    is_empty: id == "empty",
+                }),
+            );
+        }
+        let mut file = entry("file", EntryKind::File, "file");
+        file.modified_time = "2099-02-30T00:00:00Z".into();
+        app.entries.push(file);
+        app.selected = 1;
+        app.cache_main_directory();
+        for (field, reverse, expected) in [
+            (
+                SortField::Size,
+                false,
+                ["large", "small", "empty", "unknown", "file"],
+            ),
+            (
+                SortField::Size,
+                true,
+                ["empty", "small", "large", "unknown", "file"],
+            ),
+            (
+                SortField::ContentModified,
+                false,
+                ["small", "large", "empty", "unknown", "file"],
+            ),
+            (
+                SortField::ContentModified,
+                true,
+                ["large", "small", "empty", "unknown", "file"],
+            ),
+        ] {
+            app.config.sort_field = field;
+            app.config.sort_reverse = reverse;
+            app.resort_folder_stats();
+            assert_eq!(
+                app.entries
+                    .iter()
+                    .map(|e| e.id.as_str())
+                    .collect::<Vec<_>>(),
+                expected
+            );
+            assert_eq!(app.current_entry().unwrap().id, "small");
+            let snapshot = &app.browser.directories[&app.current_folder_id];
+            assert_eq!(snapshot.entries[snapshot.selected].id, "small");
+        }
+        app.config.sort_field = SortField::Modified;
+        app.resort_entries();
+        assert_eq!(app.entries[0].id, "small");
+    }
+
+    #[test]
+    fn folder_stats_rows_show_empty_pending_errors_and_distinct_modification_times() {
+        use crate::{
+            config::SortField,
+            pikpak::{FolderStats, FolderStatsError},
+        };
+        let mut app = fixture();
+        app.config.folder_stats = true;
+        let mut folder = entry("folder", EntryKind::Folder, "folder");
+        assert_eq!(app.browser_row_metadata(&folder, true, 40), "pending");
+        assert_eq!(app.browser_row_metadata(&folder, false, 40), "");
+        app.main_listing_error = Some("listing failed".into());
+        assert_eq!(app.browser_row_metadata(&folder, true, 40), "unavailable");
+        app.main_listing_error = None;
+        app.folder_stats
+            .record(folder.id.clone(), Err(FolderStatsError::SizeOverflow));
+        assert_eq!(app.browser_row_metadata(&folder, true, 40), "failed");
+        app.folder_stats.record(
+            folder.id.clone(),
+            Ok(FolderStats {
+                total_size_bytes: 0,
+                latest_modified_time: None,
+                is_empty: true,
+            }),
+        );
+        assert_eq!(app.browser_row_metadata(&folder, true, 40), "0 B (empty)");
+        folder.modified_time = "2026-11-03T00:00:00Z".into();
+        let content_time = "2026-11-01T00:30:00Z";
+        app.folder_stats.record(
+            folder.id.clone(),
+            Ok(FolderStats {
+                total_size_bytes: 1024,
+                latest_modified_time: Some(content_time.into()),
+                is_empty: false,
+            }),
+        );
+        app.config.sort_field = SortField::ContentModified;
+        assert_eq!(app.browser_row_metadata(&folder, true, 40), content_time);
+        assert_eq!(app.browser_row_metadata(&folder, true, 12), "2026-11-01");
+        app.config.sort_field = SortField::Modified;
+        assert_eq!(
+            app.browser_row_metadata(&folder, true, 40),
+            folder.modified_time
+        );
+        app.preview_target_id = Some(folder.id.clone());
+        app.entries = vec![folder];
+        app.selected = 0;
+        app.input = InputMode::InfoFolderView {
+            name: "folder".into(),
+            entries: Vec::new(),
+        };
+        let terminal = render(&app, 120, 32);
+        let frame: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(frame.contains("Total size: 1.0 KB"));
+        assert!(frame.contains("Folder modified: 2026-11-03T00:00:00Z"));
+        assert!(frame.contains("Content modified: 2026-11-01T00:30:00Z"));
     }
 
     fn fixture() -> App {

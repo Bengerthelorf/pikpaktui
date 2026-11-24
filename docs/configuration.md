@@ -45,6 +45,7 @@ column_min_width = 28       # Minimum pane width in terminal cells; at least 16
 inline_thumbnails = true   # Tiny image before filename; v toggles
 inline_thumbnail_size = "tiny"  # "tiny" | "small" | "medium" | "large"; [ / ] resize
 thumbnail_placeholders = true  # Reserve a grey image card while waiting or unavailable
+folder_stats = false        # Scan folders recursively for size and latest file modification
 
 # Preview
 show_preview = true         # Include preview when width allows; false = browser panes only
@@ -54,7 +55,7 @@ thumbnail_mode = "auto"     # "auto" | "off" | "force-color" | "force-grayscale"
 thumbnail_size = "medium"   # Server thumbnail resolution; separate from inline display size; "small" | "medium" | "large"
 
 # Sort (persisted when changed with S / R in TUI)
-sort_field = "name"         # "name" | "size" | "created" | "type" | "extension" | "none"
+sort_field = "name"         # "name" | "size" | "created" | "modified" | "content-modified" | "type" | "extension" | "none"
 sort_reverse = false
 
 # Interface
@@ -104,6 +105,10 @@ Controls update checking behavior.
 ```toml
 update_check = "notify"
 ```
+
+### Folder statistics
+
+Enable **Browser Settings → Folder Statistics** and press `s` to save. The browser then uses the sum of descendant file sizes for `size` and offers `content-modified` to sort folders by their most recently modified file. The `modified` field always refers to the entry's own modification time. Disabling folder statistics switches an active `content-modified` sort to `modified`.
 
 ### Thumbnail settings
 

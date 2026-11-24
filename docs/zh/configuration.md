@@ -46,6 +46,7 @@ column_min_width = 28       # 最小栏宽，单位为终端字符格，至少 1
 inline_thumbnails = true   # 文件名前的小缩略图；v 开关
 inline_thumbnail_size = "tiny"  # "tiny" | "small" | "medium" | "large"；[ / ] 调整
 thumbnail_placeholders = true  # 等待或不可用时保留灰色图片占位卡
+folder_stats = false        # 递归计算文件夹总大小和内容最新修改时间
 
 # 预览
 show_preview = true         # 宽度允许时显示预览；false = 仅文件浏览面板
@@ -55,7 +56,7 @@ thumbnail_mode = "auto"     # "auto" | "off" | "force-color" | "force-grayscale"
 thumbnail_size = "medium"   # 服务端图片清晰度，与列表显示尺寸分开设置; "small" | "medium" | "large"
 
 # 排序（在 TUI 中用 S / R 修改时自动保存）
-sort_field = "name"         # "name" | "size" | "created" | "type" | "extension" | "none"
+sort_field = "name"         # "name" | "size" | "created" | "modified" | "content-modified" | "type" | "extension" | "none"
 sort_reverse = false
 
 # 交互
@@ -93,6 +94,10 @@ exec mpv --force-media-title="$PIKPAKTUI_PLAY_NAME" "$@"
 
 将 `player` 设置为脚本可执行文件。传入参数已包含 `--` 和视频 URL。原有 `player` 字符串仍按空白拆分；请使用 `PATH` 中的脚本名称或不含空格的可执行路径，将额外参数放入 `player_args`。字幕选择可由脚本实现；pikpaktui 不自动匹配或下载字幕。
 
+
+### 文件夹统计
+
+在 **Browser Settings → Folder Statistics** 中打开开关，按 `s` 保存。启用后，`size` 使用各层文件大小之和，还可以选择 `content-modified` 按文件夹内最新的文件修改时间排序。`modified` 始终使用条目自身的修改时间。关闭统计时，当前的 `content-modified` 排序会切换为 `modified`。
 
 ### 缩略图设置
 

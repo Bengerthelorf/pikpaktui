@@ -5,6 +5,7 @@ mod completion;
 pub(crate) mod download;
 mod download_view;
 mod draw;
+mod folder_stats;
 mod handler;
 mod image_render;
 mod local_completion;
@@ -280,6 +281,7 @@ struct StatusMessage {
 
 enum OpResult {
     Browser(browser::BrowserRequest, Result<browser::BrowserPayload>),
+    FolderStats(String, folder_stats::ScanResult),
     /// Main-pane folder listing. Folder and request ids prevent a delayed
     /// reply from replacing a newer listing, including A -> B -> A navigation.
     Ls(u64, String, Result<Vec<Entry>>),
@@ -485,6 +487,7 @@ enum InputMode {
 
 struct App {
     browser: browser::BrowserState,
+    folder_stats: folder_stats::FolderStatsState,
     settings_number_input: String,
     client: Arc<PikPak>,
     config: TuiConfig,
@@ -576,6 +579,7 @@ impl App {
         dl_state.load_tasks(download::load_download_state());
         let mut app = Self {
             browser: browser::BrowserState::default(),
+            folder_stats: folder_stats::FolderStatsState::default(),
             settings_number_input: String::new(),
             client: Arc::new(client),
             config,
@@ -683,6 +687,7 @@ impl App {
         let download_jobs = config.download_jobs;
         Self {
             browser: browser::BrowserState::default(),
+            folder_stats: folder_stats::FolderStatsState::default(),
             settings_number_input: String::new(),
             client: Arc::new(client),
             config,
@@ -876,6 +881,11 @@ impl App {
             };
             match result {
                 OpResult::Browser(request, result) => self.apply_browser_result(request, result),
+                OpResult::FolderStats(id, result) => {
+                    if self.folder_stats.finish(id, result) {
+                        self.resort_folder_stats();
+                    }
+                }
                 OpResult::Ls(request_id, requested_folder_id, Ok(mut entries)) => {
                     if !folder_listing_matches(
                         &self.current_folder_id,
@@ -888,11 +898,7 @@ impl App {
                     self.main_listing_loading = false;
                     self.main_listing_error = None;
                     self.finish_background_loading();
-                    crate::config::sort_entries(
-                        &mut entries,
-                        self.config.sort_field,
-                        self.config.sort_reverse,
-                    );
+                    self.folder_stats.sort_listing(&mut entries, &self.config);
                     // Keep the cursor on the same entry across a refresh — a
                     // re-sort or insert/delete shifts indices, so a fixed index
                     // would jump to a different file. Fall back to a clamp.
@@ -982,11 +988,7 @@ impl App {
                         && expected == Some(request.target.as_str())
                     {
                         self.parent_listing_request = None;
-                        crate::config::sort_entries(
-                            &mut entries,
-                            self.config.sort_field,
-                            self.config.sort_reverse,
-                        );
+                        self.folder_stats.sort_listing(&mut entries, &self.config);
                         self.parent_entries = entries;
                         if let Some(pos) = self
                             .parent_entries
@@ -1014,11 +1016,7 @@ impl App {
                     if !is_modal && !is_preview {
                         continue;
                     }
-                    crate::config::sort_entries(
-                        &mut children,
-                        self.config.sort_field,
-                        self.config.sort_reverse,
-                    );
+                    self.folder_stats.sort_listing(&mut children, &self.config);
                     self.browser
                         .cache_directory(request.target.clone(), children.clone());
                     if is_modal {
@@ -1397,11 +1395,7 @@ impl App {
                     {
                         match result {
                             Ok(mut entries) => {
-                                crate::config::sort_entries(
-                                    &mut entries,
-                                    self.config.sort_field,
-                                    self.config.sort_reverse,
-                                );
+                                self.folder_stats.sort_listing(&mut entries, &self.config);
                                 p.entries = entries;
                             }
                             Err(e) => log = Some(format!("Picker load failed: {e:#}")),
@@ -1554,10 +1548,21 @@ impl App {
     /// Apply saved preferences; the caller refreshes listings if API image size changed.
     fn apply_settings(&mut self, config: TuiConfig) -> bool {
         let thumbnail_size_changed = self.config.thumbnail_size != config.thumbnail_size;
+        let stats_changed = self.config.folder_stats != config.folder_stats;
+        let sort_changed = self.config.sort_field != config.sort_field
+            || self.config.sort_reverse != config.sort_reverse
+            || (stats_changed && config.sort_field == crate::config::SortField::Size);
+        if stats_changed {
+            self.folder_stats.invalidate();
+        }
         self.client
             .set_thumbnail_size(config.thumbnail_size.as_api_str());
         self.config = config;
-        self.resort_entries();
+        if sort_changed {
+            self.resort_entries();
+        } else {
+            self.on_cursor_move();
+        }
         self.download_state.max_concurrent = self.config.download_jobs.max(1);
         self.download_state.start_next(&self.client);
         thumbnail_size_changed
@@ -1648,6 +1653,7 @@ impl App {
     }
 
     fn invalidate_main_listing(&mut self) {
+        self.folder_stats.invalidate();
         self.main_listing_loading = false;
         self.main_listing_error = None;
         self.main_listing_request_id = self.main_listing_request_id.wrapping_add(1);
@@ -1900,18 +1906,42 @@ impl App {
         }
     }
 
-    fn resort_entries(&mut self) {
-        let selected_id = self.entries.get(self.selected).map(|e| e.id.clone());
-        crate::config::sort_entries(
+    fn resort_folder_stats(&mut self) {
+        use crate::config::SortField;
+        if !self.config.folder_stats
+            || !matches!(
+                self.config.sort_field,
+                SortField::Size | SortField::ContentModified
+            )
+        {
+            return;
+        }
+        self.folder_stats.sort_preserving_selection(
             &mut self.entries,
-            self.config.sort_field,
-            self.config.sort_reverse,
+            &mut self.selected,
+            &self.config,
         );
-        self.selected = selected_id
-            .and_then(|id| self.entries.iter().position(|e| e.id == id))
-            .unwrap_or_else(|| self.selected.min(self.entries.len().saturating_sub(1)));
-        self.browser
-            .resort(self.config.sort_field, self.config.sort_reverse);
+        if let Some(snapshot) = self.browser.directories.get_mut(&self.current_folder_id) {
+            self.folder_stats.sort_preserving_selection(
+                &mut snapshot.entries,
+                &mut snapshot.selected,
+                &self.config,
+            );
+        }
+    }
+
+    fn resort_entries(&mut self) {
+        self.folder_stats.sort_preserving_selection(
+            &mut self.entries,
+            &mut self.selected,
+            &self.config,
+        );
+        self.folder_stats.sort_preserving_selection(
+            &mut self.parent_entries,
+            &mut self.parent_selected,
+            &self.config,
+        );
+        self.browser.resort(&self.folder_stats, &self.config);
         self.on_cursor_move();
         let arrow = if self.config.sort_reverse {
             "\u{2193}"

@@ -3,13 +3,14 @@ use super::tests::{temp_test_dir, test_client, write_response};
 use super::*;
 use std::{
     net::TcpListener,
+    sync::atomic::{AtomicBool, Ordering},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
 type ScriptedServer = (String, Arc<Mutex<Vec<String>>>, std::thread::JoinHandle<()>);
 
-fn scripted_server(responses: Vec<(u16, &'static str)>) -> ScriptedServer {
+fn scripted_server(responses: Vec<(u16, impl AsRef<str> + Send + 'static)>) -> ScriptedServer {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
@@ -40,7 +41,7 @@ fn scripted_server(responses: Vec<(u16, &'static str)>) -> ScriptedServer {
                 401 => "Unauthorized",
                 _ => "Internal Server Error",
             };
-            write_response(&mut stream, code, reason, body.as_bytes());
+            write_response(&mut stream, code, reason, body.as_ref().as_bytes());
         }
     });
     (base, requests, handle)
@@ -417,6 +418,195 @@ fn file_lists_request_complete_phase_and_retain_audit_metadata() {
     let requests = requests.lock().unwrap();
     assert!(requests[0].contains("with_audit=true"));
     assert!(requests[0].contains("PHASE_TYPE_COMPLETE"));
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn folder_stats_count_every_page_and_compare_file_modifications_as_instants() {
+    let files: Vec<_> = (0..500)
+        .map(|id| serde_json::json!({"id": id.to_string(), "name": "file", "size": "1"}))
+        .collect();
+    let first_page = serde_json::json!({"files": files, "next_page_token": "more"}).to_string();
+    let (base, requests, handle) = scripted_server(vec![
+        (200, first_page),
+        (200, r#"{"files":[
+            {"kind":"drive#folder","id":"child","name":"child","size":900,"modified_time":"2099-01-01T00:00:00Z"},
+            {"kind":"drive#file","id":"other","name":"other","size":2,"modified_time":"2026-10-02T08:00:00+08:00"}
+        ]}"#.into()),
+        (200, r#"{"files":[{"kind":"drive#folder","id":"deep","name":"deep"}]}"#.into()),
+        (200, r#"{"files":[{"kind":"drive#file","id":"leaf","name":"leaf","size":"7","modified_time":"2026-10-02T00:00:00.000000001Z"}]}"#.into()),
+    ]);
+    let dir = temp_test_dir("folder-stats-pages");
+    let client = test_client(base, dir.join("session.json"));
+    let stats = client.folder_stats("", &AtomicBool::new(false)).unwrap();
+    assert_eq!(stats.total_size_bytes, 509);
+    assert_eq!(
+        stats.latest_modified_time.as_deref(),
+        Some("2026-10-02T00:00:00.000000001Z")
+    );
+    assert!(!stats.is_empty);
+
+    handle.join().unwrap();
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 4);
+    for (request, (parent, token)) in requests.iter().zip([
+        ("", None),
+        ("", Some("more")),
+        ("child", None),
+        ("deep", None),
+    ]) {
+        let path = request.split_whitespace().nth(1).unwrap();
+        let url = reqwest::Url::parse(&format!("http://localhost{path}")).unwrap();
+        assert_eq!(url.path(), "/drive/v1/files");
+        let query: std::collections::HashMap<_, _> = url.query_pairs().collect();
+        assert_eq!(query["parent_id"], parent);
+        assert_eq!(query.get("page_token").map(|s| s.as_ref()), token);
+        let filters: serde_json::Value = serde_json::from_str(&query["filters"]).unwrap();
+        assert_eq!(
+            filters,
+            serde_json::json!({"trashed":{"eq":false},"phase":{"eq":"PHASE_TYPE_COMPLETE"}})
+        );
+    }
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn folder_stats_distinguish_empty_folders_from_zero_bytes_without_valid_times() {
+    let (base, _, handle) = scripted_server(vec![
+        (200, r#"{"files":[]}"#),
+        (
+            200,
+            r#"{"files":[{"kind":"drive#folder","id":"empty","name":"empty"}]}"#,
+        ),
+        (200, r#"{"files":[]}"#),
+        (200, r#"{"files":[{"id":"zero","name":"zero","size":0}]}"#),
+        (
+            200,
+            r#"{"files":[
+            {"id":"a","name":"a","size":0,"created_time":"2099-01-01T00:00:00Z"},
+            {"id":"b","name":"b","size":0,"modified_time":null},
+            {"id":"c","name":"c","size":0,"modified_time":""},
+            {"id":"d","name":"d","size":3,"modified_time":"2026-02-30T12:00:00Z"},
+            {"id":"e","name":"e","size":4,"modified_time":12345}
+        ]}"#,
+        ),
+    ]);
+    let dir = temp_test_dir("folder-stats-empty");
+    let client = test_client(base, dir.join("session.json"));
+    for (folder, bytes, is_empty) in [
+        ("empty", 0, true),
+        ("subfolders-only", 0, false),
+        ("zero-byte-file", 0, false),
+        ("invalid-times", 7, false),
+    ] {
+        let stats = client
+            .folder_stats(folder, &AtomicBool::new(false))
+            .unwrap();
+        assert_eq!(stats.total_size_bytes, bytes);
+        assert_eq!(stats.latest_modified_time, None);
+        assert_eq!(stats.is_empty, is_empty, "{folder}");
+    }
+    handle.join().unwrap();
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn folder_stats_fail_when_a_childs_later_page_is_unreadable() {
+    let (base, requests, handle) = scripted_server(vec![
+        (
+            200,
+            r#"{"files":[{"kind":"drive#folder","id":"child","name":"child"},{"id":"file","name":"file","size":100}]}"#,
+        ),
+        (
+            200,
+            r#"{"files":[{"id":"partial","name":"partial","size":20}],"next_page_token":"more"}"#,
+        ),
+        (500, r#"{"error":"child page unavailable"}"#),
+    ]);
+    let dir = temp_test_dir("folder-stats-child-error");
+    let client = test_client(base, dir.join("session.json"));
+    let err = client
+        .folder_stats("root", &AtomicBool::new(false))
+        .unwrap_err();
+    let FolderStatsError::ReadFolder { folder_id, source } = err else {
+        panic!("expected the failed folder and its cause, got {err:?}");
+    };
+    assert_eq!(folder_id, "child");
+    assert!(format!("{source:#}").contains("child page unavailable"));
+    handle.join().unwrap();
+    let requests = requests.lock().unwrap();
+    assert!(requests[2].contains("parent_id=child") && requests[2].contains("page_token=more"));
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn folder_stats_stop_before_another_page_when_cancelled_during_a_request() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let dir = temp_test_dir("folder-stats-cancel");
+    let client = test_client(base, dir.join("session.json"));
+    let cancelled = AtomicBool::new(false);
+    let mut requests = 0;
+    std::thread::scope(|scope| {
+        let worker = scope.spawn(|| client.folder_stats("root", &cancelled));
+        while !worker.is_finished() {
+            match accept_test_connection(&listener) {
+                Ok(mut stream) => {
+                    read_test_http_request(&mut stream).unwrap();
+                    requests += 1;
+                    cancelled.store(true, Ordering::Relaxed);
+                    let body: &[u8] = if requests == 1 {
+                        br#"{"files":[{"id":"partial","name":"partial","size":17}],"next_page_token":"more"}"#
+                    } else {
+                        br#"{"files":[]}"#
+                    };
+                    write_response(&mut stream, 200, "OK", body);
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Err(e) => panic!("failed to accept listing request: {e}"),
+            }
+        }
+        assert!(matches!(
+            worker.join().unwrap(),
+            Err(FolderStatsError::Cancelled)
+        ));
+    });
+    assert_eq!(requests, 1);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn folder_stats_honour_pre_cancellation_before_session_access() {
+    let dir = temp_test_dir("folder-stats-pre-cancel");
+    let session = dir.join("session.json");
+    let client = test_client(String::new(), session.clone());
+    fs::remove_file(session).unwrap();
+    assert!(matches!(
+        client.folder_stats("root", &AtomicBool::new(true)),
+        Err(FolderStatsError::Cancelled)
+    ));
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn folder_stats_report_size_overflow() {
+    let (base, _, handle) = scripted_server(vec![(
+        200,
+        r#"{"files":[
+        {"id":"max","name":"max","size":"18446744073709551615"},
+        {"id":"one","name":"one","size":1}
+    ]}"#,
+    )]);
+    let dir = temp_test_dir("folder-stats-overflow");
+    let client = test_client(base, dir.join("session.json"));
+    assert!(matches!(
+        client.folder_stats("root", &AtomicBool::new(false)),
+        Err(FolderStatsError::SizeOverflow)
+    ));
+    handle.join().unwrap();
     fs::remove_dir_all(dir).unwrap();
 }
 
