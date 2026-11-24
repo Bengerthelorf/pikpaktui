@@ -282,6 +282,7 @@ struct StatusMessage {
 enum OpResult {
     Browser(browser::BrowserRequest, Result<browser::BrowserPayload>),
     FolderStats(String, folder_stats::ScanResult),
+    DriveStats(folder_stats::DriveScanResult),
     /// Main-pane folder listing. Folder and request ids prevent a delayed
     /// reply from replacing a newer listing, including A -> B -> A navigation.
     Ls(u64, String, Result<Vec<Entry>>),
@@ -883,6 +884,11 @@ impl App {
                 OpResult::Browser(request, result) => self.apply_browser_result(request, result),
                 OpResult::FolderStats(id, result) => {
                     if self.folder_stats.finish(id, result) {
+                        self.folder_stats.mark_sort_dirty();
+                    }
+                }
+                OpResult::DriveStats(result) => {
+                    if self.folder_stats.finish_drive(result, &self.entries) {
                         self.resort_folder_stats();
                     }
                 }
@@ -898,6 +904,9 @@ impl App {
                     self.main_listing_loading = false;
                     self.main_listing_error = None;
                     self.finish_background_loading();
+                    if self.config.folder_stats {
+                        self.folder_stats.restore(&entries);
+                    }
                     self.folder_stats.sort_listing(&mut entries, &self.config);
                     // Keep the cursor on the same entry across a refresh — a
                     // re-sort or insert/delete shifts indices, so a fixed index
@@ -1454,7 +1463,10 @@ impl App {
                         // Adopt the session (and device identity) the login
                         // client just wrote.
                         match PikPak::new() {
-                            Ok(fresh) => self.client = Arc::new(fresh),
+                            Ok(fresh) => {
+                                self.folder_stats.change_account();
+                                self.client = Arc::new(fresh);
+                            }
                             Err(e) => self.push_log(format!("client rebuild failed: {e:#}")),
                         }
                         self.input = InputMode::Normal;
@@ -1474,6 +1486,9 @@ impl App {
             }
         }
 
+        if self.folder_stats.take_due_sort() {
+            self.resort_folder_stats();
+        }
         let logs = self.download_state.poll(&self.client);
         for msg in logs {
             self.push_log(msg);
@@ -1626,6 +1641,7 @@ impl App {
     }
 
     fn refresh(&mut self) {
+        self.folder_stats.invalidate();
         self.image_render_cache.borrow_mut().clear();
         self.browser.invalidate();
         self.clear_preview();
@@ -1642,18 +1658,18 @@ impl App {
         self.main_listing_loading = true;
         self.main_listing_error = None;
         let request_id = self.main_listing_request_id;
-        let client = Arc::clone(&self.client);
+        let list = self.folder_lister();
         let tx = self.result_tx.clone();
         std::thread::spawn(move || {
             let result = crate::pikpak::interactive::with_deadline(Duration::from_secs(15), || {
-                client.ls(&folder_id)
+                list(&folder_id)
             });
             let _ = tx.send(OpResult::Ls(request_id, folder_id, result));
         });
     }
 
     fn invalidate_main_listing(&mut self) {
-        self.folder_stats.invalidate();
+        self.folder_stats.leave_listing();
         self.main_listing_loading = false;
         self.main_listing_error = None;
         self.main_listing_request_id = self.main_listing_request_id.wrapping_add(1);
@@ -1768,11 +1784,11 @@ impl App {
             let request =
                 self.new_async_request(AsyncRequestKind::ParentListing, parent_id.clone());
             self.parent_listing_request = Some(request.clone());
-            let client = Arc::clone(&self.client);
+            let list = self.folder_lister();
             let tx = self.result_tx.clone();
             let pid = parent_id;
             std::thread::spawn(move || {
-                let _ = tx.send(OpResult::ParentLs(request, client.ls(&pid)));
+                let _ = tx.send(OpResult::ParentLs(request, list(&pid)));
             });
         } else {
             self.parent_listing_request = None;
@@ -1847,6 +1863,7 @@ impl App {
         match entry.kind {
             EntryKind::Folder => {
                 self.browser.cancel_directory_loads(&eid);
+                let list = self.folder_lister();
                 let request =
                     self.begin_preview_request(AsyncRequestKind::FolderPreview, eid.clone());
                 // Folders always show content listing, never thumbnails
@@ -1854,7 +1871,7 @@ impl App {
                     let _ = tx.send(OpResult::PreviewLs(
                         request,
                         crate::pikpak::interactive::with_deadline(Duration::from_secs(15), || {
-                            client.ls(&eid)
+                            list(&eid)
                         }),
                     ));
                 });

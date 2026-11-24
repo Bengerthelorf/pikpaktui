@@ -2,6 +2,7 @@ mod account;
 mod auth;
 mod download;
 mod drive;
+mod drive_stats;
 mod file_info;
 mod files;
 mod folder_stats;
@@ -13,6 +14,7 @@ mod offline;
 mod parity_tests;
 mod responses;
 mod share;
+mod stats_session;
 mod upload;
 pub(crate) use upload::{UploadControl, pikpak_hash};
 
@@ -20,6 +22,7 @@ use auth::{CaptchaInitResponse, SigninResponse};
 #[cfg(test)]
 pub(crate) use download::part_path;
 pub(crate) use download::{finish_partial_download, prepare_partial_download};
+pub(crate) use drive_stats::RootListing;
 pub use file_info::{FileInfoResponse, PlayOption};
 pub use folder_stats::{FolderStats, FolderStatsError};
 pub use models::{Entry, EntryKind, SessionToken};
@@ -32,6 +35,7 @@ pub use responses::{
     OfflineTaskResponse, QuotaInfo, ShareDetailResponse, ShareEntry, ShareInfoResponse,
     ShareListResponse, TransferBand, TransferQuotaResponse, VipInfoResponse,
 };
+pub use stats_session::FolderStatsSession;
 
 use anyhow::{Context, Result, anyhow};
 use std::collections::HashMap;
@@ -67,7 +71,7 @@ const CAPTCHA_SALTS: &[&str] = &[
 
 #[derive(Default)]
 struct LsCache {
-    generation: u64,
+    generation: std::sync::Arc<()>,
     entries: HashMap<String, Vec<Entry>>,
 }
 
@@ -270,6 +274,7 @@ impl PikPak {
         let signin: SigninResponse = response.json().context("invalid signin json")?;
         let expires_in = i64::try_from(signin.expires_in).context("expires_in overflow")?;
         let now = now_unix();
+        self.clear_ls_cache();
         self.user_id = signin.sub.clone();
 
         let token = SessionToken {
@@ -699,7 +704,7 @@ impl PikPak {
     /// new tree instead of a stale snapshot.
     fn clear_ls_cache(&self) {
         let mut cache = self.ls_cache.lock().unwrap_or_else(|e| e.into_inner());
-        cache.generation = cache.generation.wrapping_add(1);
+        cache.generation = std::sync::Arc::new(());
         cache.entries.clear();
     }
 

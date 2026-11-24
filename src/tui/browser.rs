@@ -706,6 +706,9 @@ impl App {
             .position(|e| e.id == self.current_folder_id)
             .unwrap_or(0);
         self.parent_listing_request = None;
+        if self.config.folder_stats {
+            self.folder_stats.restore(&self.entries);
+        }
         self.resort_folder_stats();
         self.on_cursor_move();
         if !snapshot.is_some_and(|s| s.generation == self.browser.generation) {
@@ -889,11 +892,12 @@ impl App {
             let client = Arc::clone(&self.client);
             let tx = self.result_tx.clone();
             let max_size = self.config.preview_max_size;
+            let list = self.folder_lister();
             std::thread::spawn(move || {
                 let result =
                     crate::pikpak::interactive::with_deadline(Duration::from_secs(5), || {
                         match &request.key {
-                            LoadKey::Directory(id) => client.ls(id).map(BrowserPayload::Directory),
+                            LoadKey::Directory(id) => list(id).map(BrowserPayload::Directory),
                             LoadKey::InlineImage(url) => {
                                 let image = match entry.as_ref() {
                                     Some(entry) => super::fetch_entry_thumbnail(entry, &client),

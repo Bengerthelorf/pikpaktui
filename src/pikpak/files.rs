@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, anyhow};
 use std::collections::HashSet;
 
-use super::drive::{DriveFileResponse, DriveListResponse};
+use super::drive::{DriveFile, DriveFileResponse, DriveListResponse, NormalListPage};
 use super::{Entry, FileInfoResponse, PikPak, ensure_success, json_or_api_error};
 
 impl PikPak {
@@ -19,12 +19,25 @@ impl PikPak {
         &'a self,
         parent_id: &'a str,
     ) -> Result<impl Iterator<Item = Result<Vec<Entry>>> + 'a> {
+        Ok(self.normal_list_pages::<DriveFile>(parent_id)?.map(|page| {
+            Ok(page?
+                .unwrap_or_default()
+                .into_iter()
+                .map(DriveFile::into_entry)
+                .collect())
+        }))
+    }
+
+    pub(super) fn normal_list_pages<'a, T: serde::de::DeserializeOwned + 'a>(
+        &'a self,
+        parent_id: &'a str,
+    ) -> Result<impl Iterator<Item = Result<Option<Vec<T>>>> + 'a> {
         let token = self.access_token()?;
         let thumbnail_size = self.thumbnail_size();
         let url = self.drive_url("drive/v1/files");
         let filters = r#"{"trashed":{"eq":false},"phase":{"eq":"PHASE_TYPE_COMPLETE"}}"#;
 
-        let fetch = move |page_token: &str| -> Result<DriveListResponse> {
+        let fetch = move |page_token: &str| -> Result<NormalListPage<T>> {
             let mut rb = self.http.get(&url).bearer_auth(&token).query(&[
                 ("parent_id", parent_id),
                 ("limit", "500"),
@@ -51,11 +64,7 @@ impl PikPak {
                     );
                     next = Some(token);
                 }
-                Ok(page
-                    .files
-                    .into_iter()
-                    .map(|file| file.into_entry())
-                    .collect())
+                Ok(page.files)
             }))
         }))
     }
@@ -70,14 +79,14 @@ impl PikPak {
             if let Some(cached) = cache.entries.get(parent_id) {
                 return Ok(cached.clone());
             }
-            cache.generation
+            std::sync::Arc::downgrade(&cache.generation)
         };
         let entries = self.ls(parent_id)?;
         let result = entries.clone();
         let mut cache = self.ls_cache.lock().unwrap_or_else(|e| e.into_inner());
         // A mutation may have invalidated the cache while the network request
         // was in flight. Never publish that pre-mutation snapshot afterward.
-        if cache.generation == generation {
+        if generation.ptr_eq(&std::sync::Arc::downgrade(&cache.generation)) {
             cache.entries.insert(parent_id.to_string(), entries);
         }
         Ok(result)

@@ -81,7 +81,11 @@ Image resizing and terminal-protocol encoding also run in the background. A load
 
 ### Folder statistics
 
-Open settings with `,`, turn on **Browser Settings → Folder Statistics**, then press `s` to save. The browser scans the current directory’s subfolders in the background. Choose `size` to sort by total file bytes, `modified` for the entry’s own timestamp, or `content-modified` for the latest file modification anywhere inside each folder. An empty folder has zero bytes and no content timestamp. Pending or failed scans have no sortable value. Press `r` to refresh and retry.
+Open settings with `,`, turn on **Browser Settings → Folder Statistics**, then press `s` to save. Choose `size` to sort by total file bytes or `content-modified` to sort by the newest file modification anywhere inside each folder. The `modified` sort shows the entry’s own timestamp directly from the listing.
+
+Browsing and previews share directory reads with background statistics. Browsing prioritizes visible rows. Sorting by either recursive value covers all folders in the current listing. At the drive root, a cold sort can use one paginated drive-wide listing to calculate all folders. Returning to a recently visited folder can reuse completed results. Press `r` to discard cached statistics, refresh the listing and retry failures.
+
+An empty folder has zero bytes and no content timestamp. A folder containing a zero-byte file is nonempty. Pending and failed scans have no sortable value.
 
 ### Inline thumbnails
 

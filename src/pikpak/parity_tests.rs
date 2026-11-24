@@ -10,7 +10,9 @@ use std::{
 
 type ScriptedServer = (String, Arc<Mutex<Vec<String>>>, std::thread::JoinHandle<()>);
 
-fn scripted_server(responses: Vec<(u16, impl AsRef<str> + Send + 'static)>) -> ScriptedServer {
+pub(super) fn scripted_server(
+    responses: Vec<(u16, impl AsRef<str> + Send + 'static)>,
+) -> ScriptedServer {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());

@@ -3,6 +3,24 @@ use serde::Deserialize;
 use super::models::{Entry, EntryKind};
 
 #[derive(Deserialize)]
+#[serde(bound(deserialize = "T: Deserialize<'de>"))]
+pub(super) struct NormalListPage<T> {
+    #[serde(default = "Option::default", deserialize_with = "present_files")]
+    pub(super) files: Option<Vec<T>>,
+    pub(super) next_page_token: Option<String>,
+}
+
+// A missing list is accepted by legacy per-folder callers. A present null
+// or non-array is a malformed response, even on those older endpoints.
+fn present_files<'de, D, T>(de: D) -> Result<Option<Vec<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Vec::deserialize(de).map(Some)
+}
+
+#[derive(Deserialize)]
 pub(super) struct DriveListResponse {
     #[serde(default)]
     pub(super) files: Vec<DriveFile>,
@@ -38,7 +56,7 @@ pub(super) struct DriveFile {
 }
 
 // A malformed optional timestamp must not hide the rest of a listed file.
-fn de_modified_time<'de, D: serde::Deserializer<'de>>(
+pub(super) fn de_modified_time<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<String>, D::Error> {
     Ok(match serde_json::Value::deserialize(deserializer)? {
@@ -95,7 +113,7 @@ impl DriveFile {
     }
 }
 
-fn de_opt_u64<'de, D>(deserializer: D) -> std::result::Result<Option<u64>, D::Error>
+pub(super) fn de_opt_u64<'de, D>(deserializer: D) -> std::result::Result<Option<u64>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {

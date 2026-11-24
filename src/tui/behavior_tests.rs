@@ -14,10 +14,17 @@ fn cancelled_folder_scan_holds_slot_and_its_late_result_is_ignored() {
         kind: EntryKind::Folder,
         ..entry("folder")
     }];
-    let (id, token) = app.folder_stats.next_folder(&app.entries).unwrap();
+    let (id, token) = app
+        .folder_stats
+        .next_folder(&app.entries, std::iter::empty(), true)
+        .unwrap();
     app.invalidate_main_listing();
     assert!(token.load(Ordering::Relaxed));
-    assert!(app.folder_stats.next_folder(&app.entries).is_none());
+    assert!(
+        app.folder_stats
+            .next_folder(&app.entries, std::iter::empty(), true)
+            .is_none()
+    );
 
     // A response can have been sent before the user refreshed the same folder.
     let old_stats = crate::pikpak::FolderStats {
@@ -31,7 +38,11 @@ fn cancelled_folder_scan_holds_slot_and_its_late_result_is_ignored() {
     app.poll_results();
     assert!(app.folder_stats.completed(&id).is_none());
     assert!(!app.folder_stats.failed(&id));
-    assert!(app.folder_stats.next_folder(&app.entries).is_some());
+    assert!(
+        app.folder_stats
+            .next_folder(&app.entries, std::iter::empty(), true)
+            .is_some()
+    );
 }
 
 #[test]
@@ -44,7 +55,10 @@ fn folder_scan_queue_visits_all_folders_once_and_retries_failures_only_after_ref
             ..entry(id)
         });
     }
-    let (first, _) = app.folder_stats.next_folder(&app.entries).unwrap();
+    let (first, _) = app
+        .folder_stats
+        .next_folder(&app.entries, std::iter::empty(), true)
+        .unwrap();
     assert_eq!(first, "first");
     app.result_tx
         .send(OpResult::FolderStats(
@@ -54,7 +68,10 @@ fn folder_scan_queue_visits_all_folders_once_and_retries_failures_only_after_ref
         .unwrap();
     app.poll_results();
     assert!(app.folder_stats.failed(&first));
-    let (second, _) = app.folder_stats.next_folder(&app.entries).unwrap();
+    let (second, _) = app
+        .folder_stats
+        .next_folder(&app.entries, std::iter::empty(), true)
+        .unwrap();
     assert_eq!(second, "second");
     app.folder_stats.finish(
         second,
@@ -64,9 +81,100 @@ fn folder_scan_queue_visits_all_folders_once_and_retries_failures_only_after_ref
             is_empty: true,
         }),
     );
-    assert!(app.folder_stats.next_folder(&app.entries).is_none());
+    assert!(
+        app.folder_stats
+            .next_folder(&app.entries, std::iter::empty(), true)
+            .is_none()
+    );
     app.invalidate_main_listing();
-    assert_eq!(app.folder_stats.next_folder(&app.entries).unwrap().0, first);
+    assert_eq!(
+        app.folder_stats
+            .next_folder(&app.entries, std::iter::empty(), true)
+            .unwrap()
+            .0,
+        first
+    );
+}
+
+#[test]
+fn browsing_scans_selected_then_visible_folders_and_global_sort_includes_the_rest() {
+    let mut app = app();
+    app.entries = ["hidden", "visible", "selected"]
+        .map(|id| Entry {
+            kind: EntryKind::Folder,
+            ..entry(id)
+        })
+        .to_vec();
+    let visible = [2, 1, 2];
+    for wanted in ["selected", "visible"] {
+        let (id, _) = app
+            .folder_stats
+            .next_folder(&app.entries, visible.into_iter(), false)
+            .unwrap();
+        assert_eq!(id, wanted);
+        app.folder_stats
+            .finish(id, Err(crate::pikpak::FolderStatsError::SizeOverflow));
+    }
+    assert!(
+        app.folder_stats
+            .next_folder(&app.entries, visible.into_iter(), false)
+            .is_none()
+    );
+    assert_eq!(
+        app.folder_stats
+            .next_folder(&app.entries, visible.into_iter(), true)
+            .unwrap()
+            .0,
+        "hidden"
+    );
+}
+
+#[test]
+fn folder_own_timestamp_does_not_launch_a_recursive_scan() {
+    let mut app = app();
+    app.input = InputMode::Normal;
+    app.config.folder_stats = true;
+    app.config.sort_field = crate::config::SortField::Modified;
+    app.entries = vec![Entry {
+        kind: EntryKind::Folder,
+        ..entry("visible")
+    }];
+    app.schedule_folder_stats();
+    assert!(!app.folder_stats.running());
+}
+
+#[test]
+fn root_drive_scan_reconciles_visible_siblings_and_falls_back_once() {
+    let mut app = app();
+    app.entries = ["first", "second", "third", "fourth"]
+        .map(|id| Entry {
+            kind: EntryKind::Folder,
+            ..entry(id)
+        })
+        .to_vec();
+    let value = crate::pikpak::FolderStats {
+        total_size_bytes: 0,
+        latest_modified_time: None,
+        is_empty: true,
+    };
+    app.folder_stats.record("first".into(), Ok(value.clone()));
+    app.folder_stats.record("second".into(), Ok(value.clone()));
+    assert!(
+        app.folder_stats.begin_drive(&app.entries).is_none(),
+        "only half the folders are cold"
+    );
+    app.folder_stats.invalidate();
+    assert!(app.folder_stats.begin_drive(&app.entries).is_some());
+    let incomplete =
+        std::collections::HashMap::from([(String::new(), value.clone()), ("first".into(), value)]);
+    assert!(!app.folder_stats.finish_drive(Ok(incomplete), &app.entries));
+    assert!(app.folder_stats.completed("first").is_none());
+    assert!(app.folder_stats.begin_drive(&app.entries).is_none());
+    assert!(
+        app.folder_stats
+            .next_folder(&app.entries, std::iter::empty(), true)
+            .is_some()
+    );
 }
 
 #[test]

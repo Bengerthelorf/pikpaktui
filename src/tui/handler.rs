@@ -1118,13 +1118,13 @@ impl App {
 
     fn spawn_picker_ls(&mut self, folder_id: String) -> u64 {
         let request_id = self.next_async_request_id();
-        let client = Arc::clone(&self.client);
+        let list = self.folder_lister();
         let tx = self.result_tx.clone();
         std::thread::spawn(move || {
             let _ = tx.send(OpResult::PickerLs(
                 request_id,
                 folder_id.clone(),
-                client.ls(&folder_id),
+                list(&folder_id),
             ));
         });
         request_id
@@ -1918,11 +1918,11 @@ impl App {
         self.preview_target_id = Some(entry.id.clone());
         self.preview_target_name = Some(entry.name.clone());
         let request = self.begin_modal_request(AsyncRequestKind::FolderPreview, entry.id.clone());
-        let client = Arc::clone(&self.client);
+        let list = self.folder_lister();
         let tx = self.result_tx.clone();
         let eid = entry.id.clone();
         std::thread::spawn(move || {
-            let _ = tx.send(OpResult::PreviewLs(request, client.ls(&eid)));
+            let _ = tx.send(OpResult::PreviewLs(request, list(&eid)));
         });
     }
 
