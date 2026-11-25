@@ -320,3 +320,41 @@ fn missing_server_watermark_falls_back_once_and_fails_closed_on_a_child_error() 
         "could not list folder",
     );
 }
+
+#[test]
+fn filename_search_returns_stable_ids_and_paths_across_moves_and_trash() {
+    let fx = Fixture::new();
+    let folder = json!({"id":"f","parent_id":"","name":"Videos","kind":"drive#folder"});
+    let file = json!({"id":"v","parent_id":"f","name":"Ä片.MP4","size":"19","kind":"drive#file"});
+    let stamp = "2026-01-01T00:00:00Z";
+    let page = |rows: Value| json!({"sync_time":stamp,"files":rows});
+    let hits = data(fx.run(
+        &[
+            "search",
+            "ä片",
+            "--min-size",
+            "19",
+            "--max-size",
+            "19",
+            "--type",
+            "file",
+            "-J",
+        ],
+        &[("full", page(json!([file, folder])))],
+    ));
+    assert_eq!(hits[0]["id"], "v");
+    assert_eq!(hits[0]["path"], "/Videos/Ä片.MP4");
+    let cached = data(fx.run(&["search", "--cached", "--in", "/Videos", "-J"], &[]));
+    assert_eq!(cached[0]["id"], "v");
+    let renamed = json!({"id":"v","parent_id":"","name":"New.mp4","size":"19","kind":"drive#file"});
+    let moved = data(fx.run(
+        &["search", "new", "-J"],
+        &[("delta", page(json!([renamed])))],
+    ));
+    assert_eq!(moved[0]["path"], "/New.mp4");
+    let removed = data(fx.run(
+        &["search", "new", "-J"],
+        &[("delta", page(json!([{"id":"v","trashed":true}])))],
+    ));
+    assert_eq!(removed, json!([]));
+}

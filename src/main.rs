@@ -27,7 +27,7 @@ fn entry() -> Result<()> {
     }
 
     // These commands accept names such as `--help` after the option separator.
-    let help_args = if matches!(args[0].as_str(), "hash" | "stats") {
+    let help_args = if matches!(args[0].as_str(), "hash" | "stats" | "search") {
         args[1..]
             .split(|arg| arg == "--")
             .next()
@@ -60,6 +60,7 @@ fn entry() -> Result<()> {
         "rename" => cmd::rename::run(&args[1..]),
         "rm" => cmd::rm::run(&args[1..]),
         "mkdir" => cmd::mkdir::run(&args[1..]),
+        "archive" => cmd::archive::run(&args[1..]),
         "download" => cmd::download::run(&args[1..]),
         "upload" => cmd::upload::run(&args[1..]),
         "hash" => cmd::hash::run(&args[1..]),
@@ -69,6 +70,7 @@ fn entry() -> Result<()> {
         "tasks" => cmd::tasks::run(&args[1..]),
         "star" => cmd::star::run(&args[1..]),
         "unstar" => cmd::unstar::run(&args[1..]),
+        "search" => cmd::search::run(&args[1..]),
         "starred" => cmd::starred::run(&args[1..]),
         "events" => cmd::events::run(&args[1..]),
         "trash" => cmd::trash::run(&args[1..]),
@@ -107,12 +109,14 @@ fn cli_update_check(args: &[String]) -> Option<mpsc::Receiver<Option<String>>> {
         args.first().map(|s| s.as_str()),
         Some("hash" | "update" | "completions" | "__complete_path")
     );
-    let offline_stats = args.first().is_some_and(|cmd| cmd == "stats")
+    let cached_read = args
+        .first()
+        .is_some_and(|cmd| matches!(cmd.as_str(), "stats" | "search"))
         && args[1..]
             .iter()
             .take_while(|arg| arg.as_str() != "--")
             .any(|arg| arg == "--cached");
-    if skip || offline_stats {
+    if skip || cached_read {
         return None;
     }
 

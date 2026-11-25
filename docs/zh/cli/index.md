@@ -15,6 +15,7 @@ pikpaktui 提供 CLI 子命令，适合脚本和自动化。云端操作需要�
 | 命令 | 说明 |
 |------|------|
 | [`ls`](/zh/cli/commands#ls) | 列出文件和文件夹 |
+| [`search`](/zh/cli/commands#search) | 按目录、类型和大小搜索文件名 |
 | [`stats`](/zh/cli/commands#stats) | 查询单个目录的递归统计 |
 | [`mv`](/zh/cli/commands#mv) | 移动文件或文件夹 |
 | [`cp`](/zh/cli/commands#cp) | 复制文件或文件夹 |
@@ -36,6 +37,7 @@ pikpaktui 提供 CLI 子命令，适合脚本和自动化。云端操作需要�
 | 命令 | 说明 |
 |------|------|
 | [`download`](/zh/cli/commands#download) | 下载文件或文件夹 |
+| [`archive`](/zh/cli/commands#archive) | 浏览压缩包并在云端解压 |
 | [`upload`](/zh/cli/commands#upload) | 上传文件到 PikPak |
 | [`share`](/zh/cli/commands#share) | 创建、浏览、列出、保存或删除分享链接 |
 

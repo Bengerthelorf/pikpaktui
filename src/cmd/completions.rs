@@ -66,12 +66,14 @@ _pikpaktui() {
     local -a commands
     commands=(
         'ls:List files (colored grid; -l for long)'
+        'search:Search drive filenames'
         'stats:Recursive folder statistics'
         'mv:Move file(s) (-t for batch)'
         'cp:Copy file(s) (-t for batch)'
         'rename:Rename a file or folder'
         'rm:Remove to trash (-r folder, -f permanent)'
         'mkdir:Create folder (-p recursive)'
+        'archive:Browse or extract a cloud archive'
         'download:Download a file (-o output path)'
         'upload:Upload file(s) (-t for batch)'
         'share:Share file(s) as PikPak links'
@@ -115,6 +117,12 @@ _pikpaktui() {
                 _pikpaktui_cloud_path
             fi
             ;;
+        search)
+            if [[ "${words[CURRENT-1]}" == "--in" ]]; then _pikpaktui_cloud_path
+            elif [[ "${words[CURRENT-1]}" == "--type" ]]; then compadd -- file folder
+            elif [[ "${words[CURRENT]}" == -* ]]; then compadd -- --cached --in --type --min-size --max-size --limit --json -J
+            fi
+            ;;
         stats)
             if [[ "${words[CURRENT]}" == -* ]]; then
                 compadd -- '-J' '--json' '--cached' '--refresh' '--folder-id'
@@ -152,9 +160,22 @@ _pikpaktui() {
                 _pikpaktui_cloud_path
             fi
             ;;
+        archive)
+            if (( CURRENT == 3 )); then
+                compadd -- list extract progress
+            elif [[ "${words[CURRENT]}" == -* ]]; then
+                case "${words[3]}" in
+                    list) compadd -- --at --password-stdin -J --json ;;
+                    extract) compadd -- --all --member --at --password-stdin -J --json ;;
+                    progress) compadd -- -J --json ;;
+                esac
+            elif (( CURRENT == 4 )) && [[ "${words[3]}" != progress ]]; then
+                _pikpaktui_cloud_path
+            fi
+            ;;
         download)
             if [[ "${words[CURRENT]}" == -* ]]; then
-                compadd -- '-o' '--output' '-t' '-j' '--jobs' '-n' '--dry-run'
+                compadd -- '-o' '--output' '-t' '-j' '--jobs' '-n' '--dry-run' '--verify' '-J' '--json'
             elif [[ "${words[CURRENT-1]}" == "-o" ]] || [[ "${words[CURRENT-1]}" == "--output" ]] || [[ "${words[CURRENT-1]}" == "-t" ]]; then
                 _files
             else
@@ -179,7 +200,7 @@ _pikpaktui() {
             ;;
         share)
             if [[ "${words[CURRENT]}" == -* ]]; then
-                compadd -- '-p' '--password' '--pass-code' '-d' '--days' '-o' '-l' '--list' '-S' '--save' '-b' '--browse' '-D' '--delete' '-t' '--to' '--file-id' '--parent-id' '-J' '--json' '-n' '--dry-run'
+                compadd -- '-p' '--password' '--pass-code' '-d' '--days' '-o' '-l' '--list' '-S' '--save' '-b' '--browse' '--preview' '-D' '--delete' '-t' '--to' '--file-id' '--parent-id' '-J' '--json' '-n' '--dry-run'
             elif [[ "${words[CURRENT-1]}" == "--file-id" || "${words[CURRENT-1]}" == "--parent-id" ]]; then
                 return
             elif [[ "${words[CURRENT-1]}" == "-o" ]]; then
@@ -192,7 +213,7 @@ _pikpaktui() {
             ;;
         offline)
             if [[ "${words[CURRENT]}" == -* ]]; then
-                compadd -- '-t' '--to' '--name' '-p' '--preview' '-n' '--dry-run'
+                compadd -- '--stdin' '-J' '--json' '-t' '--to' '--name' '-p' '--preview' '-n' '--dry-run'
             elif [[ "${words[CURRENT-1]}" == "-t" ]] || [[ "${words[CURRENT-1]}" == "--to" ]]; then
                 _pikpaktui_cloud_path
             fi
@@ -206,6 +227,7 @@ _pikpaktui() {
                     'list:List offline tasks'
                     'ls:List offline tasks'
                     'show:Show one task'
+                    'statuses:Show individual task statuses'
                     'retry:Retry a failed task'
                     'delete:Delete task(s)'
                     'rm:Delete task(s)'
@@ -244,7 +266,7 @@ _pikpaktui() {
             [[ "${words[CURRENT]}" == -* ]] && compadd -- '-l' '--long' '-J' '--json'
             ;;
         events)
-            [[ "${words[CURRENT]}" == -* ]] && compadd -- '-J' '--json'
+            [[ "${words[CURRENT]}" == -* ]] && compadd -- '--play' '-J' '--json'
             ;;
         untrash)
             [[ "${words[CURRENT]}" == -* ]] && compadd -- '-n' '--dry-run'
@@ -335,7 +357,7 @@ _pikpaktui() {
     local cmd="${COMP_WORDS[1]}"
     COMPREPLY=()
 
-    local commands="ls stats mv cp rename rm mkdir download upload share offline tasks \
+    local commands="ls search stats mv cp rename rm mkdir download archive upload share offline tasks \
 star unstar starred events trash untrash empty info link cat play quota vip \
 whoami login hash update completions help version"
 
@@ -352,6 +374,12 @@ whoami login hash update completions help version"
                 COMPREPLY=($(compgen -W "name size created modified content-modified type extension none" -- "$cur"))
             else
                 _pikpaktui_cloud_path
+            fi
+            ;;
+        search)
+            if [[ "$prev" == "--in" ]]; then _pikpaktui_cloud_path
+            elif [[ "$prev" == "--type" ]]; then COMPREPLY=($(compgen -W "file folder" -- "$cur"))
+            elif [[ "$cur" == -* ]]; then COMPREPLY=($(compgen -W "--cached --in --type --min-size --max-size --limit --json -J" -- "$cur"))
             fi
             ;;
         stats)
@@ -389,9 +417,23 @@ whoami login hash update completions help version"
                 _pikpaktui_cloud_path
             fi
             ;;
+        archive)
+            if (( COMP_CWORD == 2 )); then
+                COMPREPLY=($(compgen -W "list extract progress" -- "$cur"))
+            elif [[ "$cur" == -* ]]; then
+                local flags="-J --json"
+                case "${COMP_WORDS[2]}" in
+                    list) flags+=" --at --password-stdin" ;;
+                    extract) flags+=" --all --member --at --password-stdin" ;;
+                esac
+                COMPREPLY=($(compgen -W "$flags" -- "$cur"))
+            elif (( COMP_CWORD == 3 )) && [[ "${COMP_WORDS[2]}" != progress ]]; then
+                _pikpaktui_cloud_path
+            fi
+            ;;
         download)
             if [[ "$cur" == -* ]]; then
-                COMPREPLY=($(compgen -W "-o --output -t -j --jobs -n --dry-run" -- "$cur"))
+                COMPREPLY=($(compgen -W "-o --output -t -j --jobs -n --dry-run --verify -J --json" -- "$cur"))
             elif [[ "$prev" == "-o" ]] || [[ "$prev" == "--output" ]] || [[ "$prev" == "-t" ]]; then
                 _pikpaktui_local_path
             else
@@ -416,7 +458,7 @@ whoami login hash update completions help version"
             ;;
         share)
             if [[ "$cur" == -* ]]; then
-                COMPREPLY=($(compgen -W "-p --password --pass-code -d --days -o -l --list -S --save -b --browse -D --delete -t --to --file-id --parent-id -J --json -n --dry-run" -- "$cur"))
+                COMPREPLY=($(compgen -W "-p --password --pass-code -d --days -o -l --list -S --save -b --browse --preview -D --delete -t --to --file-id --parent-id -J --json -n --dry-run" -- "$cur"))
             elif [[ "$prev" == "--file-id" || "$prev" == "--parent-id" ]]; then
                 return 0
             elif [[ "$prev" == "-o" ]]; then
@@ -429,7 +471,7 @@ whoami login hash update completions help version"
             ;;
         offline)
             if [[ "$cur" == -* ]]; then
-                COMPREPLY=($(compgen -W "-t --to --name -p --preview -n --dry-run" -- "$cur"))
+                COMPREPLY=($(compgen -W "--stdin -J --json -t --to --name -p --preview -n --dry-run" -- "$cur"))
             elif [[ "$prev" == "-t" ]] || [[ "$prev" == "--to" ]]; then
                 _pikpaktui_cloud_path
             fi
@@ -438,7 +480,7 @@ whoami login hash update completions help version"
             if [[ "$cur" == -* ]]; then
                 COMPREPLY=($(compgen -W "-J --json -n --dry-run" -- "$cur"))
             elif [[ ${COMP_CWORD} -eq 2 ]]; then
-                COMPREPLY=($(compgen -W "list ls show retry delete rm" -- "$cur"))
+                COMPREPLY=($(compgen -W "list ls show statuses retry delete rm" -- "$cur"))
             fi
             ;;
         star|unstar)
@@ -472,7 +514,7 @@ whoami login hash update completions help version"
             ;;
         events)
             if [[ "$cur" == -* ]]; then
-                COMPREPLY=($(compgen -W "-J --json" -- "$cur"))
+                COMPREPLY=($(compgen -W "--play -J --json" -- "$cur"))
             fi
             ;;
         untrash)
@@ -546,17 +588,35 @@ end
 complete -c pikpaktui -f
 
 # Top-level commands
-set -l subcommands ls stats mv cp rename rm mkdir download upload share offline tasks \
+set -l subcommands ls search stats mv cp rename rm mkdir download archive upload share offline tasks \
     star unstar starred events trash untrash empty info link cat play quota vip \
     whoami login hash update completions help version
 
 complete -c pikpaktui -n "not __fish_seen_subcommand_from $subcommands" -a ls         -d "List files"
+complete -c pikpaktui -n "not __fish_seen_subcommand_from $subcommands" -a search -d "Search filenames"
+complete -c pikpaktui -n "__pikpaktui_using_command search" -l in -r -a "(__pikpaktui_cloud_path)"
+complete -c pikpaktui -n "__pikpaktui_using_command search" -l type -r -a "file folder"
+complete -c pikpaktui -n "__pikpaktui_using_command search" -l min-size -r
+complete -c pikpaktui -n "__pikpaktui_using_command search" -l max-size -r
+complete -c pikpaktui -n "__pikpaktui_using_command search" -l cached
+complete -c pikpaktui -n "__pikpaktui_using_command search" -l limit -r
+complete -c pikpaktui -n "__pikpaktui_using_command search" -s J -l json
+complete -c pikpaktui -n "__pikpaktui_using_command offline" -l stdin
+complete -c pikpaktui -n "__pikpaktui_using_command offline" -s J -l json
+complete -c pikpaktui -n "__pikpaktui_using_command events" -l play
 complete -c pikpaktui -n "not __fish_seen_subcommand_from $subcommands" -a stats -d "Recursive folder statistics"
 complete -c pikpaktui -n "not __fish_seen_subcommand_from $subcommands" -a mv         -d "Move files"
 complete -c pikpaktui -n "not __fish_seen_subcommand_from $subcommands" -a cp         -d "Copy files"
 complete -c pikpaktui -n "not __fish_seen_subcommand_from $subcommands" -a rename     -d "Rename file"
 complete -c pikpaktui -n "not __fish_seen_subcommand_from $subcommands" -a rm         -d "Remove to trash"
 complete -c pikpaktui -n "not __fish_seen_subcommand_from $subcommands" -a mkdir      -d "Create folder"
+complete -c pikpaktui -n "not __fish_seen_subcommand_from $subcommands" -a archive    -d "Browse or extract archives"
+complete -c pikpaktui -n "__pikpaktui_using_command archive; and not __fish_seen_subcommand_from list extract progress" -a 'list extract progress'
+complete -c pikpaktui -n "__pikpaktui_using_command archive; and __fish_seen_subcommand_from list extract" -l at -r -d "Archive directory path"
+complete -c pikpaktui -n "__pikpaktui_using_command archive; and __fish_seen_subcommand_from list extract" -l password-stdin -d "Read password from standard input"
+complete -c pikpaktui -n "__pikpaktui_using_command archive; and __fish_seen_subcommand_from extract" -l member -r -d "Select member path"
+complete -c pikpaktui -n "__pikpaktui_using_command archive; and __fish_seen_subcommand_from extract" -l all -d "Extract whole archive"
+complete -c pikpaktui -n "__pikpaktui_using_command archive" -s J -l json -d "Print JSON"
 complete -c pikpaktui -n "not __fish_seen_subcommand_from $subcommands" -a download   -d "Download files"
 complete -c pikpaktui -n "not __fish_seen_subcommand_from $subcommands" -a upload     -d "Upload files"
 complete -c pikpaktui -n "not __fish_seen_subcommand_from $subcommands" -a share      -d "Share files"
@@ -624,6 +684,8 @@ complete -c pikpaktui -n "__pikpaktui_using_command rm" -s n -l dry-run -d "Prev
 complete -c pikpaktui -n "__pikpaktui_using_command mkdir" -s p -d "Create intermediate directories"
 complete -c pikpaktui -n "__pikpaktui_using_command download" -s o -l output -d "Output file"
 complete -c pikpaktui -n "__pikpaktui_using_command download; or __pikpaktui_using_command upload" -s t -d "Batch destination"
+complete -c pikpaktui -n "__pikpaktui_using_command download" -s J -l json -d "Per-file download results"
+complete -c pikpaktui -n "__pikpaktui_using_command download" -l verify -d "Check download GCID"
 complete -c pikpaktui -n "__pikpaktui_using_command download" -s j -l jobs -d "Concurrent downloads"
 
 # Share and cloud-download options
@@ -634,6 +696,7 @@ complete -c pikpaktui -n "__pikpaktui_using_command share" -s o -d "Write share 
 complete -c pikpaktui -n "__pikpaktui_using_command share" -s l -l list -d "List shares"
 complete -c pikpaktui -n "__pikpaktui_using_command share" -s S -l save -d "Save a share"
 complete -c pikpaktui -n "__pikpaktui_using_command share" -s b -l browse -d "Browse a share"
+complete -c pikpaktui -n "__pikpaktui_using_command share" -l preview -d "Preview a shared file"
 complete -c pikpaktui -n "__pikpaktui_using_command share" -s D -l delete -d "Delete shares"
 complete -c pikpaktui -n "__pikpaktui_using_command share" -l file-id -r -d "Select a shared file ID (repeatable)"
 complete -c pikpaktui -n "__pikpaktui_using_command share" -l parent-id -r -d "Source folder ID inside the share"
@@ -646,7 +709,7 @@ complete -c pikpaktui -n "__pikpaktui_using_command offline" -s p -l preview -d 
 complete -c pikpaktui -n "__pikpaktui_using_command offline" -s n -l dry-run -d "Preview without creating"
 
 # tasks subcommands
-complete -c pikpaktui -n "__pikpaktui_using_command tasks" -a "list ls show retry delete rm"
+complete -c pikpaktui -n "__pikpaktui_using_command tasks" -a "list ls show statuses retry delete rm"
 complete -c pikpaktui -n "__pikpaktui_using_command tasks" -s J -l json -d "JSON output"
 complete -c pikpaktui -n "__pikpaktui_using_command tasks" -s n -l dry-run -d "Preview without executing"
 
@@ -737,7 +800,7 @@ Register-ArgumentCompleter -Native -CommandName @('pikpaktui') -ScriptBlock {
     }
 
     $allCommands = @(
-        'ls','stats','mv','cp','rename','rm','mkdir','download','upload','share',
+        'ls','search','stats','mv','cp','rename','rm','mkdir','download','archive','upload','share',
         'offline','tasks','star','unstar','starred','events','trash','untrash',
         'empty','info','link','cat','play','quota','vip','whoami','login',
         'hash','update','completions','help','version'
@@ -759,6 +822,18 @@ Register-ArgumentCompleter -Native -CommandName @('pikpaktui') -ScriptBlock {
                     [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
                 }
         }
+        "archive" {
+            $candidates = if ($wordToComplete.StartsWith('-')) {
+                switch ($elements[2].Extent.Text) {
+                    'list' { @('--at','--password-stdin','-J','--json') }
+                    'extract' { @('--all','--member','--at','--password-stdin','-J','--json') }
+                    default { @('-J','--json') }
+                }
+            } else { @('list','extract','progress') }
+            $candidates | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
+                [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
+            }
+        }
         "hash" {
             if ($wordToComplete.StartsWith('-') -and $previous -ne '--') {
                 @('-J','--json','--') | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
@@ -772,7 +847,7 @@ Register-ArgumentCompleter -Native -CommandName @('pikpaktui') -ScriptBlock {
             $candidates = if ($wordToComplete.StartsWith('-')) {
                 @('-J','--json','-n','--dry-run')
             } else {
-                @('list','ls','show','retry','delete','rm')
+                @('list','ls','show','statuses','retry','delete','rm')
             }
             $candidates |
                 Where-Object { $_ -like "$wordToComplete*" } |
@@ -780,21 +855,22 @@ Register-ArgumentCompleter -Native -CommandName @('pikpaktui') -ScriptBlock {
                     [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
                 }
         }
-        { $_ -in @('ls','stats','mv','cp','rename','rm','mkdir','download','upload',
+        { $_ -in @('ls','search','stats','mv','cp','rename','rm','mkdir','download','upload',
                     'share','offline','star','unstar','info','link','cat','play','trash') } {
             if ($wordToComplete.StartsWith('-')) {
                 $opts = switch ($command) {
                     'ls'       { @('-l','--long','-J','--json','-s','--sort','-r','--reverse','--folder-stats','--no-folder-stats','--tree','--depth') }
+                    'search'   { @('--cached','--in','--type','--min-size','--max-size','--limit','-J','--json') }
                     'stats'    { @('-J','--json','--cached','--refresh','--folder-id') }
                     'mv'       { @('-t','-n','--dry-run') }
                     'cp'       { @('-t','-n','--dry-run') }
                     'rename'   { @('-n','--dry-run') }
                     'rm'       { @('-r','--recursive','-f','--force','-rf','-fr','-n','--dry-run') }
                     'mkdir'    { @('-p','-n','--dry-run') }
-                    'download' { @('-o','--output','-t','-j','--jobs','-n','--dry-run') }
+                    'download' { @('-o','--output','-t','-j','--jobs','-n','--dry-run','--verify','-J','--json') }
                     'upload'   { @('-t','-n','--dry-run') }
-                    'share'    { @('-p','--password','--pass-code','-d','--days','-o','-l','--list','-S','--save','-b','--browse','-D','--delete','-t','--to','--file-id','--parent-id','-J','--json','-n','--dry-run') }
-                    'offline'  { @('-t','--to','--name','-p','--preview','-n','--dry-run') }
+                    'share'    { @('-p','--password','--pass-code','-d','--days','-o','-l','--list','-S','--save','-b','--browse','--preview','-D','--delete','-t','--to','--file-id','--parent-id','-J','--json','-n','--dry-run') }
+                    'offline'  { @('--stdin','-J','--json','-t','--to','--name','-p','--preview','-n','--dry-run') }
                     'star'     { @('-n','--dry-run') }
                     'unstar'   { @('-n','--dry-run') }
                     'info'     { @('-J','--json') }
@@ -805,6 +881,12 @@ Register-ArgumentCompleter -Native -CommandName @('pikpaktui') -ScriptBlock {
                 $opts | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
                     [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
                 }
+            } elseif ($command -eq 'search' -and $previous -eq '--type') {
+                @('file','folder') | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
+                    [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
+                }
+            } elseif ($command -eq 'search' -and $previous -ne '--in') {
+                return
             } elseif ($command -eq 'stats' -and ($previous -eq '--folder-id' -or '--cached' -in $elements.Extent.Text)) {
                 return
             } elseif ($command -eq 'ls' -and $previous -in @('-s','--sort')) {
@@ -831,7 +913,7 @@ Register-ArgumentCompleter -Native -CommandName @('pikpaktui') -ScriptBlock {
         { $_ -in @('starred','events','untrash') } {
             $opts = switch ($command) {
                 'starred' { @('-l','--long','-J','--json') }
-                'events'  { @('-J','--json') }
+                'events'  { @('--play','-J','--json') }
                 'untrash' { @('-n','--dry-run') }
             }
             $opts |

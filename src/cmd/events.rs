@@ -6,11 +6,13 @@ pub fn run(args: &[String]) -> Result<()> {
     let config = super::cli_config();
     let nerd_font = config.cli_nerd_font;
 
+    let mut playback = false;
     let mut json = false;
     let mut limit = 20u32;
 
     for arg in args {
         match arg.as_str() {
+            "--play" => playback = true,
             "-J" | "--json" => json = true,
             other => {
                 limit = other.parse::<u32>().map_err(|_| {
@@ -23,7 +25,11 @@ pub fn run(args: &[String]) -> Result<()> {
     }
 
     let spinner = super::Spinner::new("Fetching events...");
-    let resp = client.events(limit)?;
+    let resp = if playback {
+        client.list_events(limit, true)?
+    } else {
+        client.events(limit)?
+    };
     drop(spinner);
 
     if json {
@@ -63,7 +69,10 @@ pub fn run(args: &[String]) -> Result<()> {
                 t if t.contains("RENAME") || t.contains("MOVE") || t.contains("COPY") => "33",
                 _ => "33",
             };
-            let name = ev.file_name.as_deref().unwrap_or("?").to_string();
+            let mut name = ev.display_name().to_owned();
+            if playback && let Some(position) = ev.playback_position() {
+                name.push_str(&format!("  [{position}]"));
+            }
             let is_folder = ev
                 .reference_resource
                 .as_ref()

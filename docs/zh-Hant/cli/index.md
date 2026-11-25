@@ -15,6 +15,7 @@ pikpaktui 提供 CLI 子指令，適合腳本與自動化。雲端操作需要�
 | 指令 | 說明 |
 |------|------|
 | [`ls`](/zh-Hant/cli/commands#ls) | 列出檔案與資料夾 |
+| [`search`](/zh-Hant/cli/commands#search) | 依目錄、類型及大小搜尋檔名 |
 | [`stats`](/zh-Hant/cli/commands#stats) | 查詢單一資料夾的遞迴統計 |
 | [`mv`](/zh-Hant/cli/commands#mv) | 移動檔案或資料夾 |
 | [`cp`](/zh-Hant/cli/commands#cp) | 複製檔案或資料夾 |
@@ -36,6 +37,7 @@ pikpaktui 提供 CLI 子指令，適合腳本與自動化。雲端操作需要�
 | 指令 | 說明 |
 |------|------|
 | [`download`](/zh-Hant/cli/commands#download) | 下載檔案或資料夾 |
+| [`archive`](/zh-Hant/cli/commands#archive) | 瀏覽壓縮檔並在雲端解壓縮 |
 | [`upload`](/zh-Hant/cli/commands#upload) | 上傳檔案至 PikPak |
 | [`share`](/zh-Hant/cli/commands#share) | 建立、瀏覽、列出、儲存或刪除分享連結 |
 

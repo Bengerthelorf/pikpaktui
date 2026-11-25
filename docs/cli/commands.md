@@ -49,6 +49,14 @@ pikpaktui ls /Movies --json | jq '.[] | select(.size > 1073741824)'
 
 ---
 
+## search
+
+Search the account’s filenames. Matches ignore case. Use `--in` to search below a folder and `--type file|folder` to select the kind. The minimum and maximum sizes are inclusive byte counts. Folder sizes include their descendants. Each result contains the stable ID and full path. The default limit is 100. Use `--cached` to search the last complete snapshot offline.
+
+```sh
+pikpaktui search 模型 --in /Research --type file --min-size 1024 --limit 50 -J
+```
+
 ## stats
 
 Query one folder by path or PikPak ID. Omit the target for the drive root. The default query synchronizes the account index, using a complete scan the first time and deltas on subsequent queries. Accounts or services that cannot supply an index use a normal recursive listing.
@@ -301,6 +309,8 @@ pikpaktui download [options] -t <local_dir> <path...>
 |------|-------------|
 | `-o`, `--output <file>` | Custom output filename (single file only) |
 | `-t <local_dir>` | Batch mode — download multiple items into `<local_dir>` |
+| `-J`, `--json` | Print a JSON object with a `files` array and a failure count. Each file reports its status, destination and verification result. A failed download produces a nonzero exit status. |
+| `--verify` | Verify each file against its GCID before publishing the download. A missing GCID is reported. |
 | `-j`, `--jobs <n>` | Concurrent files within recursive folder downloads (1–16; default: 1) |
 | `-n`, `--dry-run` | Preview without downloading |
 
@@ -320,6 +330,20 @@ pikpaktui download -n "/My Pack/folder"                 # dry run
 :::
 
 ---
+
+## archive
+
+List archive members, extract selected paths or a whole archive into PikPak’s default cloud destination, and check a task.
+
+```bash
+pikpaktui archive list /backup.zip
+pikpaktui archive list /backup.zip --at photos
+pikpaktui archive extract /backup.zip --at photos --member photos/image.jpg
+pikpaktui archive extract /backup.zip --all
+pikpaktui archive progress <task-id>
+```
+
+Use the exact member path shown by `list`, repeat `--member` for each selection, and use `--at` to list or select within a directory. Add `--password-stdin` to read an archive password from standard input. All three commands support `-J` for JSON output.
 
 ## upload
 
@@ -369,8 +393,18 @@ pikpaktui share -D <id...>               # delete share(s)
 |------|-------------|
 | `-p`, `--password` | Auto-generate a password for the share |
 | `-d`, `--days <n>` | Expiry in days; `-1` = permanent (default) |
+| `--separate` | Create one link for each path. JSON output is an array with the source path for each link. |
+| `--view <layout>`, `--order <sort>` | Set how the recipient sees the link. Layouts are list, grid and flow. Sort by name, mod or size with an _asc or _desc suffix. |
 | `-o <file>` | Write share URL to a file |
 | `-J`, `--json` | JSON output: `{share_id, share_url, pass_code}` |
+
+Use `pikpaktui share --manage help` for editing, short codes, sharing status, follows and updates.
+
+```sh
+pikpaktui share --separate -d 7 --view grid /A /B
+pikpaktui share --manage updates SHARE_ID
+pikpaktui share --manage save-update SHARE_ID 42 --file-id FILE_ID -t /Saved --dry-run
+```
 
 **Save options (with `-S`):**
 
@@ -412,7 +446,7 @@ pikpaktui share -S -n "https://mypikpak.com/s/XXXX"           # dry run
 
 **Selecting shared files:**
 
-`--parent-id <id>` selects the source folder for browse or save. `--file-id <id>` selects an immediate entry in that folder for save; repeat it to select several. Obtain IDs from browse JSON. Missing or ambiguous IDs fail before saving. Repeated IDs are saved once. Without `--file-id`, all entries in the selected source folder are saved; without `--parent-id`, that folder is the share root. A browse name path and `--parent-id` cannot be combined.
+`--parent-id <id>` selects the source folder for browse or save. `--file-id <id>` selects an immediate entry in that folder for save; repeat it to select several. Obtain IDs from browse JSON. Missing or ambiguous IDs fail before saving. Repeated IDs are saved once. Without `--file-id`, all entries in the selected source folder are saved; without `--parent-id`, the URL selects the source folder. A browse name path and `--parent-id` cannot be combined.
 
 ```bash
 pikpaktui share -b -J "https://mypikpak.com/s/XXXX"
@@ -423,12 +457,19 @@ pikpaktui share -S --parent-id FOLDER_ID --file-id FILE_ID -t /Downloads "https:
 
 A successful save confirms that restoration has completed and the selected files have been placed in `--to` (the drive root by default). If completion or placement cannot be confirmed, the command reports an error with the available task/file IDs. Check those results before retrying: files may already have been restored.
 
-Deep web URLs such as `/s/XXXX/folder/file` are rejected instead of silently saving the entire share. Use the root share URL with explicit IDs. `-n -J` returns a JSON preview with `dry_run`, `would_save`, `to`, and `files`; it performs no save. Recursive traversal and save/download/delete workflows can be composed in scripts.
+Paste a folder link copied from PikPak Web directly. Each folder in the URL is verified against its parent. Run `share --preview --file-id FILE_ID -J <url>` for file metadata, duration and stream availability. `-n -J` returns a JSON preview with `dry_run`, `would_save`, `to`, and `files`; it performs no save. Recursive traversal and save/download/delete workflows can be composed in scripts.
 
 
 ---
 
 ## offline
+
+Read independent links from standard input, one per line. JSON records each unique input, including individual errors. A failure sets a nonzero exit status after processing the batch.
+
+```sh
+pikpaktui offline --stdin --preview -J < links.txt
+pikpaktui offline --stdin --to /Downloads -J < links.txt
+```
 
 Submit a URL or magnet link for server-side (cloud) downloading. The download runs on PikPak's servers.
 
@@ -456,6 +497,8 @@ pikpaktui offline --dry-run "magnet:?xt=..."
 ---
 
 ## tasks
+
+`pikpaktui tasks statuses <id> -J` — Show individual statuses returned by the service across all pages.
 
 Manage offline download tasks.
 
@@ -621,6 +664,8 @@ pikpaktui starred --json
 ---
 
 ## events
+
+`pikpaktui events --play -J 50` — Show recently watched files.
 
 List recent file activity (uploads, downloads, deletions, etc.).
 

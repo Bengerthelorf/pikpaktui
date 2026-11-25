@@ -47,6 +47,8 @@ pub struct MediaInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileInfoResponse {
     #[serde(default)]
+    pub parent_id: Option<String>,
+    #[serde(default)]
     pub phase: Option<String>,
     #[serde(default)]
     pub audit: Option<serde_json::Value>,

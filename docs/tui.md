@@ -55,8 +55,10 @@ restores its cursor and scroll position.
 | `A` | Open cart view |
 | `D` | Open downloads view |
 | `M` | Open my shares view |
-| `o` | Offline download — enter URL or magnet link |
-| `O` | Offline tasks view |
+| `/` | Search filenames. Tab switches between the entire drive and the current folder. Use ↑/↓ to enter byte limits and Ctrl+t to cycle file type. Enter locates a match and `a` toggles its cart selection. |
+| `F` / `H` / `P` | Browse starred files, recent activity, or recently watched files. Enter locates an item and `n` loads another page. |
+| `o` | Paste links, preview them, select with Space and submit with Enter. |
+| `O` | Offline tasks. Enter locates a completed file and `i` opens its individual statuses. |
 | `t` | Trash view |
 | `Space` | File/folder info popup |
 | `p` | Preview file content (text preview / fetch listing) |
@@ -160,9 +162,13 @@ used for move/copy add these controls:
 | `Ctrl+B` | Switch back to folder picker |
 | `Esc` | Close completions first, then cancel |
 
+## Cloud archives
+
+On an archive file, press `Z` to browse its contents. Open folders with `Enter`, go up with `Backspace`, and mark members in the current directory with `Space`. Press `x` to extract the marked items or current row, or `A` for the whole archive. Confirm with `Enter`. The view prompts for encrypted archives and shows the task ID and progress.
+
 ## Cart View
 
-Add multiple files with `a`, then batch-download, move, copy, or share them all at once.
+Add multiple files or folders with `a`. Downloads preserve their directory hierarchy. Overlapping selections are downloaded once.
 
 ![Cart view](/images/cart.png)
 
@@ -170,7 +176,8 @@ Add multiple files with `a`, then batch-download, move, copy, or share them all 
 |-----|--------|
 | `j` / `k` | Navigate |
 | `x` / `d` | Remove selected item from cart |
-| `a` | Clear all items |
+| `C` | Clear all items |
+| `v` | Toggle GCID verification for new downloads |
 | `Enter` | Download all — prompts for local destination |
 | `m` | Move all items (folder picker) |
 | `c` | Copy all items (folder picker) |
@@ -190,6 +197,7 @@ Press `D` to open the download manager. Active downloads show progress in real t
 | `j` / `k` | Navigate tasks |
 | `Enter` | Toggle collapsed / expanded view |
 | `p` | Pause / resume selected task |
+| `P` / `R` | Pause / resume the entire queue |
 | `x` | Cancel and remove selected task |
 | `r` | Retry a failed task |
 | `Esc` | Close (downloads continue in background) |
@@ -262,7 +270,15 @@ to return to editing.
 
 Settings include: Nerd Font, border style, color scheme (with custom RGB editor), help bar, quota bar style, show preview, lazy preview, preview max size, thumbnail mode, image protocols, sort field, reverse order, move mode, CLI Nerd Font, player command, default playback quality, concurrent download jobs. Also available: column count, minimum column width, inline thumbnails, inline thumbnail size, thumbnail placeholders, and server thumbnail source size (applied after saving).
 
+## Open a share
+
+Press `I` and paste a share link. Use `Tab` to enter an optional pass code and `Enter` to open it. Press `Enter` on a folder to browse or on a file to inspect its details and thumbnail. Video details include duration and available stream qualities. `Space` marks entries in the current folder. Press `s` to save the marked entries (or the highlighted entry) and enter the destination drive path.
+
 ## My Shares View
+
+In the file browser, `Y` checks the sharing status of the selected item. In the cart, press `s` to configure sharing. Press `g` to switch between one link per item and one link for the whole cart. Type the expiry in days, then press `p` for a public link or `P` for a password. Leave the expiry blank for a permanent link.
+
+In My Shares, press `e` to change expiration, `b` to allow or forbid follows, `p` to change the password, or `Y` to copy a link with a layout and sort order. Use `c` to resolve a short code, `C` to add, rename or remove its codes with `a`, `e` and `d`, `f` for followed shares and `v` for updates. Open an update with Enter, mark files with Space and press `s` to choose a destination folder and save the selection.
 
 Press `M` to open your share history.
 

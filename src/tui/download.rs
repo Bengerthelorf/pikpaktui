@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 
-use crate::pikpak::PikPak;
+use crate::pikpak::{PikPak, Verification};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TaskStatus {
@@ -31,6 +31,8 @@ pub struct DownloadTask {
     pub downloaded: u64,
     pub dest_path: PathBuf,
     pub status: TaskStatus,
+    pub verify: bool,
+    pub verification: Verification,
     /// Tells the worker to stop. Pausing also sets this (the worker exits and
     /// frees its slot); resume swaps in a fresh flag and re-queues the task,
     /// which restarts from the partial file via Range.
@@ -46,6 +48,7 @@ pub enum DownloadMsg {
     },
     Done {
         id: u64,
+        verification: Verification,
     },
     Failed {
         id: u64,
@@ -75,6 +78,9 @@ pub struct DownloadState {
     /// name family must remain reserved until the worker acknowledges exit.
     retired_destinations: HashMap<u64, PathBuf>,
     pub max_concurrent: usize,
+    pub planning: bool,
+    pub verify_new: bool,
+    pub queue_paused: bool,
     next_id: u64,
 }
 
@@ -95,6 +101,9 @@ impl DownloadState {
             active_ids: HashSet::new(),
             retired_destinations: HashMap::new(),
             max_concurrent: max_concurrent.max(1),
+            planning: false,
+            verify_new: false,
+            queue_paused: false,
             next_id: 0,
         }
     }
@@ -124,9 +133,11 @@ impl DownloadState {
     }
 
     pub fn has_active(&self) -> bool {
-        self.tasks
-            .iter()
-            .any(|t| matches!(t.status, TaskStatus::Downloading | TaskStatus::Pending))
+        self.planning
+            || self
+                .tasks
+                .iter()
+                .any(|t| matches!(t.status, TaskStatus::Downloading | TaskStatus::Pending))
     }
 
     /// Remove a cancellable task without freeing a live worker's slot. The
@@ -163,17 +174,35 @@ impl DownloadState {
             .iter()
             .map(|task| &task.dest_path)
             .chain(self.retired_destinations.values())
-            .filter(|path| path.parent() == Some(directory))
-            .filter_map(|path| {
-                path.file_name()
-                    .map(|name| name.to_string_lossy().into_owned())
-            })
+            .filter_map(|path| path.strip_prefix(directory).ok()?.iter().next())
+            .map(|name| name.to_string_lossy().to_lowercase())
             .flat_map(|name| destination_name_family(&name))
             .collect()
     }
 
+    pub fn set_queue_paused(&mut self, paused: bool) {
+        self.queue_paused = paused;
+        for task in &mut self.tasks {
+            match (&task.status, paused) {
+                (TaskStatus::Pending | TaskStatus::Downloading, true) => {
+                    task.cancel_flag.store(true, Ordering::Relaxed);
+                    task.speed = 0.0;
+                    task.status = TaskStatus::Paused;
+                }
+                (TaskStatus::Paused, false) => {
+                    task.cancel_flag = Arc::new(AtomicBool::new(false));
+                    task.status = TaskStatus::Pending;
+                }
+                _ => {}
+            }
+        }
+    }
+
     /// Start pending tasks up to max_concurrent slots.
     pub fn start_next(&mut self, client: &Arc<PikPak>) {
+        if self.queue_paused {
+            return;
+        }
         loop {
             let active = self.active_ids.len();
             if active >= self.max_concurrent {
@@ -194,6 +223,7 @@ impl DownloadState {
                         id,
                         self.tasks[idx].file_id.clone(),
                         self.tasks[idx].dest_path.clone(),
+                        self.tasks[idx].verify,
                         self.msg_tx.clone(),
                         Arc::clone(&self.tasks[idx].cancel_flag),
                     );
@@ -231,9 +261,10 @@ impl DownloadState {
                         task.speed = speed;
                     }
                 }
-                DownloadMsg::Done { id } => {
+                DownloadMsg::Done { id, verification } => {
                     if let Some(task) = self.tasks.iter_mut().find(|t| t.id == id) {
                         task.status = TaskStatus::Done;
+                        task.verification = verification;
                         if task.total_size > 0 {
                             task.downloaded = task.total_size;
                         } else {
@@ -241,7 +272,11 @@ impl DownloadState {
                             // so the summary doesn't show "0 B (0%)".
                             task.total_size = task.downloaded;
                         }
-                        logs.push(format!("Downloaded '{}'", task.name));
+                        logs.push(format!(
+                            "Downloaded '{}'{}",
+                            task.name,
+                            verification.suffix()
+                        ));
                     }
                     self.active_ids.remove(&id);
                     self.retired_destinations.remove(&id);
@@ -272,11 +307,17 @@ fn spawn_download_worker(
     id: u64,
     file_id: String,
     dest: PathBuf,
+    verify: bool,
     msg_tx: Sender<DownloadMsg>,
     cancel_flag: Arc<AtomicBool>,
 ) {
     std::thread::spawn(move || {
-        if let Err(e) = download_worker(&client, id, &file_id, &dest, &msg_tx, &cancel_flag) {
+        if let Err(e) = download_worker(&client, id, &file_id, &dest, verify, &msg_tx, &cancel_flag)
+        {
+            if cancel_flag.load(Ordering::Relaxed) {
+                let _ = msg_tx.send(DownloadMsg::Stopped { id });
+                return;
+            }
             let _ = msg_tx.send(DownloadMsg::Failed {
                 id,
                 error: format!("{e:#}"),
@@ -290,6 +331,7 @@ fn download_worker(
     id: u64,
     file_id: &str,
     dest: &Path,
+    verify: bool,
     msg_tx: &Sender<DownloadMsg>,
     cancel_flag: &Arc<AtomicBool>,
 ) -> anyhow::Result<()> {
@@ -297,7 +339,12 @@ fn download_worker(
         let _ = msg_tx.send(DownloadMsg::Stopped { id });
         return Ok(());
     }
-    let (mut url, total_size) = client.download_url(file_id)?;
+    let info = client.file_info(file_id)?;
+    let mut url = info
+        .download_url()
+        .ok_or_else(|| anyhow::anyhow!("no download link for file {file_id}"))?
+        .to_owned();
+    let total_size = info.file_size();
 
     let _ = msg_tx.send(DownloadMsg::Started { id, total_size });
 
@@ -315,10 +362,22 @@ fn download_worker(
         let _ = msg_tx.send(DownloadMsg::Stopped { id });
         return Ok(());
     }
+    let finish = || {
+        let verification =
+            crate::pikpak::verify_partial_download(&part, verify, info.hash.as_deref(), || {
+                anyhow::ensure!(!cancel_flag.load(Ordering::Relaxed), "Download stopped");
+                Ok(())
+            })?;
+        if cancel_flag.load(Ordering::Relaxed) {
+            let _ = msg_tx.send(DownloadMsg::Stopped { id });
+        } else {
+            crate::pikpak::finish_partial_download(dest, &part)?;
+            let _ = msg_tx.send(DownloadMsg::Done { id, verification });
+        }
+        Ok(())
+    };
     if total_size > 0 && initial_part_size == total_size {
-        crate::pikpak::finish_partial_download(dest, &part)?;
-        let _ = msg_tx.send(DownloadMsg::Done { id });
-        return Ok(());
+        return finish();
     }
 
     let mut renewed = false;
@@ -353,14 +412,12 @@ fn download_worker(
         let _ = msg_tx.send(DownloadMsg::Stopped { id });
         return Ok(());
     }
-    crate::pikpak::finish_partial_download(dest, &part)?;
     let _ = msg_tx.send(DownloadMsg::Progress {
         id,
         downloaded,
         speed: 0.0,
     });
-    let _ = msg_tx.send(DownloadMsg::Done { id });
-    Ok(())
+    finish()
 }
 
 /// One transfer pass into the .part file. Returns `None` when cancelled,
@@ -438,6 +495,8 @@ struct PersistedTask {
     total_size: u64,
     downloaded: u64,
     dest_path: String,
+    #[serde(default)]
+    verify: bool,
     status: String, // "pending", "paused", "failed" (Done tasks aren't persisted)
 }
 
@@ -456,6 +515,7 @@ pub fn save_download_state(tasks: &[DownloadTask]) {
         .filter(|t| !matches!(t.status, TaskStatus::Done))
         .map(|t| PersistedTask {
             file_id: t.file_id.clone(),
+            verify: t.verify,
             name: t.name.clone(),
             total_size: t.total_size,
             downloaded: t.downloaded,
@@ -510,6 +570,8 @@ pub fn load_download_state() -> Vec<DownloadTask> {
             DownloadTask {
                 id: 0, // reassigned by DownloadState::load_tasks
                 file_id: p.file_id,
+                verify: p.verify,
+                verification: Verification::Unchecked,
                 name: p.name,
                 total_size: p.total_size,
                 downloaded: p.downloaded,
@@ -535,6 +597,8 @@ mod tests {
             downloaded: 0,
             dest_path: PathBuf::from(name),
             status: TaskStatus::Downloading,
+            verify: false,
+            verification: Verification::Unchecked,
             cancel_flag: Arc::new(AtomicBool::new(false)),
             speed: 0.0,
         }
@@ -579,6 +643,36 @@ mod tests {
     // Resuming a still-parked worker must not spawn a second one. The backstop:
     // start_next skips any Pending task whose id already has a live worker, so it
     // never starts a duplicate (which would write the same file twice).
+    #[test]
+    fn pause_and_resume_whole_queue_preserve_live_worker_and_failed_tasks() {
+        let mut state = DownloadState::new(2);
+        state.tasks = vec![
+            downloading_task(1, "running"),
+            downloading_task(2, "waiting"),
+            downloading_task(3, "failed"),
+        ];
+        state.tasks[1].status = TaskStatus::Pending;
+        state.tasks[2].status = TaskStatus::Failed("offline".into());
+        let old_flag = Arc::clone(&state.tasks[0].cancel_flag);
+        state.active_ids.insert(1);
+        state.set_queue_paused(true);
+        assert!(
+            state.tasks[..2]
+                .iter()
+                .all(|t| t.status == TaskStatus::Paused)
+        );
+        state.set_queue_paused(false);
+        assert!(
+            state.tasks[..2]
+                .iter()
+                .all(|t| t.status == TaskStatus::Pending)
+        );
+        assert!(old_flag.load(Ordering::Relaxed));
+        assert!(!state.tasks[0].cancel_flag.load(Ordering::Relaxed));
+        assert!(state.active_ids.contains(&1));
+        assert!(matches!(&state.tasks[2].status, TaskStatus::Failed(_)));
+    }
+
     #[test]
     fn start_next_skips_ids_with_a_live_worker() {
         let client = Arc::new(PikPak::new().unwrap());

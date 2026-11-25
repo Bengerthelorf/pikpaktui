@@ -1,4 +1,6 @@
 mod account;
+#[cfg(not(pikpak_android_jni))]
+pub(crate) mod archive;
 mod auth;
 mod download;
 mod drive;
@@ -16,6 +18,9 @@ mod offline;
 mod parity_tests;
 mod responses;
 mod share;
+#[cfg(not(pikpak_android_jni))]
+pub(crate) mod share_manage;
+pub use share::{ShareLocation, SharePreview};
 mod stats_session;
 mod upload;
 pub(crate) use upload::{UploadControl, pikpak_hash};
@@ -25,9 +30,13 @@ use auth::{CaptchaInitResponse, SigninResponse};
 mod mobile_session;
 #[cfg(pikpak_android_jni)]
 pub(crate) use download::DownloadControl;
+#[cfg(not(pikpak_android_jni))]
+pub(crate) use download::GcidMismatch;
 #[cfg(test)]
 pub(crate) use download::part_path;
-pub(crate) use download::{finish_partial_download, prepare_partial_download};
+pub(crate) use download::{
+    Verification, finish_partial_download, prepare_partial_download, verify_partial_download,
+};
 pub(crate) use drive_stats::RootListing;
 pub use file_info::{FileInfoResponse, PlayOption};
 pub use folder_stats::{FolderStats, FolderStatsError};
@@ -39,7 +48,7 @@ pub(crate) use mobile_session::{
 };
 #[cfg(pikpak_android_jni)]
 use mobile_session::{lock_file_exclusive, refresh_token_rejected};
-pub use models::{Entry, EntryKind, SessionToken};
+pub use models::{Entry, EntryKind, SearchHit, SearchQuery, SessionToken};
 pub use mutation::mutation_progress;
 #[cfg(test)]
 pub(crate) use mutation::test_batch_failure;
@@ -662,7 +671,12 @@ impl PikPak {
             if op == "sync_folder_index" && index_sync::rejects_cursor(status, &body) {
                 return Err(index_sync::ExpiredCursor.into());
             }
-            return Err(anyhow!("{} failed ({}): {}", op, status, sanitize(&body)));
+            return Err(DriveRequestError {
+                operation: op.to_owned(),
+                status,
+                message: sanitize(&body),
+            }
+            .into());
         }
     }
 
@@ -815,17 +829,63 @@ impl PikPak {
     }
 
     pub fn events(&self, limit: u32) -> Result<EventsResponse> {
-        let token = self.access_token()?;
-        let thumbnail_size = self.thumbnail_size();
-        let url = self.drive_url("drive/v1/events");
+        self.list_events(limit, false)
+    }
 
-        let rb = self.http.get(&url).bearer_auth(&token).query(&[
-            ("thumbnail_size", thumbnail_size.as_str()),
-            ("limit", &limit.to_string()),
-        ]);
+    pub fn list_events(&self, limit: u32, playback: bool) -> Result<EventsResponse> {
+        let mut all = EventsResponse {
+            events: Vec::new(),
+            next_page_token: None,
+        };
+        let mut seen = std::collections::HashSet::new();
+        while all.events.len() < limit as usize {
+            let page = self.events_page(
+                (limit - all.events.len() as u32).min(500),
+                playback,
+                all.next_page_token.as_deref(),
+            )?;
+            all.events.extend(page.events);
+            all.events.truncate(limit as usize);
+            all.next_page_token = page.next_page_token.filter(|t| !t.is_empty());
+            let Some(token) = &all.next_page_token else {
+                break;
+            };
+            anyhow::ensure!(seen.insert(token.clone()), "repeated events page token");
+        }
+        Ok(all)
+    }
+
+    pub fn events_page(
+        &self,
+        limit: u32,
+        playback: bool,
+        page: Option<&str>,
+    ) -> Result<EventsResponse> {
+        let mut rb = self
+            .http
+            .get(self.drive_url("drive/v1/events"))
+            .bearer_auth(self.access_token()?)
+            .query(&[
+                ("thumbnail_size", self.thumbnail_size().as_str()),
+                ("limit", &limit.to_string()),
+            ]);
+        if let Some(page) = page {
+            rb = rb.query(&[("page_token", page)]);
+        }
+        if playback {
+            rb = rb.query(&[("filters", r#"{"type":{"in":"TYPE_PLAY"}}"#)]);
+        }
         let response = self.send_authed("events", rb)?;
         json_or_api_error(response, "events")
     }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("{operation} failed ({status}): {message}")]
+struct DriveRequestError {
+    operation: String,
+    status: reqwest::StatusCode,
+    message: String,
 }
 
 // These two helpers cover the common drive/auth API error shape: a non-success
@@ -986,12 +1046,13 @@ pub(crate) fn unique_local_name(
     name: &str,
 ) -> String {
     fn reserve(taken: &mut std::collections::HashSet<String>, cand: &str) -> bool {
+        let cand = cand.to_lowercase();
         let sidecar = format!("{cand}.part");
         let identity = format!("{sidecar}.meta");
-        if taken.contains(cand) || taken.contains(&sidecar) || taken.contains(&identity) {
+        if taken.contains(&cand) || taken.contains(&sidecar) || taken.contains(&identity) {
             return false;
         }
-        taken.insert(cand.to_string());
+        taken.insert(cand);
         taken.insert(sidecar);
         taken.insert(identity);
         true
@@ -1097,6 +1158,16 @@ mod unique_name_tests {
     fn first_use_keeps_name() {
         let mut taken = HashSet::new();
         assert_eq!(unique_local_name(&mut taken, "a.txt"), "a.txt");
+    }
+
+    #[test]
+    fn case_variants_cannot_collide_with_resume_sidecars() {
+        let mut taken = HashSet::new();
+        assert_eq!(unique_local_name(&mut taken, "Photo.JPG"), "Photo.JPG");
+        assert_eq!(
+            unique_local_name(&mut taken, "photo.jpg.PART"),
+            "photo.jpg (1).PART"
+        );
     }
 
     #[test]
@@ -1907,13 +1978,11 @@ mod tests {
         let result = client.share_detail("share", "", "pass");
         handle.join().unwrap();
 
-        let entries = result.unwrap();
-        assert_eq!(
-            entries
-                .iter()
-                .map(|entry| entry.id.as_str())
-                .collect::<Vec<_>>(),
-            vec!["root", "a", "b"]
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("repeated a page token")
         );
         assert_eq!(
             *requested_tokens.lock().unwrap_or_else(|e| e.into_inner()),

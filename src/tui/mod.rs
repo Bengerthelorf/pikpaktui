@@ -1,13 +1,17 @@
+mod archive;
 #[cfg(test)]
 mod behavior_tests;
 mod browser;
 mod completion;
 pub(crate) mod download;
+mod download_plan;
 mod download_view;
 mod draw;
 mod folder_stats;
 mod handler;
 mod image_render;
+mod incoming_share;
+mod library;
 mod local_completion;
 mod operations;
 mod playback;
@@ -62,7 +66,12 @@ pub fn run_with_credentials(
 
 fn restore_terminal() {
     let _ = disable_raw_mode();
-    let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
+    let _ = execute!(
+        io::stdout(),
+        LeaveAlternateScreen,
+        DisableMouseCapture,
+        event::DisableBracketedPaste
+    );
 }
 
 fn run_terminal(mut app: App) -> Result<()> {
@@ -116,6 +125,31 @@ struct ActionItem {
 
 const NORMAL_ACTIONS: &[ActionItem] = &[
     ActionItem {
+        key: KeyCode::Char('Z'),
+        shortcut: "Z",
+        label: "Browse or extract archive",
+    },
+    ActionItem {
+        key: KeyCode::Char('/'),
+        shortcut: "/",
+        label: "Search filenames",
+    },
+    ActionItem {
+        key: KeyCode::Char('F'),
+        shortcut: "F",
+        label: "Browse starred files",
+    },
+    ActionItem {
+        key: KeyCode::Char('H'),
+        shortcut: "H",
+        label: "Browse recent activity",
+    },
+    ActionItem {
+        key: KeyCode::Char('P'),
+        shortcut: "P",
+        label: "Browse recently watched",
+    },
+    ActionItem {
         key: KeyCode::Enter,
         shortcut: "Enter",
         label: "Open folder / play video",
@@ -166,6 +200,11 @@ const NORMAL_ACTIONS: &[ActionItem] = &[
         label: "Open downloads",
     },
     ActionItem {
+        key: KeyCode::Char('I'),
+        shortcut: "I",
+        label: "Open a share link",
+    },
+    ActionItem {
         key: KeyCode::Char('M'),
         shortcut: "M",
         label: "Open my shares",
@@ -199,6 +238,11 @@ const NORMAL_ACTIONS: &[ActionItem] = &[
         key: KeyCode::Char('s'),
         shortcut: "s",
         label: "Star or unstar selected item",
+    },
+    ActionItem {
+        key: KeyCode::Char('Y'),
+        shortcut: "Y",
+        label: "Show sharing status of selected item",
     },
     ActionItem {
         key: KeyCode::Char('y'),
@@ -244,6 +288,7 @@ const NORMAL_ACTIONS: &[ActionItem] = &[
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AsyncRequestKind {
+    Library,
     Info,
     FolderPreview,
     FilePreview,
@@ -252,6 +297,7 @@ enum AsyncRequestKind {
     Trash,
     TrashOp,
     MyShares,
+    SharePage,
     ShareCreate,
     Play,
     PlayPicker,
@@ -281,6 +327,8 @@ struct StatusMessage {
 }
 
 enum OpResult {
+    Library(AsyncRequest, Result<library::ResultView>),
+    CartDownload(Result<download_plan::CartPlan>),
     Browser(browser::BrowserRequest, Result<browser::BrowserPayload>),
     FolderStats(String, folder_stats::ScanResult),
     DriveStats(folder_stats::DriveScanResult),
@@ -288,9 +336,7 @@ enum OpResult {
     /// Main-pane folder listing. Folder and request ids prevent a delayed
     /// reply from replacing a newer listing, including A -> B -> A navigation.
     Ls(u64, String, Result<Vec<Entry>>),
-    Ok(String),
     Mutation(operations::MutationReport),
-    Err(String),
     Info(AsyncRequest, Result<FileInfoResponse>, Option<String>),
     ParentLs(AsyncRequest, Result<Vec<Entry>>),
     PreviewLs(AsyncRequest, Result<Vec<Entry>>),
@@ -312,6 +358,12 @@ enum OpResult {
         AsyncRequest,
         String,
         Result<crate::pikpak::CreateShareResponse>,
+    ),
+    IncomingSaved(Result<String>),
+    SharePage(
+        AsyncRequest,
+        Option<&'static str>,
+        Result<Vec<serde_json::Value>>,
     ),
     MyShares(AsyncRequest, Result<Vec<crate::pikpak::MyShare>>),
     UpdateAvailable(Option<String>),
@@ -345,6 +397,11 @@ struct PickerState {
 }
 
 enum InputMode {
+    Archive(Box<archive::Archive>),
+    SearchInput(library::SearchForm),
+    Library(library::Page),
+    LibraryPending,
+    IncomingShare(Box<incoming_share::IncomingShare>),
     Login {
         field: LoginField,
         email: String,
@@ -448,7 +505,20 @@ enum InputMode {
         selected: usize,
         expanded: bool,
     },
-    SharePrompt,
+    SharePrompt {
+        grouped: bool,
+        days: String,
+    },
+    ShareEdit {
+        field: share_views::ShareField,
+        value: String,
+    },
+    SharePage {
+        page: share_views::SharePage,
+        rows: Vec<serde_json::Value>,
+        selected: usize,
+        marked: std::collections::BTreeSet<usize>,
+    },
     ShareCreatedView {
         shares: Vec<(String, String, String)>, // (title, url, pass_code)
     },
@@ -809,6 +879,7 @@ impl App {
         // keypresses — a race with event::read().
         self.image_picker = ratatui_image::picker::Picker::from_query_stdio().ok();
 
+        let mut bracketed_paste = false;
         loop {
             if self.last_blink.elapsed() >= Duration::from_millis(500) {
                 self.cursor_visible = !self.cursor_visible;
@@ -829,6 +900,15 @@ impl App {
             let mut input_started = Instant::now();
             let mut quit = false;
             for index in 0..64 {
+                let want_paste = matches!(self.input, InputMode::OfflineInput { .. });
+                if want_paste != bracketed_paste {
+                    if want_paste {
+                        execute!(io::stdout(), event::EnableBracketedPaste)?;
+                    } else {
+                        execute!(io::stdout(), event::DisableBracketedPaste)?;
+                    }
+                    bracketed_paste = want_paste;
+                }
                 if !event::poll(if index == 0 {
                     Duration::from_millis(50)
                 } else {
@@ -840,6 +920,21 @@ impl App {
                     input_started = Instant::now();
                 }
                 match event::read()? {
+                    Event::Paste(text) => {
+                        if let InputMode::OfflineInput { value } = &mut self.input {
+                            let mut pos = self.text_cursor.min(value.len());
+                            while !value.is_char_boundary(pos) {
+                                pos -= 1;
+                            }
+                            let flat: String = text
+                                .chars()
+                                .map(|c| if c.is_whitespace() { ' ' } else { c })
+                                .filter(|c| !c.is_control())
+                                .collect();
+                            value.insert_str(pos, &flat);
+                            self.text_cursor = pos + flat.len();
+                        }
+                    }
                     Event::Key(key) => {
                         if key.kind != KeyEventKind::Press {
                             continue;
@@ -869,6 +964,12 @@ impl App {
     }
 
     fn poll_results(&mut self) {
+        if let InputMode::Archive(page) = &mut self.input {
+            page.poll(&self.client);
+        }
+        if let InputMode::IncomingShare(share) = &mut self.input {
+            share.poll();
+        }
         if let InputMode::UploadInput { input } | InputMode::DownloadInput { input } =
             &mut self.input
         {
@@ -883,6 +984,17 @@ impl App {
                 break;
             };
             match result {
+                OpResult::IncomingSaved(result) => match result {
+                    Ok(msg) => {
+                        self.push_log(msg);
+                        self.refresh();
+                    }
+                    Err(error) => {
+                        if self.report_mutation_error("Save share", &error) {
+                            self.refresh();
+                        }
+                    }
+                },
                 OpResult::Browser(request, result) => self.apply_browser_result(request, result),
                 OpResult::FolderStats(id, result) => {
                     if self.folder_stats.finish(id, result) {
@@ -945,14 +1057,6 @@ impl App {
                     if self.record_mutation_result(report) {
                         self.refresh();
                     }
-                }
-                OpResult::Ok(msg) => {
-                    self.push_log(msg);
-                    self.refresh();
-                }
-                OpResult::Err(msg) => {
-                    self.push_log(msg);
-                    self.finish_background_loading();
                 }
                 OpResult::Info(request, Ok(info), thumb_fallback) => {
                     if !self.modal_request_matches(&request)
@@ -1321,20 +1425,7 @@ impl App {
                     }
                     self.modal_request = None;
                     self.finish_loading();
-                    self.cache_current_directory();
-                    self.breadcrumb = new_breadcrumb;
-                    self.current_folder_id = folder_id.clone();
-                    self.selected = 0;
-                    self.entries.clear();
-                    self.scroll_offset.set(0);
-                    self.parent_entries.clear();
-                    self.parent_selected = 0;
-                    // Fill the parent pane like normal navigation does — goto
-                    // otherwise leaves it blank until the next move.
-                    self.refresh_parent();
-                    self.clear_preview();
-                    self.loading = true;
-                    self.request_main_listing(folder_id);
+                    self.jump_to_folder(folder_id, new_breadcrumb);
                 }
                 OpResult::GotoPath(request, Err(e)) => {
                     if !self.modal_request_matches(&request)
@@ -1346,6 +1437,35 @@ impl App {
                     self.finish_loading();
                     self.push_log(format!("Go to path failed: {e:#}"));
                 }
+                OpResult::Library(request, result) => {
+                    if let Ok(library::ResultView::Submitted(page)) = &result {
+                        for row in &page.rows {
+                            self.push_log(row.label.clone());
+                        }
+                        self.request_main_listing(self.current_folder_id.clone());
+                    }
+                    if !self.modal_request_matches(&request)
+                        || !matches!(self.input, InputMode::LibraryPending)
+                    {
+                        continue;
+                    }
+                    self.modal_request = None;
+                    self.finish_loading();
+                    match result {
+                        Ok(
+                            library::ResultView::Page(page) | library::ResultView::Submitted(page),
+                        ) => self.input = InputMode::Library(page),
+                        Ok(library::ResultView::Location(folder, crumbs, selected)) => {
+                            self.input = InputMode::Normal;
+                            self.browser.select_on_load(folder.clone(), selected);
+                            self.jump_to_folder(folder, crumbs);
+                        }
+                        Err(e) => {
+                            self.input = InputMode::Normal;
+                            self.push_log(format!("{e:#}"));
+                        }
+                    }
+                }
                 OpResult::Quota(Ok(info)) => {
                     if let Some(detail) = info.quota {
                         self.quota_used = detail.usage.as_deref().and_then(|s| s.parse().ok());
@@ -1355,6 +1475,7 @@ impl App {
                 OpResult::Quota(Err(e)) => {
                     self.push_log(format!("Quota fetch failed: {e:#}"));
                 }
+                OpResult::CartDownload(result) => self.finish_cart_download(result),
                 OpResult::Upload(Ok(msg)) => {
                     self.active_upload = None;
                     if matches!(self.input, InputMode::UploadView) {
@@ -1382,6 +1503,9 @@ impl App {
                     Ok(url) => self.push_log(format!("Copied URL: {url}")),
                     Err(error) => self.push_log(format!("Clipboard failed: {error:#}")),
                 },
+                OpResult::SharePage(request, notice, result) => {
+                    self.apply_share_page(request, notice, result)
+                }
                 OpResult::MyShares(request, result) => self.apply_my_shares(request, result),
                 OpResult::UpdateAvailable(Some(version)) => {
                     self.push_log(format!(
@@ -1671,6 +1795,23 @@ impl App {
         });
     }
 
+    fn jump_to_folder(&mut self, folder_id: String, new_breadcrumb: Vec<(String, String)>) {
+        self.cache_current_directory();
+        self.breadcrumb = new_breadcrumb;
+        self.current_folder_id = folder_id.clone();
+        self.selected = 0;
+        self.entries.clear();
+        self.scroll_offset.set(0);
+        self.parent_entries.clear();
+        self.parent_selected = 0;
+        // Fill the parent pane like normal navigation does — goto
+        // otherwise leaves it blank until the next move.
+        self.refresh_parent();
+        self.clear_preview();
+        self.loading = true;
+        self.request_main_listing(folder_id);
+    }
+
     fn invalidate_main_listing(&mut self) {
         self.folder_stats.leave_listing();
         self.main_listing_loading = false;
@@ -1729,31 +1870,33 @@ impl App {
     }
 
     fn modal_request_survives_input(&self) -> bool {
-        matches!(self.input, InputMode::InfoLoading)
-            || self
-                .modal_request
-                .as_ref()
-                .is_some_and(|request| match &self.input {
-                    InputMode::OfflineTasksView { .. } => {
-                        request.kind == AsyncRequestKind::OfflineTasks
-                    }
-                    InputMode::TrashView { .. } => matches!(
-                        request.kind,
-                        AsyncRequestKind::Trash | AsyncRequestKind::TrashOp
-                    ),
-                    InputMode::MySharesView { .. } => request.kind == AsyncRequestKind::MyShares,
-                    InputMode::ShareCreatedView { .. } => {
-                        request.kind == AsyncRequestKind::ShareCreate
-                    }
-                    _ => false,
-                })
+        matches!(
+            self.input,
+            InputMode::InfoLoading | InputMode::LibraryPending
+        ) || self
+            .modal_request
+            .as_ref()
+            .is_some_and(|request| match &self.input {
+                InputMode::OfflineTasksView { .. } => {
+                    request.kind == AsyncRequestKind::OfflineTasks
+                }
+                InputMode::TrashView { .. } => matches!(
+                    request.kind,
+                    AsyncRequestKind::Trash | AsyncRequestKind::TrashOp
+                ),
+                InputMode::SharePage { .. } => request.kind == AsyncRequestKind::SharePage,
+                InputMode::MySharesView { .. } => request.kind == AsyncRequestKind::MyShares,
+                InputMode::ShareCreatedView { .. } => request.kind == AsyncRequestKind::ShareCreate,
+                _ => false,
+            })
     }
 
     fn invalidate_modal_request(&mut self) {
         let request_owned_loading = self.modal_request.as_ref().is_some_and(|request| {
             matches!(
                 request.kind,
-                AsyncRequestKind::Play
+                AsyncRequestKind::Library
+                    | AsyncRequestKind::Play
                     | AsyncRequestKind::PlayPicker
                     | AsyncRequestKind::GotoPath
                     | AsyncRequestKind::ShareCreate
@@ -2127,6 +2270,7 @@ mod folder_listing_result_tests {
 
     fn info(id: &str, name: &str) -> FileInfoResponse {
         FileInfoResponse {
+            parent_id: None,
             id: Some(id.to_string()),
             name: name.to_string(),
             kind: Some("drive#file".to_string()),

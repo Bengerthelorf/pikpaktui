@@ -102,15 +102,14 @@ impl PikPak {
     /// Ask the server what a magnet/URL contains without adding a task
     /// (the web client's landing preview).
     pub fn parse_resource(&self, resource_url: &str) -> Result<serde_json::Value> {
+        self.resource_list(serde_json::json!({
+            "urls": resource_url, "page_size": 500, "thumbnail_type": "FROM_HASH",
+        }))
+    }
+
+    fn resource_list(&self, payload: serde_json::Value) -> Result<serde_json::Value> {
         let token = self.access_token()?;
         let url = self.drive_url("drive/v1/resource/list");
-
-        let payload = serde_json::json!({
-            "urls": resource_url,
-            "page_size": 500,
-            "thumbnail_type": "FROM_HASH",
-        });
-
         let rb = self.http.post(&url).bearer_auth(&token).json(&payload);
         let response = self.send_authed("resource parse", rb)?;
         json_or_api_error(response, "resource parse")
@@ -172,5 +171,102 @@ impl PikPak {
             self.clear_ls_cache();
         }
         ensure_success(response, "delete tasks")
+    }
+}
+
+impl PikPak {
+    pub fn task_status_page(
+        &self,
+        id: &str,
+        page: Option<&str>,
+    ) -> Result<(Vec<serde_json::Value>, Option<String>)> {
+        anyhow::ensure!(
+            !id.is_empty()
+                && id
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b)),
+            "invalid task ID"
+        );
+        let url = self.drive_url(&format!("drive/v1/task/{id}/statuses"));
+        let rb = self
+            .http
+            .get(url)
+            .bearer_auth(self.access_token()?)
+            .query(&[
+                ("page_token", page.unwrap_or("")),
+                ("limit", "100"),
+                ("with", "reference_resource"),
+                ("thumbnail_size", "SIZE_LARGE"),
+                ("filters", "{}"),
+            ]);
+        let mut data: serde_json::Value =
+            json_or_api_error(self.send_authed("task statuses", rb)?, "task statuses")?;
+        let next = data["next_page_token"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned);
+        let key = if data.get("statuses").is_some() {
+            "statuses"
+        } else {
+            "tasks"
+        };
+        let rows = match data[key].take() {
+            serde_json::Value::Array(rows) => rows,
+            serde_json::Value::Null => Vec::new(),
+            _ => anyhow::bail!("invalid task status list"),
+        };
+        Ok((rows, next))
+    }
+}
+
+impl PikPak {
+    /// Associate preview results with their original input even if PikPak reorders or
+    /// normalizes the URLs. Older servers omit the association and need a single lookup.
+    pub fn preview_resources(&self, urls: &[String]) -> Vec<Result<serde_json::Value>> {
+        let mut results = Vec::with_capacity(urls.len());
+        for group in urls.chunks(100) {
+            if group.len() == 1 {
+                results.push(self.parse_resource(&group[0]));
+                continue;
+            }
+            let preview = match self.resource_list(serde_json::json!({
+                "urls": group.join("\n"), "page": 100, "thumbnailType": "FROM_HASH"
+            })) {
+                Ok(data) => data,
+                Err(error)
+                    if error
+                        .downcast_ref::<super::DriveRequestError>()
+                        .is_some_and(|e| matches!(e.status.as_u16(), 400 | 413 | 422)) =>
+                {
+                    results.extend(group.iter().map(|url| self.parse_resource(url)));
+                    continue;
+                }
+                Err(error) => {
+                    let message = format!("{error:#}");
+                    results.extend(group.iter().map(|_| Err(anyhow!(message.clone()))));
+                    continue;
+                }
+            };
+            let mut matched = std::collections::HashMap::<&str, Vec<&serde_json::Value>>::new();
+            if let Some(items) = preview.get("list").unwrap_or(&preview)["resources"].as_array() {
+                for item in items {
+                    let meta = &item["meta"];
+                    if let Some(key) = ["originUrl", "url"]
+                        .into_iter()
+                        .filter_map(|k| meta[k].as_str())
+                        .find(|key| group.iter().any(|url| url == key))
+                    {
+                        matched.entry(key).or_default().push(item);
+                    }
+                }
+            }
+            for url in group {
+                results.push(match matched.remove(url.as_str()) {
+                    Some(items) => Ok(serde_json::json!({"list":{"resources":items}})),
+                    None => self.parse_resource(url),
+                });
+            }
+        }
+        results
     }
 }

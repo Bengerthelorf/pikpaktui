@@ -46,6 +46,14 @@ pikpaktui ls /Movies --json | jq '.[] | select(.size > 1073741824)'
 
 ---
 
+## search
+
+依名稱搜尋帳戶內的檔案和資料夾，忽略大小寫。用 `--in` 限制搜尋範圍，用 `--type file|folder` 限制類型。大小上下限均包含邊界，以位元組計；資料夾大小包含所有子項目。結果含穩定 ID 和完整路徑，預設最多 100 筆。 使用 `--cached` 可離線搜尋最近一次完整同步的索引。
+
+```sh
+pikpaktui search 模型 --in /Research --type file --min-size 1024 --limit 50 -J
+```
+
 ## stats
 
 按路徑或 PikPak 資料夾 ID 查詢單一資料夾，省略目標時查詢根目錄。預設先同步帳戶索引，首次完整掃描，後續使用增量更新。帳戶或服務無法提供索引時，預設查詢改用一般遞迴清單。
@@ -289,6 +297,8 @@ pikpaktui download [選項] -t <本機目錄> <路徑...>
 |------|------|
 | `-o`, `--output <檔案>` | 自訂輸出檔案名稱（僅單一檔案） |
 | `-t <本機目錄>` | 批次模式——將多個檔案下載至指定目錄 |
+| `-J`, `--json` | 輸出包含每個檔案的狀態、儲存位置、驗證結果與總失敗數的 JSON。有任何失敗時傳回非零結束碼。 |
+| `--verify` | 依 GCID 驗證每個下載檔案，再寫入最終路徑。缺少 GCID 時另行提示。 |
 | `-j`, `--jobs <n>` | 遞迴下載資料夾時的檔案並行數（1–16，預設 1） |
 | `-n`, `--dry-run` | 預覽，不下載 |
 
@@ -303,6 +313,20 @@ pikpaktui download -n "/My Pack/folder"
 ```
 
 ---
+
+## archive
+
+檢視雲端壓縮檔目錄，將所選項目或整個壓縮檔解壓縮到 PikPak 預設雲端位置，並查閱工作進度。
+
+```bash
+pikpaktui archive list /backup.zip
+pikpaktui archive list /backup.zip --at photos
+pikpaktui archive extract /backup.zip --at photos --member photos/image.jpg
+pikpaktui archive extract /backup.zip --all
+pikpaktui archive progress <task-id>
+```
+
+`--member` 使用 `list` 傳回的完整項目路徑，可多次指定。`--at` 指定要瀏覽或選取項目的壓縮檔內目錄。`--password-stdin` 從標準輸入讀取密碼。三個指令皆支援 `-J` 輸出 JSON。
 
 ## upload
 
@@ -348,8 +372,18 @@ pikpaktui share -D <ID...>            # 刪除分享
 |------|------|
 | `-p`, `--password` | 自動產生存取密碼 |
 | `-d`, `--days <n>` | 有效期（天）；`-1` 表示永久（預設） |
+| `--separate` | 為每個路徑分別建立連結。JSON 陣列會列出各連結的來源路徑。 |
+| `--view <版面>`、`--order <排序>` | 版面支援 list、grid、flow。排序支援 name、mod、size，後接 _asc 或 _desc。 |
 | `-o <檔案>` | 將分享網址寫入檔案 |
 | `-J`, `--json` | JSON 輸出：`{share_id, share_url, pass_code}` |
+
+使用 `pikpaktui share --manage help` 查看編輯分享、短碼、分享狀態、追蹤和更新等操作。
+
+```sh
+pikpaktui share --separate -d 7 --view grid /A /B
+pikpaktui share --manage updates SHARE_ID
+pikpaktui share --manage save-update SHARE_ID 42 --file-id FILE_ID -t /Saved --dry-run
+```
 
 **儲存選項（與 `-S` 搭配）：**
 
@@ -385,7 +419,7 @@ pikpaktui share -S -n "https://mypikpak.com/s/XXXX"   # 預覽
 
 **選擇分享內的檔案：**
 
-`--parent-id <ID>` 指定瀏覽或轉存的來源目錄。`--file-id <ID>` 選擇該目錄下的直接子項用於轉存，可重複指定多個。透過瀏覽的 JSON 輸出取得 ID。缺少或不明確的 ID 會在轉存前報錯，重複 ID 只儲存一次。不指定 `--file-id` 時儲存來源目錄下的所有項目；不指定 `--parent-id` 時來源目錄為分享根目錄。瀏覽時不能同時提供名稱路徑與 `--parent-id`。
+`--parent-id <ID>` 指定瀏覽或轉存的來源目錄。`--file-id <ID>` 選擇該目錄下的直接子項用於轉存，可重複指定多個。透過瀏覽的 JSON 輸出取得 ID。缺少或不明確的 ID 會在轉存前報錯，重複 ID 只儲存一次。不指定 `--file-id` 時儲存來源目錄下的所有項目；不指定 `--parent-id` 時以連結指向的目錄為來源目錄。瀏覽時不能同時提供名稱路徑與 `--parent-id`。
 
 ```bash
 pikpaktui share -b -J "https://mypikpak.com/s/XXXX"
@@ -396,12 +430,19 @@ pikpaktui share -S --parent-id FOLDER_ID --file-id FILE_ID -t /Downloads "https:
 
 轉存成功表示伺服器已完成轉存，且選取的檔案已放入 `--to` 指定目錄（預設網盤根目錄）。如果無法確認轉存完成或目標位置，命令會報錯並附上可用的任務或檔案 ID。重試前請先核對這些結果，因為檔案可能已經轉存。
 
-`/s/XXXX/folder/file` 這類網頁深連結會被明確拒絕，避免意外轉存整個分享。請使用分享根連結與明確的 ID。`-n -J` 輸出含 `dry_run`、`would_save`、`to`、`files` 的 JSON 預覽，不執行儲存。遞迴遍歷及轉存、下載、刪除流程可透過腳本組合。
+支援直接貼上 PikPak 網頁版的目錄連結，用戶端會逐層核對目錄。執行 `share --preview --file-id FILE_ID -J <url>` 可查看檔案詳情、影片長度與可用畫質。`-n -J` 輸出含 `dry_run`、`would_save`、`to`、`files` 的 JSON 預覽，不執行儲存。遞迴遍歷及轉存、下載、刪除流程可透過腳本組合。
 
 
 ---
 
 ## offline
+
+從標準輸入逐行讀取獨立連結。JSON 依去重後的連結回傳結果與錯誤，整批處理後若有失敗則回傳非零結束碼。
+
+```sh
+pikpaktui offline --stdin --preview -J < links.txt
+pikpaktui offline --stdin --to /Downloads -J < links.txt
+```
 
 提交 URL 或磁力連結進行伺服器端（雲端）下載。
 
@@ -429,6 +470,8 @@ pikpaktui offline --dry-run "magnet:?xt=..."
 ---
 
 ## tasks
+
+`pikpaktui tasks statuses <id> -J` — 逐頁列出伺服器回傳的子任務狀態。
 
 管理離線下載任務。
 
@@ -547,6 +590,8 @@ pikpaktui starred --json                       # JSON 輸出
 ---
 
 ## events
+
+`pikpaktui events --play -J 50` — 只列出最近觀看的檔案。
 
 列出最近的檔案操作記錄。
 

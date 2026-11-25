@@ -321,6 +321,10 @@ impl BrowserState {
         );
     }
 
+    pub(super) fn select_on_load(&mut self, folder: String, id: String) {
+        self.restore_selection = Some((folder, id));
+    }
+
     pub fn take_restored_selection(&mut self, folder_id: &str) -> Option<String> {
         self.restore_selection
             .take()

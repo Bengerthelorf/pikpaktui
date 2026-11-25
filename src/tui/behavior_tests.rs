@@ -685,7 +685,7 @@ fn background_listing_and_error_do_not_clear_current_modal_spinner() {
             app.current_folder_id.clone(),
             Err(anyhow::anyhow!("fixture failure")),
         ),
-        OpResult::Err("Background fixture failed".into()),
+        OpResult::Clipboard(Err(anyhow::anyhow!("Background fixture failed"))),
     ] {
         app.result_tx.send(result).unwrap();
         app.poll_results();
@@ -759,4 +759,37 @@ fn duplicate_cart_submission_is_rejected_before_worker_starts() {
     assert_eq!(app.cart.len(), 1);
     assert_eq!(app.status_message.unwrap().kind, StatusKind::Warning);
     assert!(app.result_rx.try_recv().is_err());
+}
+
+#[test]
+fn outgoing_share_cart_options_and_update_selection_follow_keyboard_input() {
+    let mut app = app();
+    app.cart = vec![entry("a"), entry("b")];
+    app.input = InputMode::CartView;
+    for key in ['s', 'g', '7'] {
+        app.handle_key(KeyCode::Char(key), KeyModifiers::NONE)
+            .unwrap();
+    }
+    assert!(matches!(&app.input,InputMode::SharePrompt{grouped:true,days} if days=="7"));
+    app.handle_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    assert!(matches!(app.input, InputMode::CartView));
+    app.input = InputMode::SharePage {
+        page: share_views::SharePage::Files("share".into(), 17),
+        rows: vec![serde_json::json!("a"), serde_json::json!("b")],
+        selected: 0,
+        marked: Default::default(),
+    };
+    for key in ['j', ' ', 's'] {
+        app.handle_key(KeyCode::Char(key), KeyModifiers::NONE)
+            .unwrap();
+    }
+    assert!(
+        matches!(&app.input,InputMode::ShareEdit{field:share_views::ShareField::Save {share,record:17,ids,destination:None},..} if share=="share" && ids==&["b"])
+    );
+    app.handle_key(KeyCode::Char('X'), KeyModifiers::NONE)
+        .unwrap();
+    app.handle_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    assert!(
+        matches!(&app.input,InputMode::ShareEdit{field:share_views::ShareField::Save{destination:Some(path),..},..} if path=="/X")
+    );
 }

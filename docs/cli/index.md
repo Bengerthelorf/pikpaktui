@@ -14,6 +14,7 @@ pikpaktui provides CLI subcommands for scripting and automation. Cloud operation
 | Command | Description |
 |---------|-------------|
 | [`ls`](/cli/commands#ls) | List files and folders |
+| [`search`](/cli/commands#search) | Search filenames by scope, kind and size |
 | [`stats`](/cli/commands#stats) | Look up recursive folder statistics |
 | [`mv`](/cli/commands#mv) | Move files or folders |
 | [`cp`](/cli/commands#cp) | Copy files or folders |
@@ -35,6 +36,7 @@ pikpaktui provides CLI subcommands for scripting and automation. Cloud operation
 | Command | Description |
 |---------|-------------|
 | [`download`](/cli/commands#download) | Download files or folders |
+| [`archive`](/cli/commands#archive) | Browse and extract cloud archives |
 | [`upload`](/cli/commands#upload) | Upload files to PikPak |
 | [`share`](/cli/commands#share) | Create, browse, list, save, or delete share links |
 

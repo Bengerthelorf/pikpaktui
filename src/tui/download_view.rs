@@ -83,7 +83,13 @@ impl App {
             Line::from(vec![
                 Span::styled("  Status: ", Style::default().fg(Color::Cyan)),
                 Span::styled(
-                    format!("{} / {} completed", done, total),
+                    if ds.planning {
+                        "Preparing cart download…".into()
+                    } else if ds.queue_paused {
+                        format!("Queue paused · {done} / {total} completed")
+                    } else {
+                        format!("{done} / {total} completed")
+                    },
                     Style::default().fg(Color::Reset),
                 ),
             ]),
@@ -178,7 +184,11 @@ impl App {
 
         // Collapsed view has no selection cursor, so per-task keys are inactive
         // here (expand to manage individual downloads).
-        let hints = vec![("Enter", "expand"), ("Esc", "close")];
+        let hints = vec![
+            ("Enter", "expand"),
+            ("P/R", "pause/resume all"),
+            ("Esc", "close"),
+        ];
         let mut hint_spans = vec![Span::raw("  ")];
         hint_spans.extend(Self::styled_help_spans(&hints));
         lines.push(Line::from(hint_spans));
@@ -550,7 +560,15 @@ impl App {
                 TaskStatus::Pending => ("Pending", Color::DarkGray),
                 TaskStatus::Downloading => ("Downloading", Color::Cyan),
                 TaskStatus::Paused => ("Paused", Color::Yellow),
-                TaskStatus::Done => ("Completed", Color::Green),
+                TaskStatus::Done => match task.verification {
+                    crate::pikpak::Verification::Verified => {
+                        ("Completed (GCID verified)", Color::Green)
+                    }
+                    crate::pikpak::Verification::Unavailable => {
+                        ("Completed (GCID unavailable)", Color::Yellow)
+                    }
+                    crate::pikpak::Verification::Unchecked => ("Completed", Color::Green),
+                },
                 TaskStatus::Failed(e) => {
                     lines.push(Line::from(vec![
                         Span::styled("  Status: ", Style::default().fg(Color::Cyan)),

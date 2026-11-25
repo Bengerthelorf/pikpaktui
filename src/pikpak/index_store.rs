@@ -12,7 +12,7 @@ use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use super::drive_stats::RootListing;
 use super::{EntryKind, FolderStats, FolderStatsError};
 
-const VERSION: i64 = 1;
+const VERSION: i64 = 2;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct Checkpoint {
@@ -26,6 +26,7 @@ pub(super) enum IndexChange {
     Upsert {
         id: String,
         parent_id: String,
+        name: String,
         kind: EntryKind,
         size: u64,
         modified_time: String,
@@ -51,13 +52,13 @@ const SCHEMA: &str = "
     CREATE TABLE items (
         id TEXT PRIMARY KEY NOT NULL,
         parent TEXT, folder INTEGER NOT NULL,
-        size TEXT NOT NULL, modified TEXT NOT NULL,
+        name TEXT NOT NULL DEFAULT '', size TEXT NOT NULL, modified TEXT NOT NULL,
         total TEXT NOT NULL, children INTEGER NOT NULL DEFAULT 0,
         latest TEXT, seconds INTEGER, nanos INTEGER
     ) WITHOUT ROWID;
     CREATE INDEX by_parent_time ON items(parent, seconds DESC, nanos DESC, latest DESC);
     CREATE INDEX by_parent_kind_time ON items(parent, folder, seconds DESC, nanos DESC, latest DESC);
-    PRAGMA user_version=1;
+    PRAGMA user_version=2;
 ";
 
 // Use the account's own volume for scratch rows. In particular, an Android app
@@ -66,7 +67,7 @@ const SCHEMA: &str = "
 const SCRATCH: &str = "
     CREATE TABLE IF NOT EXISTS staged(
         id TEXT PRIMARY KEY, parent TEXT, folder INTEGER, size TEXT, modified TEXT,
-        seconds INTEGER, nanos INTEGER
+        seconds INTEGER, nanos INTEGER, name TEXT
     ) WITHOUT ROWID;
     CREATE TABLE IF NOT EXISTS work(
         id TEXT PRIMARY KEY, old_parent TEXT, old_total TEXT,
@@ -99,10 +100,10 @@ fn has_schema(db: &Connection) -> Result<bool> {
         |r| Ok((r.get(0)?, r.get(1)?)),
     )?;
     ensure!(
-        version == VERSION || (version == 0 && empty),
+        (1..=VERSION).contains(&version) || (version == 0 && empty),
         "unsupported drive index schema {version}"
     );
-    Ok(version == VERSION)
+    Ok(version != 0)
 }
 
 fn checkpoint(db: &Connection) -> Result<Option<Checkpoint>> {
@@ -165,6 +166,13 @@ impl IndexStore {
         let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
         if !has_schema(&tx)? {
             tx.execute_batch(SCHEMA)?;
+        } else if tx.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))? == 1 {
+            tx.execute_batch(
+                "ALTER TABLE items ADD COLUMN name TEXT NOT NULL DEFAULT '';
+                DROP TABLE IF EXISTS staged;
+                UPDATE checkpoint SET full_at=0;
+                PRAGMA user_version=2;",
+            )?;
         }
         tx.commit()?;
         Ok(Self(db))
@@ -206,6 +214,74 @@ impl IndexStore {
         }
         tx.commit()?;
         Ok(result)
+    }
+
+    pub(super) fn search(&self, query: &super::SearchQuery) -> Result<Vec<super::SearchHit>> {
+        let tx = self.0.unchecked_transaction()?;
+        ensure!(
+            has_schema(&tx)?
+                && checkpoint(&tx)?.is_some_and(|c| c.full_at > 0)
+                && tx.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))? == VERSION,
+            "cached index needs filename backfill; run search online first"
+        );
+        let mut scope = query.scope_id.clone();
+        if let Some(path) = &query.scope_path {
+            let mut lookup = tx
+                .prepare("SELECT id FROM items WHERE parent=?1 AND name=?2 AND folder=1 LIMIT 2")?;
+            for name in super::files::path_components(path) {
+                let mut rows = lookup.query(params![scope, name])?;
+                let id = rows
+                    .next()?
+                    .with_context(|| format!("folder not found: {name} in {path}"))?
+                    .get(0)?;
+                ensure!(rows.next()?.is_none(), "ambiguous folder: {name} in {path}");
+                scope = id;
+            }
+        }
+        let mut sql = tx.prepare(
+            "
+            WITH RECURSIVE chain(id,path) AS (
+                SELECT ?1,''
+                UNION ALL
+                SELECT i.parent,'/' || i.name || chain.path FROM chain
+                JOIN items i ON i.id=chain.id WHERE i.parent IS NOT NULL
+            ), tree(id,path) AS (
+                SELECT ?1,path FROM chain WHERE id=''
+                UNION ALL
+                SELECT i.id,tree.path || '/' || i.name FROM tree JOIN items i ON i.parent=tree.id
+            )
+            SELECT i.id,i.parent,i.name,i.folder,i.total,tree.path FROM tree
+            JOIN items i ON i.id=tree.id WHERE tree.id != ?1
+            ORDER BY tree.path, i.id",
+        )?;
+        let mut rows = sql.query([&scope])?;
+        let needle = query.name.to_lowercase();
+        let mut hits = Vec::new();
+        while hits.len() < query.limit {
+            let Some(row) = rows.next()? else { break };
+            let name: String = row.get(2)?;
+            let kind = if row.get::<_, bool>(3)? {
+                EntryKind::Folder
+            } else {
+                EntryKind::File
+            };
+            let size = row.get::<_, String>(4)?.parse::<u64>()?;
+            if name.to_lowercase().contains(&needle)
+                && query.kind.as_ref().is_none_or(|k| k == &kind)
+                && query.min_size.is_none_or(|n| size >= n)
+                && query.max_size.is_none_or(|n| size <= n)
+            {
+                hits.push(super::SearchHit {
+                    id: row.get(0)?,
+                    parent_id: row.get(1)?,
+                    name,
+                    path: row.get(5)?,
+                    kind,
+                    size,
+                });
+            }
+        }
+        Ok(hits)
     }
 
     pub(super) fn apply<G>(
@@ -261,10 +337,11 @@ impl IndexStore {
 }
 
 fn stage(db: &Connection, change: IndexChange) -> Result<()> {
-    let (id, parent, folder, size, modified) = match change {
+    let (id, parent, folder, size, modified, name) = match change {
         IndexChange::Upsert {
             id,
             parent_id,
+            name,
             kind,
             size,
             modified_time,
@@ -279,9 +356,10 @@ fn stage(db: &Connection, change: IndexChange) -> Result<()> {
                 Some(kind == EntryKind::Folder),
                 Some(size.to_string()),
                 Some(modified_time),
+                Some(name),
             )
         }
-        IndexChange::Remove { id } => (id, None, None, None, None),
+        IndexChange::Remove { id } => (id, None, None, None, None, None),
     };
     ensure!(!id.is_empty() && id != "*", NeedsFull("invalid item ID"));
     let stamp = modified
@@ -290,10 +368,10 @@ fn stage(db: &Connection, change: IndexChange) -> Result<()> {
     let affected = db
         .prepare_cached(
             "
-        INSERT INTO staged VALUES(?1,?2,?3,?4,?5,?6,?7)
+        INSERT INTO staged VALUES(?1,?2,?3,?4,?5,?6,?7,?8)
         ON CONFLICT(id) DO UPDATE SET id=excluded.id WHERE
         staged.parent IS excluded.parent AND staged.folder IS excluded.folder AND
-        staged.size IS excluded.size AND staged.modified IS excluded.modified
+        staged.name IS excluded.name AND staged.size IS excluded.size AND staged.modified IS excluded.modified
     ",
         )?
         .execute(params![
@@ -303,7 +381,7 @@ fn stage(db: &Connection, change: IndexChange) -> Result<()> {
             size,
             modified,
             stamp.map(|t| t.unix_timestamp()),
-            stamp.map(|t| t.nanosecond())
+            stamp.map(|t| t.nanosecond()), name
         ])?;
     ensure!(
         affected == 1,
@@ -401,7 +479,7 @@ fn prepare_changes(db: &Connection, full: bool) -> Result<()> {
             SELECT 1 FROM items i WHERE i.id=staged.id AND
                 ((staged.folder IS NULL AND i.parent IS NULL)
                  OR (i.parent=staged.parent AND i.folder=staged.folder
-                     AND i.size=staged.size AND i.modified=staged.modified))
+                     AND i.name=staged.name AND i.size=staged.size AND i.modified=staged.modified))
         ) OR (folder IS NULL AND NOT EXISTS(SELECT 1 FROM items i WHERE i.id=staged.id));
     ",
     )?;
@@ -412,15 +490,15 @@ fn prepare_changes(db: &Connection, full: bool) -> Result<()> {
 
         UPDATE items SET parent=NULL WHERE id IN (SELECT id FROM staged WHERE folder IS NULL);
 
-        INSERT INTO items(id,parent,folder,size,modified,total,latest,seconds,nanos)
+        INSERT INTO items(id,parent,folder,size,modified,total,latest,seconds,nanos,name)
             SELECT id,parent,folder,size,modified,
                    CASE WHEN folder=0 THEN size ELSE '0' END,
                    CASE WHEN folder=0 AND seconds IS NOT NULL THEN modified END,
                    CASE WHEN folder=0 THEN seconds END,
-                   CASE WHEN folder=0 THEN nanos END
+                   CASE WHEN folder=0 THEN nanos END, name
             FROM staged WHERE folder IS NOT NULL
         ON CONFLICT(id) DO UPDATE SET
-            parent=excluded.parent, size=excluded.size, modified=excluded.modified,
+            name=excluded.name, parent=excluded.parent, size=excluded.size, modified=excluded.modified,
             total=CASE WHEN items.folder=1 THEN items.total ELSE excluded.total END,
             latest=CASE WHEN items.folder=1 THEN items.latest ELSE excluded.latest END,
             seconds=CASE WHEN items.folder=1 THEN items.seconds ELSE excluded.seconds END,
@@ -590,6 +668,7 @@ mod tests {
         IndexChange::Upsert {
             id: id.into(),
             parent_id: parent.into(),
+            name: id.into(),
             kind: EntryKind::Folder,
             size: u64::MAX,
             modified_time: "2100-01-01T00:00:00Z".into(),
@@ -600,6 +679,7 @@ mod tests {
         IndexChange::Upsert {
             id: id.into(),
             parent_id: parent.into(),
+            name: id.into(),
             kind: EntryKind::File,
             size,
             modified_time: time.into(),
@@ -641,6 +721,43 @@ mod tests {
             latest_modified_time: time.map(str::to_owned),
             is_empty: empty,
         }
+    }
+
+    #[test]
+    fn v1_stats_remain_readable_and_migration_requests_name_backfill() -> Result<()> {
+        let dir = temp_test_dir("index-name-migration");
+        let path = dir.join("old.sqlite");
+        let db = Connection::open(&path)?;
+        db.execute_batch(
+            &SCHEMA
+                .replace("name TEXT NOT NULL DEFAULT '', ", "")
+                .replace("user_version=2", "user_version=1"),
+        )?;
+        db.execute_batch(
+            "INSERT INTO items(id,parent,folder,size,modified,total) VALUES('',NULL,1,'0','','9');
+                          INSERT INTO checkpoint VALUES(1,'old-cursor',100,100);",
+        )?;
+        drop(db);
+        assert_eq!(
+            IndexStore::open_readonly(&path)?
+                .get("")?
+                .unwrap()
+                .total_size_bytes,
+            9
+        );
+        let mut store = IndexStore::open(&path)?;
+        assert_eq!(store.checkpoint()?.unwrap().full_at, 0);
+        assert_eq!(store.get("")?.unwrap().total_size_bytes, 9);
+        sync(&mut store, true, vec![file("new", "", 9, "")], 101)?;
+        let query = super::super::SearchQuery {
+            name: "NEW".into(),
+            limit: 10,
+            ..Default::default()
+        };
+        assert_eq!(store.search(&query)?[0].path, "/new");
+        drop(store);
+        std::fs::remove_dir_all(dir)?;
+        Ok(())
     }
 
     #[test]
@@ -789,6 +906,7 @@ mod tests {
                         kind,
                         size,
                         modified_time,
+                        ..
                     } => {
                         observed.insert(id.clone());
                         tree.insert(

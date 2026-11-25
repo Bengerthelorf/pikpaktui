@@ -764,3 +764,98 @@ fn upload_waits_until_the_cloud_file_is_complete() {
     assert_eq!(requests.lock().unwrap().len(), 2);
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn library_lists_follow_page_tokens_and_preserve_file_ids() {
+    let (base, calls, server) = scripted_server(vec![
+        (
+            200,
+            r#"{"events":[{"file_id":"v1","params":{"play_duration":"181","play_seconds":45}}],"next_page_token":"older"}"#,
+        ),
+        (200, r#"{"events":[{"reference_resource":{"id":"v2"}}]}"#),
+        (
+            200,
+            r#"{"files":[{"name":"A","id":"one"}],"next_page_token":"more"}"#,
+        ),
+        (200, r#"{"files":[{"name":"B","id":"two"}]}"#),
+        (200, r#"{"name":"Movie","id":"v2","parent_id":"sub"}"#),
+        (200, r#"{"name":"Videos","id":"sub","parent_id":""}"#),
+    ]);
+    let dir = temp_test_dir("library-pages");
+    let client = test_client(base, dir.join("session.json"));
+    let events = client.list_events(2, true).unwrap().events;
+    assert_eq!(events[0].file_id.as_deref(), Some("v1"));
+    assert_eq!(events[0].playback_position().as_deref(), Some("0:45/3:01"));
+    assert_eq!(
+        events[1].reference_resource.as_ref().unwrap().id.as_deref(),
+        Some("v2")
+    );
+    let starred = client.starred_list(2).unwrap();
+    assert_eq!(starred[1].id, "two");
+    assert!(starred.iter().all(|e| e.starred));
+    assert_eq!(
+        client.locate_file("v2").unwrap(),
+        ("sub".into(), vec![("".into(), "Videos".into())])
+    );
+    server.join().unwrap();
+    let calls = calls.lock().unwrap();
+    assert!(calls[0].contains("TYPE_PLAY"));
+    assert!(calls[1].contains("page_token=older"));
+    assert!(calls[3].contains("page_token=more"));
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn batch_preview_matches_original_urls_and_looks_up_only_unattributed_results() {
+    let (base, calls, server) = scripted_server(vec![
+        (
+            200,
+            r#"{"list":{"resources":[{"name":"B","meta":{"url":"https://example.test/b"}},{"name":"A","meta":{"originUrl":"https://example.test/a"}},{"name":"anonymous"}]}}"#,
+        ),
+        (200, r#"{"list":{"resources":[{"name":"C"}]}}"#),
+    ]);
+    let dir = temp_test_dir("batch-previews");
+    let client = test_client(base, dir.join("session.json"));
+    let urls = ["a", "b", "c"].map(|k| format!("https://example.test/{k}"));
+    let previews = client.preview_resources(&urls);
+    let names: Vec<_> = previews
+        .into_iter()
+        .map(|v| {
+            v.unwrap()["list"]["resources"][0]["name"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        })
+        .collect();
+    assert_eq!(names, ["A", "B", "C"]);
+    server.join().unwrap();
+    let calls = calls.lock().unwrap();
+    assert!(
+        calls[0]
+            .contains(r#"https://example.test/a\nhttps://example.test/b\nhttps://example.test/c"#)
+    );
+    assert!(calls[1].contains(&urls[2]));
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn invalid_batch_preview_isolated_per_link_without_submitting_any_tasks() {
+    let (base, calls, server) = scripted_server(vec![
+        (400, r#"{"error":"invalid_argument"}"#),
+        (200, r#"{"list":{"resources":[{"name":"good"}]}}"#),
+        (400, r#"{"error":"invalid_url"}"#),
+    ]);
+    let dir = temp_test_dir("mixed-preview");
+    let client = test_client(base, dir.join("session.json"));
+    let results = client.preview_resources(&["one".into(), "two".into()]);
+    assert!(results[0].is_ok() && results[1].is_err());
+    server.join().unwrap();
+    assert!(
+        calls
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|r| r.starts_with("POST /drive/v1/resource/list"))
+    );
+    fs::remove_dir_all(dir).unwrap();
+}

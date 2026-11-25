@@ -3,15 +3,16 @@ use anyhow::{Result, anyhow};
 pub fn run(args: &[String]) -> Result<()> {
     if args.is_empty() {
         return Err(anyhow!(
-            "Usage: pikpaktui offline [--dry-run] <url> [--to <path>] [--name <name>]"
+            "Usage: pikpaktui offline [--preview | --dry-run] [-J] [--stdin] [<url>...] [--to <path>] [--name <name>]"
         ));
     }
 
-    let client = super::cli_client()?;
+    let mut json = false;
+    let mut stdin = false;
 
     // The URL is positional so flags may come before or after it — the usage
     // string itself shows `offline [--dry-run] <url>`.
-    let mut file_url: Option<&str> = None;
+    let mut urls = Vec::new();
     let mut parent_path: Option<&str> = None;
     let mut name: Option<&str> = None;
     let mut dry_run = false;
@@ -36,6 +37,8 @@ pub fn run(args: &[String]) -> Result<()> {
                         .as_str(),
                 );
             }
+            "--stdin" | "-" => stdin = true,
+            "-J" | "--json" => json = true,
             "--dry-run" | "-n" => dry_run = true,
             "--preview" | "-p" => preview = true,
             other if other.starts_with('-') && other != "-" => {
@@ -43,72 +46,110 @@ pub fn run(args: &[String]) -> Result<()> {
                     "unknown option: {other}\nRun `pikpaktui offline --help` for usage."
                 ));
             }
-            url => {
-                if file_url.is_some() {
-                    return Err(anyhow!("only one URL can be submitted at a time"));
-                }
-                file_url = Some(url);
-            }
+            url => urls.push(url.to_owned()),
         }
         i += 1;
     }
 
-    let file_url = file_url.ok_or_else(|| anyhow!("no URL given"))?;
-
-    if preview {
-        let spinner = super::Spinner::new("Parsing resource...");
-        let parsed = client.parse_resource(file_url)?;
-        drop(spinner);
-        // {"list": {"resources": [...]}} on current deployments; render
-        // defensively since only the web client documents this shape.
-        let root = if parsed.get("list").is_some() {
-            &parsed["list"]
-        } else {
-            &parsed
-        };
-        let Some(resources) = root["resources"].as_array().filter(|r| !r.is_empty()) else {
-            println!("Nothing recognized at that URL.");
-            return Ok(());
-        };
-        print_resources(resources, 0);
-        return Ok(());
+    if stdin {
+        use std::io::BufRead;
+        for line in std::io::stdin().lock().lines() {
+            let line = line?;
+            if !line.trim().is_empty() {
+                urls.push(line.trim().to_owned());
+            }
+        }
     }
-
-    let parent_id = match parent_path {
-        Some(p) => Some(client.resolve_path(p)?),
-        None => None,
-    };
-
-    if dry_run {
-        let dest_display = parent_path.unwrap_or("/");
-        print!("[dry-run] Would submit offline download: '{}'", file_url);
-        if let Some(n) = name {
-            print!(" as '{}'", n);
-        }
-        println!(" -> '{}'", dest_display);
-        if let Some(id) = &parent_id {
-            println!("  parent id: {}", id);
-        }
-        return Ok(());
-    }
-
-    let resp = client.offline_download(file_url, parent_id.as_deref(), name)?;
-    if let Some(task) = &resp.task {
-        println!("Offline task created: {}", task.name);
-        println!("  ID:    {}", task.id);
-        println!("  Phase: {}", task.phase);
-        if let Some(fid) = &task.file_id {
-            println!("  File:  {}", fid);
-        }
+    let mut seen = std::collections::HashSet::new();
+    urls.retain(|u| seen.insert(u.clone()));
+    anyhow::ensure!(!urls.is_empty(), "no URL given");
+    anyhow::ensure!(
+        name.is_none() || urls.len() == 1,
+        "--name requires a single URL"
+    );
+    let client = super::cli_client()?;
+    let parent = if preview {
+        None
     } else {
-        println!("Offline download submitted");
+        parent_path.map(|p| client.resolve_folder(p)).transpose()?
+    };
+    let multiple = urls.len() > 1;
+    let mut records = Vec::new();
+    let mut failures = 0;
+    let mut previews = if preview {
+        client.preview_resources(&urls).into_iter()
+    } else {
+        Vec::new().into_iter()
+    };
+    for url in urls {
+        let outcome = (|| -> Result<serde_json::Value> {
+            if preview {
+                let parsed = previews
+                    .next()
+                    .ok_or_else(|| anyhow!("missing preview result"))??;
+                if !json {
+                    if multiple {
+                        println!("{url}");
+                    }
+                    let resources = parsed.get("list").unwrap_or(&parsed)["resources"].as_array();
+                    if let Some(items) = resources.filter(|r| !r.is_empty()) {
+                        print_resources(items, 0);
+                    } else {
+                        println!("Nothing recognized at that URL.");
+                    }
+                }
+                return Ok(serde_json::json!({"url":url,"ok":true,"preview":parsed}));
+            }
+            if dry_run {
+                if !json {
+                    print!("[dry-run] Would submit offline download: '{url}'");
+                    if let Some(name) = name {
+                        print!(" as '{name}'");
+                    }
+                    println!(" -> '{}'", parent_path.unwrap_or("/"));
+                    if let Some(id) = &parent {
+                        println!("  parent id: {id}");
+                    }
+                }
+                return Ok(
+                    serde_json::json!({"url":url,"ok":true,"dry_run":true,"parent_id":parent,"name":name}),
+                );
+            }
+            let response = client.offline_download(&url, parent.as_deref(), name)?;
+            if !json {
+                if let Some(task) = &response.task {
+                    println!(
+                        "Offline task created: {}\n  ID:    {}\n  Phase: {}",
+                        task.name, task.id, task.phase
+                    );
+                    if let Some(id) = &task.file_id {
+                        println!("  File:  {id}");
+                    }
+                } else {
+                    println!("Offline download submitted: {url}");
+                }
+            }
+            Ok(serde_json::json!({"url":url,"ok":true,"task":response.task}))
+        })();
+        match outcome {
+            Ok(record) => records.push(record),
+            Err(error) => {
+                failures += 1;
+                if !json {
+                    eprintln!("{url}: {error:#}");
+                }
+                records
+                    .push(serde_json::json!({"url":url,"ok":false,"error":format!("{error:#}")}));
+            }
+        }
     }
-
+    if json {
+        println!("{}", serde_json::to_string_pretty(&records)?);
+    }
+    anyhow::ensure!(failures == 0, "{failures} offline request(s) failed");
     Ok(())
 }
 
-/// Print parsed torrent/URL contents: name, size, file count, one level of
-/// nesting per "dir.resources" the server includes.
 fn print_resources(resources: &[serde_json::Value], indent: usize) {
     for r in resources {
         let name = r["name"].as_str().unwrap_or("<unnamed>");

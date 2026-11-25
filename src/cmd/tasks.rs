@@ -7,7 +7,9 @@ pub fn run(args: &[String]) -> Result<()> {
     // `tasks -J` / `tasks 20` are documented list invocations: only a known
     // sub-command word consumes the first argument.
     let (sub, rest) = match args.first().map(|s| s.as_str()) {
-        Some(s @ ("list" | "ls" | "retry" | "delete" | "rm" | "show")) => (s, &args[1..]),
+        Some(s @ ("list" | "ls" | "retry" | "delete" | "rm" | "show" | "statuses")) => {
+            (s, &args[1..])
+        }
         Some(_) => ("list", args),
         None => ("list", &[][..]),
     };
@@ -167,6 +169,45 @@ pub fn run(args: &[String]) -> Result<()> {
             }
             client.offline_task_retry(task_id)?;
             println!("Task {} retried", task_id);
+            Ok(())
+        }
+        "statuses" => {
+            let mut id = None;
+            let mut json = false;
+            for arg in rest {
+                match arg.as_str() {
+                    "-J" | "--json" => json = true,
+                    other if !other.starts_with('-') && id.is_none() => id = Some(other),
+                    _ => anyhow::bail!("Usage: pikpaktui tasks statuses <task-id> [-J]"),
+                }
+            }
+            let id = id.ok_or_else(|| anyhow::anyhow!("missing task ID"))?;
+            let mut entries = Vec::new();
+            let mut token = None;
+            let mut seen = std::collections::HashSet::new();
+            loop {
+                let (page, next) = client.task_status_page(id, token.as_deref())?;
+                entries.extend(page);
+                token = next;
+                let Some(t) = &token else { break };
+                anyhow::ensure!(seen.insert(t.clone()), "repeated status page token");
+            }
+            if json {
+                println!("{}", serde_json::to_string_pretty(&entries)?);
+            } else if entries.is_empty() {
+                println!("No individual task statuses");
+            } else {
+                for item in entries {
+                    println!(
+                        "{}  {}",
+                        item["phase"].as_str().unwrap_or(""),
+                        item["name"]
+                            .as_str()
+                            .or(item["file_name"].as_str())
+                            .unwrap_or("?")
+                    );
+                }
+            }
             Ok(())
         }
         "show" => {

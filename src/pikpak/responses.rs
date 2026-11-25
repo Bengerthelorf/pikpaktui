@@ -201,12 +201,16 @@ pub struct OfflineListResponse {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct EventsResponse {
+    pub next_page_token: Option<String>,
     #[serde(default)]
     pub events: Vec<EventEntry>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventEntry {
+    pub file_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub params: Option<serde_json::Value>,
     #[serde(default, rename = "type")]
     pub event_type: Option<String>,
     #[serde(default)]
@@ -219,8 +223,33 @@ pub struct EventEntry {
     pub reference_resource: Option<EventRefResource>,
 }
 
+impl EventEntry {
+    pub fn display_name(&self) -> &str {
+        self.file_name
+            .as_deref()
+            .or_else(|| self.reference_resource.as_ref()?.name.as_deref())
+            .unwrap_or("?")
+    }
+
+    pub fn playback_position(&self) -> Option<String> {
+        let params = self.params.as_ref()?;
+        let seconds = |key: &str| {
+            params[key]
+                .as_u64()
+                .or_else(|| params[key].as_str()?.parse::<u64>().ok())
+        };
+        let format_time = |n| format!("{}:{:02}", n / 60, n % 60);
+        let position = format_time(seconds("play_seconds")?);
+        Some(match seconds("play_duration") {
+            Some(total) => format!("{position}/{}", format_time(total)),
+            None => position,
+        })
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventRefResource {
+    pub id: Option<String>,
     #[serde(default)]
     pub kind: Option<String>,
     #[serde(default)]

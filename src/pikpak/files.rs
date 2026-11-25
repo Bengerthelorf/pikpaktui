@@ -273,7 +273,7 @@ impl PikPak {
 
         let rb = self.http.get(&url).bearer_auth(&token);
         let response = self.send_authed("file_info", rb)?;
-        response.json().context("invalid file_info json")
+        json_or_api_error(response, "file_info")
     }
 
     pub fn star(&self, ids: &[&str]) -> Result<()> {
@@ -297,20 +297,44 @@ impl PikPak {
     }
 
     pub fn starred_list(&self, limit: u32) -> Result<Vec<Entry>> {
-        let token = self.access_token()?;
-        let thumbnail_size = self.thumbnail_size();
-        let url = self.drive_url("drive/v1/files");
+        let mut entries = Vec::new();
+        let mut token = None;
+        let mut seen = HashSet::new();
+        while entries.len() < limit as usize {
+            let (page, next) =
+                self.starred_page((limit - entries.len() as u32).min(500), token.as_deref())?;
+            entries.extend(page);
+            entries.truncate(limit as usize);
+            token = next;
+            let Some(next) = &token else { break };
+            anyhow::ensure!(seen.insert(next.clone()), "repeated starred page token");
+        }
+        Ok(entries)
+    }
 
+    pub fn starred_page(
+        &self,
+        limit: u32,
+        page: Option<&str>,
+    ) -> Result<(Vec<Entry>, Option<String>)> {
+        let token = self.access_token()?;
         let filters = r#"{"trashed":{"eq":false},"phase":{"eq":"PHASE_TYPE_COMPLETE"},"system_tag":{"in":"STAR"}}"#;
-        let rb = self.http.get(&url).bearer_auth(&token).query(&[
-            ("parent_id", "*"),
-            ("limit", &limit.to_string()),
-            ("filters", filters),
-            ("thumbnail_size", thumbnail_size.as_str()),
-            ("with_audit", "true"),
-        ]);
-        let response = self.send_authed("starred list", rb)?;
-        let payload: DriveListResponse = json_or_api_error(response, "starred list")?;
+        let mut rb = self
+            .http
+            .get(self.drive_url("drive/v1/files"))
+            .bearer_auth(token)
+            .query(&[
+                ("parent_id", "*"),
+                ("limit", &limit.to_string()),
+                ("filters", filters),
+                ("thumbnail_size", &self.thumbnail_size()),
+                ("with_audit", "true"),
+            ]);
+        if let Some(page) = page {
+            rb = rb.query(&[("page_token", page)]);
+        }
+        let payload: DriveListResponse =
+            json_or_api_error(self.send_authed("starred list", rb)?, "starred list")?;
         let entries = payload
             .files
             .into_iter()
@@ -319,7 +343,26 @@ impl PikPak {
                 ..f.into_entry()
             })
             .collect();
-        Ok(entries)
+        Ok((entries, payload.next_page_token.filter(|t| !t.is_empty())))
+    }
+
+    pub fn locate_file(&self, id: &str) -> Result<(String, Vec<(String, String)>)> {
+        let info = self.file_info(id)?;
+        let mut parent = info.parent_id.context("file location unavailable")?;
+        let folder = parent.clone();
+        let mut crumbs = Vec::new();
+        let mut seen = HashSet::from([id.to_owned()]);
+        while !parent.is_empty() {
+            anyhow::ensure!(
+                seen.insert(parent.clone()),
+                "invalid cycle in file ancestry"
+            );
+            let info = self.file_info(&parent)?;
+            parent = info.parent_id.context("folder location unavailable")?;
+            crumbs.push((parent.clone(), info.name));
+        }
+        crumbs.reverse();
+        Ok((folder, crumbs))
     }
 
     /// Resolve a cloud path to its file/folder ID.
@@ -404,7 +447,7 @@ fn pick_unique(
 }
 
 /// Split a cloud path into its non-empty `/`-separated components.
-fn path_components(path: &str) -> Vec<&str> {
+pub(super) fn path_components(path: &str) -> Vec<&str> {
     path.trim_matches('/')
         .split('/')
         .filter(|s| !s.is_empty())

@@ -1,3 +1,4 @@
+pub mod archive;
 pub mod cat;
 pub mod complete_path;
 pub mod completions;
@@ -18,7 +19,9 @@ pub mod play;
 pub mod quota;
 pub mod rename;
 pub mod rm;
+pub mod search;
 pub mod share;
+mod share_manage;
 pub mod star;
 pub mod starred;
 pub mod stats;
@@ -46,11 +49,11 @@ pub const COMMAND_GROUPS: &[(&str, &[&str])] = &[
     (
         "File Management",
         &[
-            "ls", "stats", "mv", "cp", "rename", "rm", "mkdir", "info", "link", "cat",
+            "ls", "search", "stats", "mv", "cp", "rename", "rm", "mkdir", "info", "link", "cat",
         ],
     ),
     ("Playback", &["play"]),
-    ("Transfer", &["download", "upload", "share"]),
+    ("Transfer", &["download", "archive", "upload", "share"]),
     ("Cloud Download", &["offline", "tasks"]),
     ("Trash", &["trash", "untrash", "empty"]),
     (
@@ -83,6 +86,7 @@ pub fn print_command_help(cmd: &str) -> Result<()> {
 /// `pikpaktui <cmd> --help` read from here.
 pub fn command_help_text(cmd: &str) -> (&'static str, &'static str, String) {
     match cmd {
+        "search" => ("search [name] [--cached] [--in /folder] [--type file|folder] [--min-size bytes] [--max-size bytes] [--limit N] [-J]", "Search filenames in the synchronized account index", "--cached uses the last synchronized snapshot offline. Directory sizes include their descendants. The default result limit is 100.\n".into()),
         "hash" => (
             "hash [-J|--json] [--] <local-file>",
             "Compute a local file's PikPak GCID (offline)",
@@ -208,6 +212,11 @@ pub fn command_help_text(cmd: &str) -> (&'static str, &'static str, String) {
                 ex = D,
             ),
         ),
+        "archive" => (
+            "archive <list|extract|progress> [options]",
+            "Browse or extract a cloud archive",
+            "archive list <cloud-file> [--at <member-directory>] [--password-stdin] [-J]\narchive extract <cloud-file> (--all | --member <path>...) [--at <member-directory>] [--password-stdin] [-J]\narchive progress <task-id> [-J]\n\nUse paths from archive list. Repeat --member for each selection. Extraction uses PikPak’s default cloud destination.".into(),
+        ),
         "download" => (
             "download [options] <path> [output]",
             "Download files or folders",
@@ -216,6 +225,8 @@ pub fn command_help_text(cmd: &str) -> (&'static str, &'static str, String) {
                  {opt}  -o, --output <file> {d}Output file name{R}\n\
                  {opt}  -t <local_dir>      {d}Batch: download multiple paths into dir{R}\n\
                  {opt}  -j, --jobs <n>      {d}Concurrent downloads (default: 1){R}\n\
+                 {opt}  -J, --json          {d}Print per-file results and verification status{R}\n\
+                 {opt}  --verify            {d}Verify downloaded bytes against the file GCID{R}\n\
                  {opt}  -n, --dry-run       {d}Preview without downloading{R}\n\
                  \n{B}EXAMPLES:{R}\n\
                  {ex}  pikpaktui download /movie.mkv{R}\n\
@@ -246,24 +257,28 @@ pub fn command_help_text(cmd: &str) -> (&'static str, &'static str, String) {
             format!(
                 "{B}MODES:{R}\n\
                  {opt}  share <path...>        {d}Create a share link{R}\n\
+                 {opt}  share --manage help    {d}Edit links, resolve codes, follow shares and save updates{R}\n\
                  {opt}  share -l               {d}List your shares{R}\n\
                  {opt}  share -S <url>         {d}Save a share to your drive{R}\n\
                  {opt}  share -b <url> [path]  {d}Browse folders inside a share{R}\n\
+                 {opt}  share --preview --file-id <id> <url>  {d}Show file details and stream availability{R}\n\
                  {opt}  share -D <id...>       {d}Delete share(s){R}\n\
                  \n{B}OPTIONS (create):{R}\n\
                  {opt}  -p, --password   {d}Protect with a password{R}\n\
+                 {opt}  --separate       {d}Create one link per path (default: group all paths){R}\n\
+                 {opt}  --view / --order {d}Set the default layout and sort order in the URL{R}\n\
                  {opt}  -d, --days <n>   {d}Expiry in days (-1 = permanent){R}\n\
                  {opt}  -o <file>        {d}Write share URL to file{R}\n\
                  {opt}  -J, --json       {d}Output as JSON{R}\n\
                  \n{B}OPTIONS (browse/save):{R}\n\
                  {opt}  -p <code>        {d}Pass code for protected shares{R}\n\
-                 {opt}  --parent-id <id> {d}Source folder ID inside the share (default: root){R}\n\
+                 {opt}  --parent-id <id> {d}Source folder ID (defaults to the folder in the URL){R}\n\
                  {opt}  -J, --json       {d}Output as JSON, including save previews{R}\n\
                  \n{B}OPTIONS (save):{R}\n\
                  {opt}  --file-id <id>   {d}Save only this entry in the source folder (repeatable){R}\n\
                  {opt}  -t, --to <path>  {d}Destination folder{R}\n\
                  {opt}  -n, --dry-run    {d}Preview without saving{R}\n\
-                 \nUse a root share URL. Deep web URLs are rejected; select entries by ID.\n\
+                 \nPaste a root or nested folder URL. Every folder in the link is verified.\n\
                  Without --file-id, save includes all entries in the source folder.\n\
                  \n{B}EXAMPLES:{R}\n\
                  {ex}  pikpaktui share /movie.mkv{R}\n\
@@ -279,12 +294,14 @@ pub fn command_help_text(cmd: &str) -> (&'static str, &'static str, String) {
             ),
         ),
         "offline" => (
-            "offline [options] <url>",
+            "offline [options] <url...> | --stdin",
             "Cloud download a URL or magnet link",
             format!(
                 "{B}OPTIONS:{R}\n\
                  {opt}  -t, --to <path>  {d}Destination folder in PikPak{R}\n\
-                 {opt}  --name <name>    {d}Custom name for the task{R}\n\
+                 {opt}  --stdin          {d}Read one URL per line{R}\n\
+                 {opt}  -J, --json       {d}Output one result per input URL as a JSON array{R}\n\
+                 {opt}  --name <name>    {d}Custom name for a single task{R}\n\
                  {opt}  -p, --preview    {d}Show what the URL/magnet contains, without adding{R}\n\
                  {opt}  -n, --dry-run    {d}Preview without creating task{R}\n\
                  \n{B}EXAMPLES:{R}\n\
@@ -302,6 +319,7 @@ pub fn command_help_text(cmd: &str) -> (&'static str, &'static str, String) {
             format!(
                 "{B}SUBCOMMANDS:{R}\n\
                  {opt}  list, ls         {d}List tasks (default){R}\n\
+                 {opt}  statuses <id>    {d}List individual task statuses across pages{R}\n\
                  {opt}  show <id>        {d}Poll one task's fresh state{R}\n\
                  {opt}  retry <id>       {d}Retry a failed task{R}\n\
                  {opt}  delete, rm <id...> {d}Delete task(s){R}\n\
@@ -385,8 +403,8 @@ pub fn command_help_text(cmd: &str) -> (&'static str, &'static str, String) {
             ),
         ),
         "events" => (
-            "events [options] [limit]",
-            "List recent file events",
+            "events [--play] [-J] [limit]",
+            "List recent file events (--play filters playback history)",
             format!(
                 "{B}OPTIONS:{R}\n\
                  {opt}  -J, --json       {d}Output as JSON{R}\n\

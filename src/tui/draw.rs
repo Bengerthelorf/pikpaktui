@@ -481,7 +481,7 @@ impl App {
     /// applied. `None` when no terminal protocol is available (callers fall back
     /// to half-block). Never reads stdin — that query happens once before the
     /// input loop, so rendering can't steal keypresses.
-    fn configured_image_picker(&self) -> Option<ratatui_image::picker::Picker> {
+    pub(super) fn configured_image_picker(&self) -> Option<ratatui_image::picker::Picker> {
         use ratatui_image::picker::ProtocolType;
         self.image_picker.clone().map(|mut p| {
             match self.config.current_image_protocol() {
@@ -562,6 +562,8 @@ impl App {
         self.mouse_list_visible.set(0);
         match &self.input {
             InputMode::Login { .. } => self.draw_login_screen(f),
+            InputMode::Archive(page) => page.draw(f),
+            InputMode::IncomingShare(view) => view.draw(self, f),
             InputMode::MovePicker { .. } | InputMode::CopyPicker { .. } => self.draw_picker(f),
             InputMode::CartMovePicker { .. } | InputMode::CartCopyPicker { .. } => {
                 self.draw_cart_picker(f)
@@ -1486,6 +1488,26 @@ impl App {
             InputMode::Rename { .. } | InputMode::Mkdir { .. } => {
                 vec![("Enter", "confirm"), ("Esc", "cancel")]
             }
+            InputMode::LibraryPending => vec![("Esc", "back")],
+            InputMode::Library(page) => match page.source {
+                super::library::Source::Links => {
+                    vec![("Space", "select"), ("Enter", "submit"), ("Esc", "back")]
+                }
+                super::library::Source::Search(_) | super::library::Source::Starred => vec![
+                    ("Enter", "locate"),
+                    ("a", "cart"),
+                    ("n", "more"),
+                    ("Esc", "back"),
+                ],
+                _ => vec![("Enter", "locate"), ("n", "more"), ("Esc", "back")],
+            },
+            InputMode::SearchInput(_) => vec![
+                ("↑/↓", "field"),
+                ("Tab", "scope"),
+                ("Ctrl+t", "type"),
+                ("Enter", "search"),
+                ("Esc", "cancel"),
+            ],
             InputMode::GotoPath { .. } => {
                 vec![("Enter", "go"), ("Esc", "cancel")]
             }
@@ -1502,6 +1524,7 @@ impl App {
                 ("j/k", "nav"),
                 ("x", "remove"),
                 ("C", "clear all"),
+                ("v", "verify GCID"),
                 ("Enter", "download"),
                 ("m", "move"),
                 ("c", "copy"),
@@ -1528,13 +1551,16 @@ impl App {
                 ("j/k", "nav"),
                 ("Enter", "expand"),
                 ("p", "pause/resume"),
+                ("P/R", "pause/resume all"),
                 ("x", "cancel"),
                 ("r", "retry"),
                 ("Esc", "back"),
             ],
             InputMode::UploadView => vec![("x", "cancel upload"), ("Esc", "background")],
-            InputMode::OfflineInput { .. } => vec![("Enter", "submit"), ("Esc", "cancel")],
+            InputMode::OfflineInput { .. } => vec![("Enter", "preview"), ("Esc", "cancel")],
             InputMode::OfflineTasksView { .. } => vec![
+                ("Enter", "locate"),
+                ("i", "details"),
                 ("j/k", "nav"),
                 ("r", "refresh"),
                 ("R", "retry"),
@@ -1630,8 +1656,43 @@ impl App {
             InputMode::PlayerInput { .. } => {
                 vec![("Enter", "confirm"), ("Esc", "cancel")]
             }
-            InputMode::SharePrompt => {
+            InputMode::ShareEdit { .. } => vec![("Enter", "confirm"), ("Esc", "cancel")],
+            InputMode::SharePage { page, .. } => {
+                use super::share_views::SharePage;
+                match page {
+                    SharePage::Following => vec![
+                        ("Enter", "updates"),
+                        ("o", "browse"),
+                        ("a/d", "follow/unfollow"),
+                        ("r", "refresh"),
+                        ("Esc", "back"),
+                    ],
+                    SharePage::Updates(_) => vec![
+                        ("Enter", "show files"),
+                        ("o", "browse share"),
+                        ("r", "refresh"),
+                        ("Esc", "back"),
+                    ],
+                    SharePage::Files(..) => vec![
+                        ("Space", "select"),
+                        ("s", "save selected"),
+                        ("y", "copy ID"),
+                        ("Esc", "back"),
+                    ],
+                    SharePage::CodeInfo(_) => {
+                        vec![("a/e/d", "add/edit/remove"), ("y", "copy"), ("Esc", "back")]
+                    }
+                    SharePage::Codes(_) => {
+                        vec![("Enter", "browse"), ("y", "copy URL"), ("Esc", "back")]
+                    }
+                    _ => vec![("j/k", "navigate"), ("y", "copy"), ("Esc", "back")],
+                }
+            }
+            InputMode::SharePrompt { .. } => {
                 vec![
+                    ("g", "group/separate"),
+                    ("0-9", "expiry days"),
+                    ("i", "status"),
                     ("p", "public share"),
                     ("P", "with password"),
                     ("Esc", "cancel"),
@@ -1651,6 +1712,11 @@ impl App {
                     vec![
                         ("j/k", "nav"),
                         ("y", "copy URL"),
+                        ("Y", "format link"),
+                        ("e/p", "expiry/password"),
+                        ("b", "allow follows"),
+                        ("c/C", "resolve/show code"),
+                        ("f/v", "following/updates"),
                         ("d", "delete"),
                         ("r", "refresh"),
                         ("Esc", "back"),
@@ -1711,6 +1777,8 @@ impl App {
             | InputMode::CartMovePicker { .. }
             | InputMode::CartCopyPicker { .. }
             | InputMode::DownloadView
+            | InputMode::IncomingShare(_)
+            | InputMode::Archive(_)
             | InputMode::MySharesView { .. } => {}
 
             InputMode::MoveInput { input, .. } => {
@@ -1745,6 +1813,92 @@ impl App {
             }
             InputMode::Mkdir { value } => {
                 self.draw_mkdir_overlay(f, value, cur);
+            }
+            InputMode::LibraryPending => {
+                let area = self.prepare_overlay(f, 70, 20);
+                f.render_widget(
+                    Paragraph::new(self.loading_label.as_deref().unwrap_or("Loading…"))
+                        .block(self.styled_block()),
+                    area,
+                );
+            }
+            InputMode::Library(page) => {
+                let area = self.prepare_overlay(f, 86, 70);
+                let count = area.height.saturating_sub(2) as usize;
+                let offset = (page.selected + 1).saturating_sub(count);
+                let mut lines: Vec<_> = page
+                    .rows
+                    .iter()
+                    .enumerate()
+                    .skip(offset)
+                    .take(count)
+                    .map(|(i, r)| {
+                        let marker = if matches!(page.source, super::library::Source::Links) {
+                            if r.checked { "[x] " } else { "[ ] " }
+                        } else if page.in_cart(i, &self.cart_ids) {
+                            "+ "
+                        } else {
+                            ""
+                        };
+                        let line = Line::from(format!(" {marker}{}", r.label));
+                        if i == page.selected {
+                            line.style(Style::default().add_modifier(Modifier::REVERSED))
+                        } else {
+                            line
+                        }
+                    })
+                    .collect();
+                if lines.is_empty() {
+                    lines.push(Line::from(" No items"));
+                }
+                let more = if page.next.is_some() {
+                    " · n for more"
+                } else {
+                    ""
+                };
+                let title = format!("{} · {}{}", page.source.title(), page.rows.len(), more);
+                f.render_widget(
+                    Paragraph::new(lines).block(self.styled_block().title(title)),
+                    area,
+                );
+            }
+            InputMode::SearchInput(form) => {
+                let area = self.prepare_overlay(f, 72, 35);
+                let scope = if form.scoped {
+                    self.current_path_display()
+                } else {
+                    "Entire drive".into()
+                };
+                let kind = match form.kind {
+                    Some(EntryKind::File) => "Files",
+                    Some(EntryKind::Folder) => "Folders",
+                    None => "All",
+                };
+                let mut lines = Vec::new();
+                for (i, (label, value)) in [
+                    ("Name", &form.name),
+                    ("Minimum bytes", &form.min_size),
+                    ("Maximum bytes", &form.max_size),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    let text = if i == form.field {
+                        self.text_input_display(value, area.width.saturating_sub(20) as usize)
+                    } else {
+                        value.clone()
+                    };
+                    lines.push(Line::from(format!(
+                        " {} {label}: {text}",
+                        if i == form.field { ">" } else { " " }
+                    )));
+                }
+                lines.push(Line::from(format!("   Scope: {scope} (Tab)")));
+                lines.push(Line::from(format!("   Type: {kind} (Ctrl+t)")));
+                f.render_widget(
+                    Paragraph::new(lines).block(self.styled_block().title("Search filenames")),
+                    area,
+                );
             }
             InputMode::GotoPath { query } => {
                 self.draw_goto_overlay(f, query, cur);
@@ -1870,9 +2024,87 @@ impl App {
             InputMode::PlayerInput { value, .. } => {
                 self.draw_player_input_overlay(f, value);
             }
-            InputMode::SharePrompt => {
+            InputMode::ShareEdit { field, value } => {
+                let area = self.prepare_overlay(f, 84, 35);
+                let display = if matches!(
+                    field,
+                    super::share_views::ShareField::Password(_)
+                        | super::share_views::ShareField::Save {
+                            destination: Some(_),
+                            ..
+                        }
+                ) {
+                    let hidden = "*".repeat(value.chars().count());
+                    let cursor = value
+                        .get(..self.text_cursor.min(value.len()))
+                        .unwrap_or(value)
+                        .chars()
+                        .count();
+                    text_input_view(
+                        &hidden,
+                        cursor,
+                        area.width.saturating_sub(5) as usize,
+                        self.cursor_visible,
+                    )
+                } else {
+                    self.text_input_display(value, area.width.saturating_sub(5) as usize)
+                };
+                let lines = vec![
+                    Line::from(field.title()),
+                    Line::from(display),
+                    Self::hint_line(&[("Enter", "confirm"), ("Esc", "cancel")]),
+                ];
+                f.render_widget(
+                    Paragraph::new(lines)
+                        .wrap(Wrap { trim: false })
+                        .block(self.overlay_block("Share", Color::Cyan, Color::LightBlue)),
+                    area,
+                );
+            }
+            InputMode::SharePage {
+                page,
+                rows,
+                selected,
+                marked,
+            } => {
+                let area = self.prepare_overlay(f, 88, 70);
+                let list_height = area.height.saturating_sub(3) as usize;
+                let mut lines = vec![];
+                if rows.is_empty() {
+                    lines.push(Line::from(if self.loading {
+                        "Loading..."
+                    } else {
+                        "No entries"
+                    }));
+                }
+                let start = selected.saturating_add(1).saturating_sub(list_height);
+                for (i, row) in rows.iter().enumerate().skip(start).take(list_height) {
+                    let mark = if marked.contains(&i) { "[x] " } else { "" };
+                    let text = format!(
+                        "{}{}{}",
+                        if i == *selected { "› " } else { "  " },
+                        mark,
+                        page.label(row)
+                    );
+                    let style = if i == *selected {
+                        Style::default().fg(Color::Cyan)
+                    } else {
+                        Style::default()
+                    };
+                    lines.push(Line::styled(text, style));
+                }
+                f.render_widget(
+                    Paragraph::new(lines).block(self.overlay_block(
+                        page.title(),
+                        Color::Cyan,
+                        Color::LightBlue,
+                    )),
+                    area,
+                );
+            }
+            InputMode::SharePrompt { grouped, days } => {
                 self.draw_cart_overlay(f);
-                self.draw_share_prompt_overlay(f);
+                self.draw_share_prompt_overlay(f, *grouped, days);
             }
             InputMode::ShareCreatedView { shares } => {
                 self.draw_cart_overlay(f);
@@ -2521,6 +2753,7 @@ impl App {
                             ("f", "New folder"),
                             ("s", "Star / Unstar"),
                             ("y", "Copy link"),
+                            ("Y", "Sharing status"),
                             ("a", "Add to cart"),
                         ],
                     ),
@@ -2529,6 +2762,7 @@ impl App {
                         vec![
                             ("D", "Downloads"),
                             ("A", "View cart"),
+                            ("I", "Open share link"),
                             ("M", "My Shares"),
                             ("o", "Cloud download"),
                             ("O", "Offline tasks"),
@@ -2787,9 +3021,14 @@ impl App {
     fn draw_cart_overlay(&self, f: &mut Frame) {
         let total_size: u64 = self.cart.iter().map(|e| e.size).sum();
         let title = format!(
-            "Cart ({} files, {})",
+            "Cart ({} items, {}) · GCID verification {}",
             self.cart.len(),
-            format_size(total_size)
+            format_size(total_size),
+            if self.download_state.verify_new {
+                "on"
+            } else {
+                "off"
+            }
         );
 
         let max_items = 12;
@@ -2802,7 +3041,7 @@ impl App {
 
         if self.cart.is_empty() {
             lines.push(widgets::empty_state_line(
-                "Cart is empty. Press 'a' on files to add them.",
+                "Cart is empty. Press 'a' on files or folders to add them.",
             ));
         } else {
             let cart_offset = widgets::scroll_offset(self.cart_selected, max_items);
@@ -2842,7 +3081,8 @@ impl App {
         lines.push(Self::hint_line(&[
             ("j/k", "nav"),
             ("x", "remove"),
-            ("a", "clear"),
+            ("C", "clear"),
+            ("v", "verify GCID"),
             ("Enter", "download"),
             ("m", "move"),
             ("c", "copy"),
@@ -3040,7 +3280,7 @@ impl App {
             Paragraph::new(vec![
                 Line::from(""),
                 Line::from(Span::styled(
-                    "  Enter URL or magnet link for cloud download:",
+                    "  Paste URL or magnet links, separated by spaces or lines:",
                     Style::default().fg(Color::Reset),
                 )),
                 Line::from(""),
@@ -3049,7 +3289,7 @@ impl App {
                     Span::styled(display, Style::default().fg(Color::Yellow)),
                 ]),
                 Line::from(""),
-                Self::hint_line(&[("Enter", "submit"), ("Esc", "cancel")]),
+                Self::hint_line(&[("Enter", "preview"), ("Esc", "cancel")]),
             ])
             .block(self.overlay_block("Offline Download", bc, tc)),
             area,
@@ -4182,8 +4422,8 @@ impl App {
         );
     }
 
-    fn draw_share_prompt_overlay(&self, f: &mut Frame) {
-        let area = self.prepare_overlay(f, 50, 20);
+    fn draw_share_prompt_overlay(&self, f: &mut Frame, grouped: bool, days: &str) {
+        let area = self.prepare_overlay(f, 75, 35);
         let (bc, tc) = if self.is_vibrant() {
             (Color::LightCyan, Color::LightCyan)
         } else {
@@ -4192,10 +4432,27 @@ impl App {
         let lines = vec![
             Line::from(""),
             Line::from(Span::styled(
-                "  Create share for all cart items:",
+                format!(
+                    "  {} • {}",
+                    if grouped {
+                        "One link for the entire cart"
+                    } else {
+                        "One link per cart item"
+                    },
+                    if days.is_empty() {
+                        "permanent".to_owned()
+                    } else {
+                        format!("expires in {days} days")
+                    }
+                ),
                 Style::default().fg(Color::Reset),
             )),
             Line::from(""),
+            Self::hint_line(&[
+                ("g", "toggle grouping"),
+                ("0–9/Backspace", "expiry days"),
+                ("i", "file status"),
+            ]),
             Self::hint_line(&[
                 ("p", "public share"),
                 ("P", "with password"),

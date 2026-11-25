@@ -38,7 +38,7 @@ A request is a JSON object with an `op` string and operation arguments. Success 
 | `folder_stats_cached`, `folder_index_sync` | Available when `core_info.value.capabilities` contains `"folder_index"`. Batch-read the last committed folder totals offline, or synchronize the current account's index using a registered scan. |
 | `mkdir`, `rename`, `move`, `copy`, `star`, `unstar`, `remove`, `restore`, `destroy`, `empty_trash` | Drive mutations. Code `pending` indicates a mutation may have been accepted, so refresh state before retrying. |
 | `offline`, `tasks`, `retry_task`, `delete_tasks`, `account`, `events` | Submit and manage offline tasks, read account information and events. |
-| `shares`, `share_create`, `share_delete`, `share_open`, `share_folder`, `share_save` | Manage shares, browse a share by folder, and restore selected IDs. |
+| `shares`, `share_create`, `share_delete`, `share_open`, `share_folder`, `share_preview`, `share_save` | Manage shares, browse root and nested links, preview shared file metadata, and restore selected IDs. Pass the `share` and `token` returned by `share_open` to subsequent operations; an empty source parent reopens the same linked folder. |
 | `download`, `download_folder`, `upload`, `hash` | A file download returns bytes, folder download returns `done` and `failed`, and ordinary upload returns `id` and `instant`. Controlled upload returns `null`. Hash returns the GCID. |
 | `transfer_begin`, `transfer_progress`, `transfer_stop`, `transfer_end` | Register `transfer` and `kind` (`upload` or `download`), pass the key to the transfer, and query or stop it concurrently. End releases the key. Downloads can resume from their partial file. Progress contains `bytes` and `total`, with `stage` on upload. |
 

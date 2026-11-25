@@ -48,3 +48,24 @@ impl SessionToken {
         now_unix >= self.expires_at_unix
     }
 }
+
+#[derive(Debug, Clone, Default)]
+pub struct SearchQuery {
+    pub name: String,
+    pub scope_id: String,
+    pub scope_path: Option<String>,
+    pub kind: Option<EntryKind>,
+    pub min_size: Option<u64>,
+    pub max_size: Option<u64>,
+    pub limit: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SearchHit {
+    pub id: String,
+    pub parent_id: String,
+    pub path: String,
+    pub name: String,
+    pub kind: EntryKind,
+    pub size: u64,
+}

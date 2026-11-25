@@ -475,24 +475,47 @@ fn call(client: &PikPak, op: &str, args: &Value) -> Result<Value> {
             Value::Null
         }
         "share_open" => {
-            let (share_id, query_code) = share_identity(required(args, "url")?)?;
+            let url = required(args, "url")?;
+            let location = share_location(url)?;
             let code = args["code"]
                 .as_str()
                 .filter(|value| !value.is_empty())
-                .or(query_code.as_deref())
+                .or(location.pass_code.as_deref())
                 .unwrap_or("");
-            let info = client.share_info(&share_id, code)?;
-            let files = client.share_detail(&share_id, "", &info.pass_code_token)?;
-            json!({"share": share_id, "token": info.pass_code_token, "files": files})
+            let info = client.share_info(&location.id, code)?;
+            location.breadcrumbs(client, &info.pass_code_token)?;
+            let files =
+                client.share_detail(&location.id, location.folder(None)?, &info.pass_code_token)?;
+            // The existing app passes this handle back verbatim on refresh and navigation.
+            // A deep link anchors its empty-parent view at the opened folder across calls.
+            let handle = share_handle(url, &location)?;
+            json!({"share": handle, "token": info.pass_code_token, "files": files})
         }
-        "share_folder" => encode(client.share_detail(
-            required(args, "share")?,
-            parent(),
-            args["token"].as_str().unwrap_or(""),
-        )?)?,
+        "share_folder" => {
+            let location = share_location(required(args, "share")?)?;
+            let folder = if parent().is_empty() {
+                location.folder(None)?
+            } else {
+                parent()
+            };
+            encode(client.share_detail(
+                &location.id,
+                folder,
+                args["token"].as_str().unwrap_or(""),
+            )?)?
+        }
+        "share_preview" => {
+            let location = share_location(required(args, "share")?)?;
+            encode(client.share_preview(
+                &location.id,
+                id()?,
+                args["token"].as_str().unwrap_or(""),
+            )?)?
+        }
         "share_save" => {
+            let location = share_location(required(args, "share")?)?;
             client.save_share(
-                required(args, "share")?,
+                &location.id,
                 args["token"].as_str().unwrap_or(""),
                 &ids()?,
                 parent(),
@@ -597,46 +620,32 @@ fn validate_resource_link(input: &str) -> Result<()> {
     Ok(())
 }
 
-fn share_identity(input: &str) -> Result<(String, Option<String>)> {
-    let input = input.trim();
-    if valid_id(input) {
-        return Ok((input.to_owned(), None));
+fn share_location(input: &str) -> Result<pikpak::ShareLocation> {
+    let location = pikpak::ShareLocation::parse(input)?;
+    if !valid_id(input.trim()) {
+        let url = reqwest::Url::parse(input.trim())?;
+        ensure!(
+            matches!(
+                url.host_str(),
+                Some("mypikpak.com" | "www.mypikpak.com" | "share.mypikpak.com")
+            ),
+            "invalid PikPak share link"
+        );
     }
-    let invalid = || anyhow!("invalid or deep PikPak share link");
-    ensure!(
-        !input.contains('\\') && !input.chars().any(char::is_control),
-        invalid()
-    );
-    let (_, authority_route) = input.split_once("://").ok_or_else(invalid)?;
-    let route = authority_route
-        .split(['?', '#'])
-        .next()
-        .ok_or_else(invalid)?;
-    let (_, path) = route.split_once('/').ok_or_else(invalid)?;
-    let id = path
-        .trim_end_matches('/')
-        .strip_prefix("s/")
-        .filter(|id| valid_id(id))
-        .ok_or_else(invalid)?;
-    let url = reqwest::Url::parse(input)?;
-    ensure!(matches!(url.scheme(), "http" | "https"), invalid());
-    ensure!(
-        matches!(
-            url.host_str(),
-            Some("mypikpak.com" | "www.mypikpak.com" | "share.mypikpak.com")
-        ),
-        invalid()
-    );
-    let code = url
-        .query_pairs()
-        .find(|(key, _)| key == "pass_code")
-        .map(|(_, value)| value.into_owned());
-    Ok((id.to_owned(), code))
+    Ok(location)
+}
+
+fn share_handle(input: &str, location: &pikpak::ShareLocation) -> Result<String> {
+    if location.folders.is_empty() {
+        return Ok(location.id.clone());
+    }
+    let url = reqwest::Url::parse(input.trim())?;
+    Ok(format!("https://mypikpak.com{}", url.path()))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{CreateShareResponse, create_separate_shares, share_identity};
+    use super::{CreateShareResponse, create_separate_shares, share_handle, share_location};
 
     #[test]
     fn cancelled_folder_scan_stops_workers_and_rejects_queued_scans() {
@@ -685,12 +694,20 @@ mod tests {
 
     #[test]
     fn share_selection_never_expands_a_deep_link() {
-        assert_eq!(
-            share_identity("https://mypikpak.com/s/test_Id/?pass_code=a%2Bb").unwrap(),
-            ("test_Id".into(), Some("a+b".into())),
-        );
-        assert!(share_identity("https://mypikpak.com/s/test_Id/child").is_err());
-        assert!(share_identity("https://mypikpak.com/s/test_Id/child/..").is_err());
-        assert!(share_identity("https://example.com/s/test_Id").is_err());
+        let root = "https://mypikpak.com/s/test_Id/?pass_code=a%2Bb";
+        let loc = share_location(root).unwrap();
+        assert_eq!(loc.id, "test_Id");
+        assert_eq!(loc.pass_code.as_deref(), Some("a+b"));
+        assert_eq!(share_handle(root, &loc).unwrap(), "test_Id");
+        let deep = "https://www.mypikpak.com/s/VOIQ0QFrIMiPE8EFPZYJKKxpo1/AAAeZ9plmSBi6NG9KffhrhCAo1_VOI?pass_code=private#fragment";
+        let loc = share_location(deep).unwrap();
+        let handle = share_handle(deep, &loc).unwrap();
+        assert!(!handle.contains("private") && !handle.contains('#'));
+        let reopened = share_location(&handle).unwrap();
+        assert_eq!(reopened.folder(None).unwrap(), "VOIOttsOuejt-xC4FGHohrzpo1");
+        assert_eq!(reopened.id, loc.id);
+        assert!(share_location("https://mypikpak.com/s/test_Id/child").is_err());
+        assert!(share_location("https://mypikpak.com/s/test_Id/child/..").is_err());
+        assert!(share_location("https://example.com/s/test_Id").is_err());
     }
 }

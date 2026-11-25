@@ -9,7 +9,7 @@ use crate::pikpak::{Entry, EntryKind};
 use crate::theme;
 
 use super::completion::PathInput;
-use super::download::{DownloadTask, TaskStatus};
+use super::download::TaskStatus;
 use super::local_completion::LocalPathInput;
 use super::operations::{Destination, FileAction};
 use super::{
@@ -70,6 +70,18 @@ enum PathInputContext {
 }
 
 impl App {
+    pub(super) fn toggle_cart_entry(&mut self, entry: Entry) {
+        if self.cart_ids.contains(&entry.id) {
+            self.cart_ids.remove(&entry.id);
+            self.cart.retain(|e| e.id != entry.id);
+            self.push_log(format!("Removed '{}' from cart", entry.name));
+        } else {
+            self.cart_ids.insert(entry.id.clone());
+            self.push_log(format!("Added '{}' to cart", entry.name));
+            self.cart.push(entry);
+        }
+    }
+
     pub(super) fn handle_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> Result<bool> {
         if self.show_help_sheet {
             let can_scroll = self.help_scroll_max.get() > 0;
@@ -113,6 +125,19 @@ impl App {
 
         let mode = std::mem::replace(&mut self.input, InputMode::Normal);
         match mode {
+            InputMode::Archive(mut view) => {
+                if view.key(self, code, modifiers) {
+                    self.input = InputMode::Archive(view);
+                }
+                Ok(false)
+            }
+            InputMode::IncomingShare(mut view) => {
+                if view.key(self, code, modifiers) {
+                    self.input = InputMode::IncomingShare(view);
+                }
+                Ok(false)
+            }
+
             InputMode::Login {
                 mut field,
                 mut email,
@@ -273,6 +298,23 @@ impl App {
                 }
                 Ok(false)
             }
+            InputMode::Library(page) => {
+                self.handle_library_key(page, code);
+                Ok(false)
+            }
+            InputMode::LibraryPending => {
+                if code == KeyCode::Esc {
+                    self.invalidate_modal_request();
+                    self.finish_loading();
+                } else {
+                    self.input = InputMode::LibraryPending;
+                }
+                Ok(false)
+            }
+            InputMode::SearchInput(form) => {
+                form.key(self, code, modifiers);
+                Ok(false)
+            }
             InputMode::GotoPath { mut query } => {
                 match handle_text_input(&mut query, &mut self.text_cursor, code, modifiers) {
                     Some(true) => {
@@ -411,8 +453,21 @@ impl App {
                 self.handle_trash_view_key(code, &mut entries, &mut selected, expanded);
                 Ok(false)
             }
-            InputMode::SharePrompt => {
-                self.handle_share_prompt_key(code);
+            InputMode::ShareEdit { field, value } => {
+                self.handle_share_edit(code, modifiers, field, value);
+                Ok(false)
+            }
+            InputMode::SharePage {
+                page,
+                rows,
+                selected,
+                marked,
+            } => {
+                self.handle_share_page(code, page, rows, selected, marked);
+                Ok(false)
+            }
+            InputMode::SharePrompt { grouped, days } => {
+                self.handle_share_prompt_key(code, grouped, days);
                 Ok(false)
             }
             InputMode::ShareCreatedView { mut shares } => {
@@ -801,17 +856,14 @@ impl App {
                 self.show_help_sheet = true;
                 self.help_scroll = 0;
             }
+            KeyCode::Char('Z') => {
+                if let Some(entry) = self.current_entry().cloned() {
+                    self.open_archive(entry);
+                }
+            }
             KeyCode::Char('a') => {
                 if let Some(entry) = self.current_entry().cloned() {
-                    if self.cart_ids.contains(&entry.id) {
-                        self.cart_ids.remove(&entry.id);
-                        self.cart.retain(|e| e.id != entry.id);
-                        self.push_log(format!("Removed '{}' from cart", entry.name));
-                    } else {
-                        self.cart_ids.insert(entry.id.clone());
-                        self.push_log(format!("Added '{}' to cart", entry.name));
-                        self.cart.push(entry);
-                    }
+                    self.toggle_cart_entry(entry);
                 }
             }
             KeyCode::Char('A') => {
@@ -819,6 +871,20 @@ impl App {
             }
             KeyCode::Char('D') => {
                 self.input = InputMode::DownloadView;
+            }
+            KeyCode::Char('I') => {
+                self.open_incoming_share("");
+            }
+            KeyCode::Char('/') => {
+                self.text_cursor = 0;
+                self.input = InputMode::SearchInput(Default::default());
+            }
+            KeyCode::Char('F') => self.open_library(super::library::Source::Starred),
+            KeyCode::Char('H') => {
+                self.open_library(super::library::Source::Events { playback: false })
+            }
+            KeyCode::Char('P') => {
+                self.open_library(super::library::Source::Events { playback: true })
             }
             KeyCode::Char('M') => {
                 self.open_my_shares_view();
@@ -828,6 +894,7 @@ impl App {
                     self.spawn_star_toggle(entry);
                 }
             }
+            KeyCode::Char('Y') => self.show_selected_share_status(),
             KeyCode::Char('y') => {
                 if let Some(entry) = self.current_entry().cloned()
                     && entry.kind == EntryKind::File
@@ -1382,6 +1449,10 @@ impl App {
                 self.push_log(format!("Cleared {} items from cart", count));
                 self.input = InputMode::CartView;
             }
+            KeyCode::Char('v') => {
+                self.download_state.verify_new = !self.download_state.verify_new;
+                self.input = InputMode::CartView;
+            }
             KeyCode::Enter => {
                 if self.cart.is_empty() {
                     self.push_log("Cart is empty".into());
@@ -1421,7 +1492,10 @@ impl App {
                     self.push_log("Cart is empty".into());
                     self.input = InputMode::CartView;
                 } else {
-                    self.input = InputMode::SharePrompt;
+                    self.input = InputMode::SharePrompt {
+                        grouped: false,
+                        days: String::new(),
+                    };
                 }
             }
             KeyCode::Char('S') => {
@@ -1429,7 +1503,7 @@ impl App {
                     self.push_log("Cart is empty".into());
                     self.input = InputMode::CartView;
                 } else {
-                    self.spawn_create_shares(false);
+                    self.spawn_create_shares(false, false, 0);
                 }
             }
             _ => {
@@ -1668,44 +1742,6 @@ impl App {
         }
     }
 
-    fn start_cart_download(&mut self, dest_dir: &str) {
-        let dest = PathBuf::from(dest_dir);
-        let cart_items = std::mem::take(&mut self.cart);
-        self.cart_ids.clear();
-        self.cart_selected = 0;
-
-        let count = cart_items.len();
-        // Reserve unique local names: two cart entries may share a name
-        // (different folders, or duplicates within one), and concurrent
-        // workers writing one path interleave chunks into a corrupt file.
-        // Names already queued for this directory count as taken too.
-        let mut taken = self.download_state.reserved_names_in(dest.as_path());
-        for item in cart_items {
-            // Sanitized: the name is server data and must not escape dest.
-            let local_name = crate::pikpak::unique_local_name(
-                &mut taken,
-                &crate::pikpak::sanitize_filename(&item.name),
-            );
-            let file_dest = dest.join(&local_name);
-            let id = self.download_state.alloc_id();
-            let task = DownloadTask {
-                id,
-                file_id: item.id,
-                name: item.name,
-                total_size: item.size,
-                downloaded: 0,
-                dest_path: file_dest,
-                status: TaskStatus::Pending,
-                cancel_flag: Arc::new(AtomicBool::new(false)),
-                speed: 0.0,
-            };
-            self.download_state.tasks.push(task);
-        }
-
-        self.push_log(format!("Queued {} files for download", count));
-        self.download_state.start_next(&self.client);
-    }
-
     fn handle_download_view_key(&mut self, code: KeyCode) {
         let task_count = self.download_state.tasks.len();
 
@@ -1751,6 +1787,22 @@ impl App {
                 }
                 self.input = InputMode::DownloadView;
             }
+            KeyCode::Char('P') | KeyCode::Char('R') => {
+                let pause = code == KeyCode::Char('P');
+                self.download_state.set_queue_paused(pause);
+                if !pause {
+                    self.download_state.start_next(&self.client);
+                }
+                self.push_log(
+                    if pause {
+                        "Paused download queue"
+                    } else {
+                        "Resumed download queue"
+                    }
+                    .into(),
+                );
+                self.input = InputMode::DownloadView;
+            }
             KeyCode::Char('p') => {
                 let sel = self.download_state.selected;
                 let mut log_msg = None;
@@ -1762,7 +1814,7 @@ impl App {
                     .map(|t| (t.status.clone(), t.name.clone()));
                 if let Some((status, name)) = info {
                     match status {
-                        TaskStatus::Downloading => {
+                        TaskStatus::Downloading | TaskStatus::Pending => {
                             // Stop the worker instead of parking it: a parked
                             // thread pins an HTTP connection and, once other
                             // tasks filled its slot, resuming it would exceed
@@ -1773,7 +1825,7 @@ impl App {
                             task.status = TaskStatus::Paused;
                             log_msg = Some(format!("Paused '{}'", name));
                         }
-                        TaskStatus::Paused => {
+                        TaskStatus::Paused if !self.download_state.queue_paused => {
                             // Fresh flag: the old worker may still be draining
                             // and must keep seeing its stop signal. start_next
                             // skips this id until Stopped frees it, so no
@@ -1855,7 +1907,7 @@ impl App {
                         value: std::mem::take(value),
                     };
                 } else {
-                    self.spawn_offline_download(url);
+                    self.preview_offline_links(url);
                 }
             }
             None => {
@@ -1864,33 +1916,6 @@ impl App {
                 };
             }
         }
-    }
-
-    fn spawn_offline_download(&mut self, url: String) {
-        let client = Arc::clone(&self.client);
-        let tx = self.result_tx.clone();
-        let parent_id = if self.current_folder_id.is_empty() {
-            None
-        } else {
-            Some(self.current_folder_id.clone())
-        };
-        self.loading = true;
-        let guard = super::operations::WriteGuard::new(&self.background_writes);
-        std::thread::spawn(move || {
-            let _guard = guard;
-            let result = client.offline_download(&url, parent_id.as_deref(), None);
-            let _ = tx.send(match result {
-                Ok(resp) => {
-                    let name = resp
-                        .task
-                        .as_ref()
-                        .map(|t| t.name.as_str())
-                        .unwrap_or("unknown");
-                    OpResult::Ok(format!("Offline task created: {}", name))
-                }
-                Err(e) => OpResult::Err(format!("Offline download failed: {e:#}")),
-            });
-        });
     }
 
     pub(super) fn open_info_popup(&mut self, entry: Entry) {

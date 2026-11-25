@@ -32,6 +32,10 @@ impl Request {
 enum RestoreBehavior {
     Complete,
     CompleteFailure,
+    DirectPartial,
+    DirectAll,
+    Unlocated,
+    DeniedPreview,
     AsyncComplete,
     TaskFailure,
     Unknown,
@@ -145,6 +149,13 @@ impl Fixture {
                         (Some(""), None) => json!({"files":[{"id":"nested", "name":"docs", "kind":"drive#folder"}, {"id":"other", "name":"unselected.txt", "kind":"drive#file", "size":"11"}]}),
                         _ => panic!("unexpected folder request: {request:?}"),
                     },
+                    "/drive/v1/share/file_info" => {
+                        let denied = behavior == RestoreBehavior::DeniedPreview;
+                        json!({"share_status":if denied {"FORBIDDEN"} else {"OK"}, "file_info":{
+                            "id": "first","name":"first.txt","mime_type":"text/plain","size":"7","medias":[
+                            {"media_name":"720p","is_visible":true,"video":{"duration":49.0},"need_more_quota":true,"link":{"url":"https://example.invalid/restricted"}},
+                            {"media_name":"secret quality","is_visible":false,"link":{"url":"https://example.invalid/hidden"}}]}})
+                    },
                     "/drive/v1/share/restore" => {
                         restore_count += 1;
                         restored_mapping = Value::Object(request.body["file_ids"].as_array().unwrap().iter().map(|id| {
@@ -185,6 +196,12 @@ impl Fixture {
                             json!({"id":"restore-task","phase":"PHASE_TYPE_COMPLETE","params":{"trace_file_ids":restored_mapping.to_string()}})
                         }
                     },
+                    "/drive/v1/files" if request.query("parent_id").as_deref() == Some("shared-default") => json!({"files":
+                        restored_mapping.as_object().unwrap().values().filter(|_| behavior != RestoreBehavior::Unlocated)
+                            .map(|id| json!({"id":id,"name":"restored","kind":"drive#file","size":"1"})).collect::<Vec<_>>() }),
+                    "/drive/v1/files" if restore_count > 0 && matches!(behavior, RestoreBehavior::DirectPartial | RestoreBehavior::DirectAll) => json!({"files":restored_mapping.as_object().unwrap().values()
+                        .filter(|v| behavior == RestoreBehavior::DirectAll || v.as_str() == Some("saved-first"))
+                        .map(|id| json!({"id":id,"name":"placed","kind":"drive#file","size":"1"})).collect::<Vec<_>>() }),
                     "/drive/v1/files" => json!({"files":[
                         {"id":"destination-id","name":"destination","kind":"drive#folder","size":"0"},
                         {"id":"regular-file","name":"report.txt","kind":"drive#file","size":"10"}
@@ -312,18 +329,23 @@ fn save_selected_nested_ids_across_pages_deduplicates_restore_payload() {
         json!([{"id":"second", "name":"second.txt"}, {"id":"first", "name":"first.txt"}])
     );
     let requests = fixture.requests.lock().unwrap();
-    assert_eq!(requests.len(), 5);
+    assert_eq!(requests.len(), 7);
     assert_eq!(requests[1].query("parent_id").as_deref(), Some("nested"));
     assert_eq!(requests[2].query("page_token").as_deref(), Some("next"));
     assert_eq!(requests[3].method, "POST");
     assert_eq!(requests[3].url.path(), "/drive/v1/share/restore");
     assert_eq!(
         requests[3].body,
-        json!({"share_id":"SHARE", "pass_code_token":"share-token", "file_ids":["second", "first"], "params":{"trace_file_ids":"second,first"}})
+        json!({"share_id":"SHARE", "pass_code_token":"share-token", "parent_id":"", "specify_parent_id":true, "file_ids":["second", "first"], "params":{"trace_file_ids":"second,first"}})
     );
-    assert_eq!(requests[4].url.path(), "/drive/v1/files:batchMove");
+    assert_eq!(requests[4].url.path(), "/drive/v1/files");
     assert_eq!(
-        requests[4].body,
+        requests[5].query("parent_id").as_deref(),
+        Some("shared-default")
+    );
+    assert_eq!(requests[6].url.path(), "/drive/v1/files:batchMove");
+    assert_eq!(
+        requests[6].body,
         json!({"ids":["saved-second","saved-first"],"to":{"parent_id":""}})
     );
 }
@@ -443,6 +465,116 @@ fn root_save_default_still_saves_all_root_entries_and_decodes_password() {
     let requests = fixture.requests.lock().unwrap();
     assert_eq!(requests[0].query("pass_code").as_deref(), Some("a+b"));
     assert_eq!(requests[2].body["file_ids"], json!(["nested", "other"]));
+}
+
+#[test]
+fn deep_folder_browse_save_and_preview_stay_in_the_selected_folder() {
+    let fixture = Fixture::new(false);
+    let url = "https://mypikpak.com/s/SHARES/nested?pass_code=a%2Bb";
+    let contents = Fixture::output_json(fixture.run(&["-b", "-J", url]));
+    assert_eq!(contents.as_array().unwrap().len(), 2);
+    let result = Fixture::output_json(fixture.run(&["-S", "-n", "-J", url]));
+    assert_eq!(result["files"][1]["id"], "second");
+    let preview =
+        Fixture::output_json(fixture.run(&["--preview", "--file-id", "first", "-J", url]));
+    assert_eq!(preview["duration_seconds"], 49.0);
+    assert_eq!(preview["streams"].as_array().unwrap().len(), 1);
+    assert_eq!(preview["streams"][0]["available"], false);
+    assert!(!preview.to_string().contains("example.invalid"));
+    assert!(
+        !fixture
+            .run(&["-S", "--parent-id", "other", url])
+            .status
+            .success()
+    );
+    assert!(
+        !fixture
+            .run(&["--preview", "--file-id", "other", url])
+            .status
+            .success()
+    );
+    let requests = fixture.requests.lock().unwrap();
+    assert!(requests.iter().all(|r| r.method == "GET"));
+    let preview = requests
+        .iter()
+        .find(|r| r.url.path().ends_with("file_info"))
+        .unwrap();
+    assert_eq!(preview.query("file_id").as_deref(), Some("first"));
+    assert_eq!(
+        preview.query("pass_code_token").as_deref(),
+        Some("share-token")
+    );
+}
+
+#[test]
+fn denied_preview_returns_no_file_metadata() {
+    let fixture = Fixture::with_restore(false, RestoreBehavior::DeniedPreview);
+    let result = fixture.run(&[
+        "--preview",
+        "--file-id",
+        "first",
+        "-J",
+        "https://mypikpak.com/s/SHARES/nested",
+    ]);
+    assert!(!result.status.success());
+    assert!(result.stdout.is_empty());
+}
+
+#[test]
+fn saving_a_linked_folder_supplies_its_verified_ancestry_and_never_moves_unlocated_ids() {
+    let fixture = Fixture::with_restore(false, RestoreBehavior::Unlocated);
+    let result = fixture.run(&[
+        "-S",
+        "--file-id",
+        "first",
+        "https://mypikpak.com/s/SHARES/nested",
+    ]);
+    assert!(!result.status.success());
+    let error = String::from_utf8_lossy(&result.stderr);
+    assert!(
+        error.contains("location of some files is unconfirmed"),
+        "{error}"
+    );
+    let requests = fixture.requests.lock().unwrap();
+    let posts: Vec<_> = requests.iter().filter(|r| r.method == "POST").collect();
+    assert_eq!(posts.len(), 1);
+    assert_eq!(posts[0].body["ancestor_ids"], json!(["nested"]));
+    assert_eq!(posts[0].body["file_ids"], json!(["first"]));
+}
+
+#[test]
+fn direct_restore_moves_only_receipt_ids_missing_from_the_destination() {
+    for behavior in [RestoreBehavior::DirectAll, RestoreBehavior::DirectPartial] {
+        let fixture = Fixture::with_restore(false, behavior);
+        let output = Fixture::output_json(fixture.run(&[
+            "-S",
+            "-J",
+            "-t",
+            "/destination",
+            "--parent-id",
+            "nested",
+            "SHARE",
+        ]));
+        assert_eq!(output["saved"], 2);
+        let requests = fixture.requests.lock().unwrap();
+        let restores = requests
+            .iter()
+            .filter(|r| r.url.path().ends_with("/restore"))
+            .collect::<Vec<_>>();
+        assert_eq!(restores.len(), 1);
+        assert_eq!(restores[0].body["parent_id"], "destination-id");
+        assert_eq!(restores[0].body["specify_parent_id"], true);
+        let moves: Vec<_> = requests
+            .iter()
+            .filter(|r| r.url.path().ends_with("batchMove"))
+            .collect();
+        if behavior == RestoreBehavior::DirectPartial {
+            assert_eq!(moves.len(), 1);
+            assert_eq!(moves[0].body["ids"], json!(["saved-second"]));
+        } else {
+            assert!(moves.is_empty());
+        }
+    }
 }
 
 #[test]

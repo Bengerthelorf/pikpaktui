@@ -580,6 +580,18 @@ pub fn pikpak_hash(path: &Path) -> Result<String> {
 }
 
 fn pikpak_hash_controlled(path: &Path, control: Option<&UploadControl>) -> Result<String> {
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    hash_with_progress(path, |done, size| {
+        check_upload(control)?;
+        report_upload(control, &name, "Hashing", done, size);
+        Ok(())
+    })
+}
+
+pub(super) fn hash_with_progress(
+    path: &Path,
+    mut progress: impl FnMut(u64, u64) -> Result<()>,
+) -> Result<String> {
     use sha1::Digest;
     let size = fs::metadata(path)
         .with_context(|| format!("cannot stat '{}'", path.display()))?
@@ -589,16 +601,14 @@ fn pikpak_hash_controlled(path: &Path, control: Option<&UploadControl>) -> Resul
     let mut final_hasher = Sha1::new();
     let mut buf = vec![0; gcid_block_size(size)];
     let mut remaining = size;
-    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    progress(0, size)?;
     while remaining > 0 {
-        check_upload(control)?;
         let len = (remaining.min(buf.len() as u64)) as usize;
         file.read_exact(&mut buf[..len])?;
         final_hasher.update(Sha1::digest(&buf[..len]));
         remaining -= len as u64;
-        report_upload(control, &name, "Hashing", size - remaining, size);
+        progress(size - remaining, size)?;
     }
-    check_upload(control)?;
     Ok(format!("{:X}", final_hasher.finalize()))
 }
 

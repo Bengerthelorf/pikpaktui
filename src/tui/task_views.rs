@@ -68,6 +68,26 @@ impl App {
                     selected: *selected,
                 };
             }
+            KeyCode::Enter | KeyCode::Char('i') => {
+                if let Some(task) = tasks.get(*selected) {
+                    if code == KeyCode::Char('i') {
+                        self.offline_refresh_at = None;
+                        self.open_library(super::library::Source::Statuses(task.id.clone()));
+                        return;
+                    }
+                    if task.phase == "PHASE_TYPE_COMPLETE"
+                        && let Some(id) = task.file_id.clone().filter(|s| !s.is_empty())
+                    {
+                        self.offline_refresh_at = None;
+                        self.locate_library_file(id);
+                        return;
+                    }
+                }
+                self.input = InputMode::OfflineTasksView {
+                    tasks: std::mem::take(tasks),
+                    selected: *selected,
+                };
+            }
             KeyCode::Char('r') => {
                 self.offline_selected_id = tasks.get(*selected).map(|t| t.id.clone());
                 self.open_offline_tasks_view();
@@ -302,6 +322,7 @@ impl App {
                     self.trash_selected = *selected;
                     self.trash_expanded = expanded;
                     let info = crate::pikpak::FileInfoResponse {
+                        parent_id: None,
                         id: Some(entry.id),
                         name: entry.name,
                         kind: Some(match entry.kind {

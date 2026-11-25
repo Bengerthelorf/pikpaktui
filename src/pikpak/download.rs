@@ -228,6 +228,63 @@ pub(crate) fn prepare_partial_download(
     Ok((part, size))
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Verification {
+    #[default]
+    Unchecked,
+    Verified,
+    Unavailable,
+}
+
+impl Verification {
+    pub(crate) fn suffix(self) -> &'static str {
+        match self {
+            Self::Unchecked => "",
+            Self::Verified => " (GCID verified)",
+            Self::Unavailable => " (GCID unavailable)",
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("GCID mismatch: expected {expected}, got {actual}")]
+pub(crate) struct GcidMismatch {
+    pub expected: String,
+    pub actual: String,
+}
+
+type DownloadReporter<'a> = dyn Fn(&str, &Path, EntryKind, Result<(u64, Verification)>) + Sync + 'a;
+
+/// Validate the prepared partial before replacing an existing destination.
+/// A mismatching, owned partial must restart at byte zero on the next attempt.
+pub(crate) fn verify_partial_download(
+    part: &Path,
+    verify: bool,
+    expected: Option<&str>,
+    check: impl Fn() -> Result<()>,
+) -> Result<Verification> {
+    if !verify {
+        return Ok(Verification::Unchecked);
+    }
+    let Some(expected) = expected.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(Verification::Unavailable);
+    };
+    anyhow::ensure!(
+        expected.len() == 40 && expected.bytes().all(|b| b.is_ascii_hexdigit()),
+        "invalid GCID in file metadata"
+    );
+    let actual = super::upload::hash_with_progress(part, |_, _| check())?;
+    if !expected.eq_ignore_ascii_case(&actual) {
+        fs::OpenOptions::new().write(true).open(part)?.set_len(0)?;
+        return Err(GcidMismatch {
+            expected: expected.to_owned(),
+            actual,
+        }
+        .into());
+    }
+    Ok(Verification::Verified)
+}
+
 /// Move a complete partial into place and remove its resumable identity.
 pub(crate) fn finish_partial_download(dest: &Path, part: &Path) -> Result<()> {
     let identity_path = part_identity_path(dest);
@@ -469,7 +526,24 @@ impl PikPak {
         connections: usize,
         chunk_size: u64,
     ) -> Result<u64> {
-        self.download_to_inner(file_id, dest, connections, chunk_size, None)
+        self.download_to_inner(file_id, dest, connections, chunk_size, None, false)
+            .map(|(bytes, _)| bytes)
+    }
+
+    pub(crate) fn download_file(
+        &self,
+        file_id: &str,
+        dest: &Path,
+        verify: bool,
+    ) -> Result<(u64, Verification)> {
+        self.download_to_inner(
+            file_id,
+            dest,
+            DEFAULT_DOWNLOAD_CONNECTIONS,
+            DEFAULT_DOWNLOAD_CHUNK_SIZE,
+            None,
+            verify,
+        )
     }
 
     #[cfg(pikpak_android_jni)]
@@ -479,7 +553,8 @@ impl PikPak {
         dest: &Path,
         control: &DownloadControl,
     ) -> Result<u64> {
-        self.download_to_inner(file_id, dest, 1, 0, Some(control))
+        self.download_to_inner(file_id, dest, 1, 0, Some(control), false)
+            .map(|(bytes, _)| bytes)
     }
 
     fn download_to_inner(
@@ -489,7 +564,8 @@ impl PikPak {
         connections: usize,
         chunk_size: u64,
         control: Option<&DownloadControl>,
-    ) -> Result<u64> {
+        verify: bool,
+    ) -> Result<(u64, Verification)> {
         if let Some(control) = control {
             control.check()?;
         }
@@ -506,9 +582,15 @@ impl PikPak {
             control.total.store(total_size, Ordering::Relaxed);
             control.bytes.store(initial_part_size, Ordering::Relaxed);
         }
-        if total_size > 0 && initial_part_size == total_size {
+        let finish = |bytes| {
+            let status = verify_partial_download(&part, verify, info.hash.as_deref(), || {
+                control.map_or(Ok(()), DownloadControl::check)
+            })?;
             finish_partial_download(dest, &part)?;
-            return Ok(total_size);
+            Ok((bytes, status))
+        };
+        if total_size > 0 && initial_part_size == total_size {
+            return finish(total_size);
         }
 
         let mut renewed = false;
@@ -564,8 +646,7 @@ impl PikPak {
             }
         };
 
-        finish_partial_download(dest, &part)?;
-        Ok(written)
+        finish(written)
     }
 
     pub fn fetch_text_preview(
@@ -612,10 +693,26 @@ impl PikPak {
         local_dest: &Path,
         workers: usize,
     ) -> Result<(usize, usize)> {
-        let dir = local_dest.join(sanitize_filename(folder_name));
-        std::fs::create_dir_all(&dir)
+        self.download_directory(
+            folder_id,
+            &local_dest.join(sanitize_filename(folder_name)),
+            workers,
+            false,
+            &|_, _, _, _| {},
+        )
+    }
+
+    pub(crate) fn download_directory(
+        &self,
+        folder_id: &str,
+        dir: &Path,
+        workers: usize,
+        verify: bool,
+        report: &DownloadReporter<'_>,
+    ) -> Result<(usize, usize)> {
+        std::fs::create_dir_all(dir)
             .with_context(|| format!("cannot create dir '{}'", dir.display()))?;
-        self.download_dir_inner(folder_id, &dir, workers)
+        self.download_dir_inner(folder_id, dir, workers, verify, report)
     }
 
     fn download_dir_inner(
@@ -623,6 +720,8 @@ impl PikPak {
         folder_id: &str,
         local_dir: &Path,
         workers: usize,
+        verify: bool,
+        report: &DownloadReporter<'_>,
     ) -> Result<(usize, usize)> {
         use std::sync::{
             Arc, Mutex,
@@ -639,7 +738,12 @@ impl PikPak {
         let entries = match self.ls(folder_id) {
             Ok(e) => e,
             Err(e) => {
-                eprintln!("  [error] listing '{}': {}", folder_id, e);
+                report(
+                    folder_id,
+                    local_dir,
+                    EntryKind::Folder,
+                    Err(e.context("list folder")),
+                );
                 return Ok((0, 1));
             }
         };
@@ -666,9 +770,21 @@ impl PikPak {
                 &mut taken,
                 &sanitize_filename(&folder.name),
             ));
-            if let Err(e) = std::fs::create_dir_all(&dest) {
-                eprintln!("  [error] mkdir '{}': {}", folder.name, e);
+            let result = match fs::create_dir(&dest) {
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => fs::symlink_metadata(&dest)
+                    .and_then(|meta| {
+                        if meta.is_dir() {
+                            Ok(())
+                        } else {
+                            Err(io::Error::other("destination is not a directory"))
+                        }
+                    }),
+                other => other,
+            };
+            if let Err(e) = result {
+                report(&folder.id, &dest, EntryKind::Folder, Err(e.into()));
                 failed_count += 1;
+                continue;
             }
             folder_dests.push((folder, dest));
         }
@@ -698,21 +814,20 @@ impl PikPak {
                         // the whole body and serialize every worker.
                         let msg = rx.lock().unwrap_or_else(|e| e.into_inner()).recv();
                         let Ok((entry, dest)) = msg else { break };
-                        println!("  {}", dest.display());
-                        match self.download_to_with_connections_and_chunk_size(
+                        let result = self.download_to_inner(
                             &entry.id,
                             &dest,
                             connections_per_file,
                             DEFAULT_DOWNLOAD_CHUNK_SIZE,
-                        ) {
-                            Ok(_) => {
-                                ok.fetch_add(1, Ordering::Relaxed);
-                            }
-                            Err(e) => {
-                                eprintln!("  [error] '{}': {}", entry.name, e);
-                                failed.fetch_add(1, Ordering::Relaxed);
-                            }
+                            None,
+                            verify,
+                        );
+                        if result.is_ok() {
+                            ok.fetch_add(1, Ordering::Relaxed);
+                        } else {
+                            failed.fetch_add(1, Ordering::Relaxed);
                         }
+                        report(&entry.id, &dest, EntryKind::File, result);
                     }
                 });
             }
@@ -722,13 +837,13 @@ impl PikPak {
         let mut total_failed = failed.load(Ordering::Relaxed) + failed_count;
 
         for (folder, sub_dir) in folder_dests {
-            match self.download_dir_inner(&folder.id, &sub_dir, workers) {
+            match self.download_dir_inner(&folder.id, &sub_dir, workers, verify, report) {
                 Ok((sub_ok, sub_fail)) => {
                     total_ok += sub_ok;
                     total_failed += sub_fail;
                 }
                 Err(e) => {
-                    eprintln!("  [error] {}: {}", folder.name, e);
+                    report(&folder.id, &sub_dir, EntryKind::Folder, Err(e));
                     total_failed += 1;
                 }
             }
@@ -752,6 +867,37 @@ mod tests {
             std::env::temp_dir().join(format!("pikpaktui-{label}-{}-{unique}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn download_verification_distinguishes_missing_hash_and_resets_mismatch_before_promotion() {
+        let dir = temp_dir("download-verify");
+        let dest = dir.join("file");
+        fs::write(&dest, b"original").unwrap();
+        let (part, _) = prepare_partial_download(&dest, "id", 5).unwrap();
+        fs::write(&part, b"hello").unwrap();
+        let hash = super::super::pikpak_hash(&part).unwrap().to_lowercase();
+        assert_eq!(
+            verify_partial_download(&part, true, None, || Ok(())).unwrap(),
+            Verification::Unavailable
+        );
+        assert_eq!(
+            verify_partial_download(&part, true, Some(&hash), || Ok(())).unwrap(),
+            Verification::Verified
+        );
+        assert_eq!(
+            verify_partial_download(&part, false, Some(&"0".repeat(40)), || Ok(())).unwrap(),
+            Verification::Unchecked
+        );
+        assert!(
+            verify_partial_download(&part, true, Some(&"0".repeat(40)), || Ok(()))
+                .unwrap_err()
+                .to_string()
+                .contains("GCID mismatch")
+        );
+        assert_eq!(fs::read(&dest).unwrap(), b"original");
+        assert_eq!(prepare_partial_download(&dest, "id", 5).unwrap().1, 0);
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

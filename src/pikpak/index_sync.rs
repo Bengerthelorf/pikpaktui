@@ -24,6 +24,8 @@ const RECONCILE_SECONDS: i64 = 72 * 60 * 60;
 
 #[derive(Deserialize)]
 struct IndexRow {
+    #[serde(default)]
+    name: String,
     id: String,
     parent_id: Option<String>,
     kind: Option<String>,
@@ -66,6 +68,7 @@ impl IndexRow {
         );
         Ok(IndexChange::Upsert {
             id: self.id,
+            name: self.name,
             parent_id,
             kind,
             size: self.size.unwrap_or(0),
@@ -170,6 +173,39 @@ impl Drop for Leader<'_> {
 }
 
 impl PikPak {
+    pub fn search_drive(
+        &self,
+        query: &super::SearchQuery,
+        cancelled: &AtomicBool,
+    ) -> Result<Vec<super::SearchHit>> {
+        let account = self.index_account()?;
+        self.sync_folder_index(cancelled, false)?;
+        self.search_account_snapshot(query, &account)
+    }
+
+    pub fn cached_search(&self, query: &super::SearchQuery) -> Result<Vec<super::SearchHit>> {
+        self.search_account_snapshot(query, &self.index_account()?)
+    }
+
+    fn search_account_snapshot(
+        &self,
+        query: &super::SearchQuery,
+        account: &str,
+    ) -> Result<Vec<super::SearchHit>> {
+        let path = self.index_path(account)?;
+        ensure!(
+            path.try_exists()?,
+            "no cached filename index; run search online first"
+        );
+        let store = IndexStore::open_readonly(&path)?;
+        let hits = store.search(query)?;
+        ensure!(
+            self.index_account()? == account,
+            FolderStatsError::Cancelled
+        );
+        Ok(hits)
+    }
+
     fn index_account(&self) -> Result<String> {
         let account = self
             .load_session()?
