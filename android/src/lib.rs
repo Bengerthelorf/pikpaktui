@@ -108,6 +108,9 @@ fn error_payload(error: anyhow::Error) -> Value {
     ) {
         return json!({"error": "Folder scan cancelled", "code": "cancelled"});
     }
+    if error.downcast_ref::<pikpak::UnsupportedIndex>().is_some() {
+        return json!({"error": "This account or drive listing does not support the persistent index", "code": "index_unavailable"});
+    }
     let progress = pikpak::mutation_progress(&error);
     if let Some(challenge) = error.downcast_ref::<pikpak::LoginChallenge>() {
         return json!({"error": "PikPak requires verification", "code": "challenge", "challenge": challenge.0});
@@ -185,7 +188,7 @@ fn dispatch(args: &Value) -> Result<Value> {
                 "upstream": env!("PIKPAKTUI_REVISION"),
                 "version": env!("PIKPAKTUI_VERSION"),
                 "source": env!("PIKPAKTUI_SOURCE"),
-                "capabilities": ["folder_index"],
+                "capabilities": ["folder_index", "drive_search_cached"],
             }));
         }
         "folder_stats_begin" => {
@@ -200,6 +203,20 @@ fn dispatch(args: &Value) -> Result<Value> {
         "folder_stats_cancel" => {
             let key = required(args, "scan")?;
             SCANS.lock().unwrap_or_else(|e| e.into_inner()).cancel(key);
+            return Ok(Value::Null);
+        }
+        "drive_search_cached" => {
+            let client = interactive::read(&CLIENT)?.clone().ok_or(SignInRequired)?;
+            let query = serde_json::from_value::<pikpak::MobileSearchQuery>(args.clone())
+                .context("invalid cached search query")?;
+            let page = client.mobile_search_cached(&query)?;
+            check_active_client(&client)?;
+            return encode(page);
+        }
+        "drive_search_clear" => {
+            let client = interactive::read(&CLIENT)?.clone().ok_or(SignInRequired)?;
+            client.clear_mobile_search_cache()?;
+            check_active_client(&client)?;
             return Ok(Value::Null);
         }
         "folder_stats_cached" => {
@@ -227,8 +244,19 @@ fn dispatch(args: &Value) -> Result<Value> {
                 &client,
                 &scan,
                 args["force_full"].as_bool().unwrap_or(false),
-            )?;
-            check_stats_client(&client)?;
+            )
+            .map_err(|error| {
+                // API v1 clients released before indexed search use "request" to
+                // trigger scoped folder reads when a watermark is unavailable.
+                if error.is::<pikpak::UnsupportedIndex>()
+                    && args["report_unavailable"].as_bool() != Some(true)
+                {
+                    anyhow!(error.to_string())
+                } else {
+                    error
+                }
+            })?;
+            check_active_client(&client)?;
             return Ok(Value::Null);
         }
         "folder_stats" => {
@@ -246,7 +274,7 @@ fn dispatch(args: &Value) -> Result<Value> {
             };
             let client = interactive::read(&CLIENT)?.clone().ok_or(SignInRequired)?;
             let stats = FolderScans::stats(&SCANS, &client, id, scan.as_deref())?;
-            check_stats_client(&client)?;
+            check_active_client(&client)?;
             return Ok(stats_reply(&stats));
         }
         "transfer_begin" | "transfer_stop" | "transfer_progress" | "transfer_end" => {
@@ -306,7 +334,7 @@ fn dispatch(args: &Value) -> Result<Value> {
 
 // A login may already have replaced the saved session while holding the
 // writer lock, just before it publishes the new client and cancels old scans.
-fn check_stats_client(client: &Arc<PikPak>) -> Result<()> {
+fn check_active_client(client: &Arc<PikPak>) -> Result<()> {
     let guard = interactive::read(&CLIENT)?;
     ensure!(
         guard

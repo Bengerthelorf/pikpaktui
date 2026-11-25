@@ -57,7 +57,7 @@ def smoke(library, work):
     gcid = hashlib.sha1(hashlib.sha1(upload.read_bytes()).digest()).hexdigest().upper()
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     version = tomllib.loads((ROOT / "Cargo.toml").read_text())["package"]["version"]
-    metadata = dict(api=1, upstream=head, version=version, capabilities=["folder_index"],
+    metadata = dict(api=1, upstream=head, version=version, capabilities=["folder_index", "drive_search_cached"],
                     source="github-actions" if "GITHUB_SHA" in os.environ else "local-worktree")
 
     # Each pair specifies a request and the v1 response fields it must preserve.
@@ -65,6 +65,7 @@ def smoke(library, work):
         ("{", {"code": "request"}),
         (dict(op="core_info"), {"value": metadata}),
         (dict(op="files"), {"code": "auth"}),
+        (dict(op="drive_search_cached", query="x"), {"code": "auth"}),
         (dict(op="init", path=str(work / "missing.json")), {"value": False}),
         (dict(op="init", path=str(session)), {"value": True}),
         (dict(op="hash", path=str(upload)), {"value": gcid}),

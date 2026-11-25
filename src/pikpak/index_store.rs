@@ -12,7 +12,7 @@ use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use super::drive_stats::RootListing;
 use super::{EntryKind, FolderStats, FolderStatsError};
 
-const VERSION: i64 = 2;
+const VERSION: i64 = 3;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct Checkpoint {
@@ -21,9 +21,17 @@ pub(super) struct Checkpoint {
     pub checked_at: i64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(super) struct Presentation {
+    pub created_time: Option<String>,
+    pub starred: bool,
+    pub thumbnail_link: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum IndexChange {
     Upsert {
+        presentation: Presentation,
         id: String,
         parent_id: String,
         name: String,
@@ -54,11 +62,12 @@ const SCHEMA: &str = "
         parent TEXT, folder INTEGER NOT NULL,
         name TEXT NOT NULL DEFAULT '', size TEXT NOT NULL, modified TEXT NOT NULL,
         total TEXT NOT NULL, children INTEGER NOT NULL DEFAULT 0,
+        created TEXT, starred INTEGER NOT NULL DEFAULT 0, thumbnail TEXT,
         latest TEXT, seconds INTEGER, nanos INTEGER
     ) WITHOUT ROWID;
     CREATE INDEX by_parent_time ON items(parent, seconds DESC, nanos DESC, latest DESC);
     CREATE INDEX by_parent_kind_time ON items(parent, folder, seconds DESC, nanos DESC, latest DESC);
-    PRAGMA user_version=2;
+    PRAGMA user_version=3;
 ";
 
 // Use the account's own volume for scratch rows. In particular, an Android app
@@ -67,7 +76,7 @@ const SCHEMA: &str = "
 const SCRATCH: &str = "
     CREATE TABLE IF NOT EXISTS staged(
         id TEXT PRIMARY KEY, parent TEXT, folder INTEGER, size TEXT, modified TEXT,
-        seconds INTEGER, nanos INTEGER, name TEXT
+        seconds INTEGER, nanos INTEGER, name TEXT, created TEXT, starred INTEGER, thumbnail TEXT
     ) WITHOUT ROWID;
     CREATE TABLE IF NOT EXISTS work(
         id TEXT PRIMARY KEY, old_parent TEXT, old_total TEXT,
@@ -104,6 +113,20 @@ fn has_schema(db: &Connection) -> Result<bool> {
         "unsupported drive index schema {version}"
     );
     Ok(version != 0)
+}
+
+fn presentation_ready(db: &Connection) -> Result<bool> {
+    let version: i64 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
+    if version != VERSION {
+        return Ok(false);
+    }
+    // The synthetic root has a non-null creation field only after a complete
+    // metadata baseline. Old readers can still use their committed filenames.
+    Ok(db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM items WHERE id='' AND created IS NOT NULL)",
+        [],
+        |r| r.get(0),
+    )?)
 }
 
 fn checkpoint(db: &Connection) -> Result<Option<Checkpoint>> {
@@ -166,13 +189,25 @@ impl IndexStore {
         let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
         if !has_schema(&tx)? {
             tx.execute_batch(SCHEMA)?;
-        } else if tx.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))? == 1 {
-            tx.execute_batch(
-                "ALTER TABLE items ADD COLUMN name TEXT NOT NULL DEFAULT '';
-                DROP TABLE IF EXISTS staged;
-                UPDATE checkpoint SET full_at=0;
-                PRAGMA user_version=2;",
-            )?;
+        } else {
+            let version: i64 = tx.pragma_query_value(None, "user_version", |r| r.get(0))?;
+            if version == 1 {
+                tx.execute_batch(
+                    "ALTER TABLE items ADD COLUMN name TEXT NOT NULL DEFAULT '';
+                    UPDATE checkpoint SET full_at=0;",
+                )?;
+            }
+            if version < 3 {
+                // Keep version 2 filenames and statistics readable until the next
+                // complete sync can backfill thumbnails and creation timestamps.
+                tx.execute_batch(
+                    "ALTER TABLE items ADD COLUMN created TEXT;
+                    ALTER TABLE items ADD COLUMN starred INTEGER NOT NULL DEFAULT 0;
+                    ALTER TABLE items ADD COLUMN thumbnail TEXT;
+                    DROP TABLE IF EXISTS staged;
+                    PRAGMA user_version=3;",
+                )?;
+            }
         }
         tx.commit()?;
         Ok(Self(db))
@@ -180,9 +215,15 @@ impl IndexStore {
 
     pub(super) fn open_readonly(path: &Path) -> Result<Self> {
         let db = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        #[cfg(target_os = "android")]
+        db.pragma_update(None, "temp_store", "MEMORY")?;
         db.busy_timeout(Duration::from_secs(5))?;
         has_schema(&db)?;
         Ok(Self(db))
+    }
+
+    pub(super) fn presentation_ready(&self) -> Result<bool> {
+        presentation_ready(&self.0)
     }
 
     pub(super) fn checkpoint(&self) -> Result<Option<Checkpoint>> {
@@ -191,6 +232,49 @@ impl IndexStore {
         } else {
             Ok(None)
         }
+    }
+
+    #[cfg(pikpak_android_jni)]
+    pub(super) fn mobile_search(
+        &self,
+        query: &super::MobileSearchQuery,
+    ) -> Result<Option<super::MobileSearchPage>> {
+        let tx = self.0.unchecked_transaction()?;
+        if !presentation_ready(&tx)? {
+            return Ok(None);
+        }
+        let Some(cp) = checkpoint(&tx)?.filter(|c| c.full_at > 0) else {
+            return Ok(None);
+        };
+        Ok(Some(super::mobile_search::page(&tx, query, cp.checked_at)?))
+    }
+
+    #[cfg(pikpak_android_jni)]
+    pub(super) fn clear_search<G>(path: &Path, guard: impl FnOnce() -> Result<G>) -> Result<()> {
+        let mut db = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+        db.busy_timeout(Duration::from_secs(60))?;
+        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if !has_schema(&tx)? {
+            return Ok(());
+        }
+        let version: i64 = tx.pragma_query_value(None, "user_version", |r| r.get(0))?;
+        match version {
+            1 => return Ok(()), // Only statistics were stored.
+            2 => {
+                tx.execute("UPDATE items SET name=''", [])?;
+            }
+            3 => {
+                tx.execute(
+                    "UPDATE items SET name='', created=NULL, starred=0, thumbnail=NULL",
+                    [],
+                )?;
+            }
+            _ => unreachable!("has_schema checks supported versions"),
+        }
+        tx.execute("UPDATE checkpoint SET full_at=0", [])?;
+        let _account = guard()?;
+        tx.commit()?;
+        Ok(())
     }
 
     pub(super) fn get(&self, id: &str) -> Result<Option<FolderStats>> {
@@ -221,7 +305,7 @@ impl IndexStore {
         ensure!(
             has_schema(&tx)?
                 && checkpoint(&tx)?.is_some_and(|c| c.full_at > 0)
-                && tx.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))? == VERSION,
+                && tx.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))? >= 2,
             "cached index needs filename backfill; run search online first"
         );
         let mut scope = query.scope_id.clone();
@@ -306,8 +390,8 @@ impl IndexStore {
         drop(check(false)?);
         if full {
             tx.execute_batch(
-                "DELETE FROM items; INSERT INTO items(id,parent,folder,size,modified,total)
-                              VALUES('',NULL,1,'0','','0');",
+                "DELETE FROM items; INSERT INTO items(id,parent,folder,size,modified,total,created)
+                              VALUES('',NULL,1,'0','','0','');",
             )?;
         }
         if !full {
@@ -337,7 +421,7 @@ impl IndexStore {
 }
 
 fn stage(db: &Connection, change: IndexChange) -> Result<()> {
-    let (id, parent, folder, size, modified, name) = match change {
+    let (id, parent, folder, size, modified, name, display) = match change {
         IndexChange::Upsert {
             id,
             parent_id,
@@ -345,6 +429,7 @@ fn stage(db: &Connection, change: IndexChange) -> Result<()> {
             kind,
             size,
             modified_time,
+            presentation,
         } => {
             ensure!(
                 parent_id != "*" && parent_id != id,
@@ -357,9 +442,10 @@ fn stage(db: &Connection, change: IndexChange) -> Result<()> {
                 Some(size.to_string()),
                 Some(modified_time),
                 Some(name),
+                presentation,
             )
         }
-        IndexChange::Remove { id } => (id, None, None, None, None, None),
+        IndexChange::Remove { id } => (id, None, None, None, None, None, Presentation::default()),
     };
     ensure!(!id.is_empty() && id != "*", NeedsFull("invalid item ID"));
     let stamp = modified
@@ -368,8 +454,8 @@ fn stage(db: &Connection, change: IndexChange) -> Result<()> {
     let affected = db
         .prepare_cached(
             "
-        INSERT INTO staged VALUES(?1,?2,?3,?4,?5,?6,?7,?8)
-        ON CONFLICT(id) DO UPDATE SET id=excluded.id WHERE
+        INSERT INTO staged VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)
+        ON CONFLICT(id) DO UPDATE SET created=excluded.created, starred=excluded.starred, thumbnail=excluded.thumbnail WHERE
         staged.parent IS excluded.parent AND staged.folder IS excluded.folder AND
         staged.name IS excluded.name AND staged.size IS excluded.size AND staged.modified IS excluded.modified
     ",
@@ -381,7 +467,7 @@ fn stage(db: &Connection, change: IndexChange) -> Result<()> {
             size,
             modified,
             stamp.map(|t| t.unix_timestamp()),
-            stamp.map(|t| t.nanosecond()), name
+            stamp.map(|t| t.nanosecond()), name, display.created_time.unwrap_or_default(), display.starred, display.thumbnail_link
         ])?;
     ensure!(
         affected == 1,
@@ -479,7 +565,9 @@ fn prepare_changes(db: &Connection, full: bool) -> Result<()> {
             SELECT 1 FROM items i WHERE i.id=staged.id AND
                 ((staged.folder IS NULL AND i.parent IS NULL)
                  OR (i.parent=staged.parent AND i.folder=staged.folder
-                     AND i.name=staged.name AND i.size=staged.size AND i.modified=staged.modified))
+                     AND i.name=staged.name AND i.size=staged.size AND i.modified=staged.modified
+                     AND i.created IS staged.created AND i.starred IS staged.starred
+                     AND i.thumbnail IS staged.thumbnail))
         ) OR (folder IS NULL AND NOT EXISTS(SELECT 1 FROM items i WHERE i.id=staged.id));
     ",
     )?;
@@ -490,14 +578,15 @@ fn prepare_changes(db: &Connection, full: bool) -> Result<()> {
 
         UPDATE items SET parent=NULL WHERE id IN (SELECT id FROM staged WHERE folder IS NULL);
 
-        INSERT INTO items(id,parent,folder,size,modified,total,latest,seconds,nanos,name)
+        INSERT INTO items(id,parent,folder,size,modified,total,latest,seconds,nanos,name,created,starred,thumbnail)
             SELECT id,parent,folder,size,modified,
                    CASE WHEN folder=0 THEN size ELSE '0' END,
                    CASE WHEN folder=0 AND seconds IS NOT NULL THEN modified END,
                    CASE WHEN folder=0 THEN seconds END,
-                   CASE WHEN folder=0 THEN nanos END, name
+                   CASE WHEN folder=0 THEN nanos END, name, created, starred, thumbnail
             FROM staged WHERE folder IS NOT NULL
         ON CONFLICT(id) DO UPDATE SET
+            created=excluded.created, starred=excluded.starred, thumbnail=excluded.thumbnail,
             name=excluded.name, parent=excluded.parent, size=excluded.size, modified=excluded.modified,
             total=CASE WHEN items.folder=1 THEN items.total ELSE excluded.total END,
             latest=CASE WHEN items.folder=1 THEN items.latest ELSE excluded.latest END,
@@ -666,6 +755,7 @@ mod tests {
 
     fn folder(id: &str, parent: &str) -> IndexChange {
         IndexChange::Upsert {
+            presentation: Presentation::default(),
             id: id.into(),
             parent_id: parent.into(),
             name: id.into(),
@@ -677,6 +767,7 @@ mod tests {
 
     fn file(id: &str, parent: &str, size: u64, time: &str) -> IndexChange {
         IndexChange::Upsert {
+            presentation: Presentation::default(),
             id: id.into(),
             parent_id: parent.into(),
             name: id.into(),
@@ -723,6 +814,50 @@ mod tests {
         }
     }
 
+    #[cfg(pikpak_android_jni)]
+    #[test]
+    fn version_two_search_stays_readable_and_mobile_clear_retains_statistics() -> Result<()> {
+        use serde_json::json;
+        let dir = temp_test_dir("presentation-migration");
+        let path = dir.join("index.sqlite");
+        let db = Connection::open(&path)?;
+        db.execute_batch(
+            &SCHEMA
+                .replace(
+                    "created TEXT, starred INTEGER NOT NULL DEFAULT 0, thumbnail TEXT,",
+                    "",
+                )
+                .replace("user_version=3", "user_version=2"),
+        )?;
+        db.execute_batch(
+            "INSERT INTO items(id,parent,folder,name,size,modified,total) VALUES
+            ('',NULL,1,'','0','','9'),('id','',0,'Alpha','9','','9');
+            INSERT INTO checkpoint VALUES(1,'old-cursor',100,100);",
+        )?;
+        drop(db);
+        let desktop = super::super::SearchQuery {
+            name: "alpha".into(),
+            limit: 1,
+            ..Default::default()
+        };
+        let query = serde_json::from_value(json!({"query":"alpha"}))?;
+        let mut store = IndexStore::open(&path)?;
+        assert_eq!(store.checkpoint()?.unwrap().full_at, 100);
+        assert_eq!(store.search(&desktop)?.len(), 1);
+        assert!(store.mobile_search(&query)?.is_none());
+        sync(&mut store, true, vec![file("alpha", "", 9, "")], 101)?;
+        let ready = store.mobile_search(&query)?.unwrap();
+        assert_eq!(ready.count, 1);
+        assert_eq!(ready.checked_at, 101);
+        IndexStore::clear_search(&path, || Ok(()))?;
+        assert!(store.mobile_search(&query)?.is_none());
+        assert!(store.search(&desktop).is_err());
+        assert_eq!(store.get("")?.unwrap().total_size_bytes, 9);
+        drop(store);
+        std::fs::remove_dir_all(dir)?;
+        Ok(())
+    }
+
     #[test]
     fn v1_stats_remain_readable_and_migration_requests_name_backfill() -> Result<()> {
         let dir = temp_test_dir("index-name-migration");
@@ -731,7 +866,11 @@ mod tests {
         db.execute_batch(
             &SCHEMA
                 .replace("name TEXT NOT NULL DEFAULT '', ", "")
-                .replace("user_version=2", "user_version=1"),
+                .replace(
+                    "created TEXT, starred INTEGER NOT NULL DEFAULT 0, thumbnail TEXT,",
+                    "",
+                )
+                .replace("user_version=3", "user_version=1"),
         )?;
         db.execute_batch(
             "INSERT INTO items(id,parent,folder,size,modified,total) VALUES('',NULL,1,'0','','9');

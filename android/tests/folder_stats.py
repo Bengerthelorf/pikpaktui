@@ -198,6 +198,81 @@ class FolderScans(unittest.TestCase):
         self.assertIsNone(self.value("folder_index_sync", scan="refresh", force_full=True))
         self.size("A", 10, "refresh")
 
+    def test_filename_search_shares_the_checkpoint_and_renames_by_delta(self):
+        path = self.account("search-shared", "search-owner")
+        args = dict(query="三上", sort="Name", descending=False, folder_stats=False, limit=300)
+        self.assertIsNone(self.value("drive_search_cached", **args))
+        self.begin()
+        before = dict(entry("video", "A", 12), name="三上-old.mp4")
+        self.expect("GET", FILES, "*", {"files": [entry("A"), before],
+                    "sync_time": "2026-11-25T10:00:00Z"},
+                    filters={"phase": {"eq": "PHASE_TYPE_COMPLETE"}, "trashed": {"eq": False}})
+        self.value("folder_index_sync", scan="scan")
+        old = self.value("drive_search_cached", **args)
+        self.assertGreater(old["checked_at"], 0)
+        self.assertEqual([f["name"] for f in old["files"]], ["三上-old.mp4"])
+        self.assertEqual(old["count"], 1)
+        self.assertFalse(old["has_next"])
+        self.size("A", 12)
+
+        def delta_filter(second):
+            return {"phase": {"eq": "PHASE_TYPE_COMPLETE"}, "modified_time": {"gt": second}}
+
+        self.begin("rename")
+        self.expect("GET", FILES, "*", {"files": [dict(before, name="renamed.mp4")],
+                    "sync_time": "2026-11-25T10:01:00Z"}, filters=delta_filter("2026-11-25T09:59:59Z"))
+        self.value("folder_index_sync", scan="rename")
+        empty = self.value("drive_search_cached", **args)
+        self.assertEqual((empty["files"], empty["count"], empty["has_next"]), ([], 0, False))
+        renamed = dict(args, query="RENAMED")
+        found = self.value("drive_search_cached", **renamed)
+        self.assertEqual([(f["id"], f["parent_id"], f["size"]) for f in found["files"]],
+                         [("video", "A", "12")])
+
+        self.begin("offline")
+        self.expect("GET", FILES, "*", {"error": "service_unavailable"}, status=503,
+                    filters=delta_filter("2026-11-25T10:00:59Z"))
+        self.assertNotEqual(self.request("folder_index_sync", scan="offline", report_unavailable=True)["code"], "index_unavailable")
+        self.assertEqual(self.value("drive_search_cached", **renamed), found)
+        self.value("logout", path=str(path))
+        self.account("search-shared", "other-search-owner")
+        self.assertIsNone(self.value("drive_search_cached", **renamed))
+        self.value("logout", path=str(path))
+        self.account("search-shared", "search-owner")
+        self.assertEqual(self.value("drive_search_cached", **renamed), found)
+        self.value("drive_search_clear")
+        self.assertIsNone(self.value("drive_search_cached", **renamed))
+        self.assertEqual(self.value("folder_stats_cached", ids=["A"])["A"]["bytes"], "12")
+
+    def test_search_sorts_all_matches_before_paging(self):
+        self.account("search-many", "sort-owner")
+        self.begin()
+        # The newest page is last in the baseline. Several rows share each timestamp.
+        rows = [dict(entry(f"match-{i:03}", size=i + 1),
+                     modified_time=f"2026-11-25T10:{i // 60:02}:{i % 60 // 3 * 3:02}Z")
+                for i in range(315)]
+        self.expect("GET", FILES, "*", {"files": rows, "sync_time": "2026-11-26T00:00:00Z"})
+        self.value("folder_index_sync", scan="scan")
+        args = dict(query="match", sort="Recent", descending=True, folder_stats=False, limit=300)
+        page = self.value("drive_search_cached", **args)
+        self.assertEqual((page["count"], len(page["files"]), page["has_next"]), (315, 300, True))
+        rest = self.value("drive_search_cached", **args, after=page["files"][-1])
+        self.assertEqual((rest["count"], len(rest["files"]), rest["has_next"]), (315, 15, False))
+        combined = page["files"] + rest["files"]
+        self.assertEqual({f["id"] for f in combined}, {r["id"] for r in rows})
+        self.assertEqual([f["modified_time"] for f in combined],
+                         sorted([r["modified_time"] for r in rows], reverse=True))
+
+    def test_index_unavailable_is_distinct_from_transient_errors(self):
+        self.begin()
+        self.assertEqual(self.request("folder_index_sync", scan="scan")["code"], "request")
+        self.assertEqual(self.request("folder_index_sync", scan="scan", report_unavailable=True)["code"],
+                         "index_unavailable")
+        self.account("no-watermark", "watermark-owner")
+        self.begin("baseline")
+        self.listing("*", DRIVE)
+        self.assertEqual(self.request("folder_index_sync", scan="baseline", report_unavailable=True)["code"], "index_unavailable")
+
     def test_only_named_404_filter_failure_rebuilds_the_checkpoint(self):
         self.account("cursor-recovery", "cursor-recovery-owner")
         self.begin()

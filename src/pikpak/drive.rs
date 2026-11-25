@@ -47,8 +47,8 @@ pub(super) struct DriveFile {
     created_time: Option<String>,
     #[serde(default, deserialize_with = "de_modified_time")]
     modified_time: Option<String>,
-    #[serde(default)]
-    tags: Vec<DriveFileTag>,
+    #[serde(default, rename = "tags", deserialize_with = "de_starred")]
+    starred: bool,
     #[serde(default)]
     thumbnail_link: Option<String>,
     #[serde(default)]
@@ -67,19 +67,17 @@ pub(super) fn de_modified_time<'de, D: serde::Deserializer<'de>>(
     })
 }
 
-#[derive(Deserialize)]
-struct DriveFileTag {
-    #[serde(default)]
-    name: String,
+pub(super) fn de_starred<'de, D: serde::Deserializer<'de>>(de: D) -> Result<bool, D::Error> {
+    // Tags affect presentation only. Some listing responses supply null or
+    // omit individual tag names; these must not discard the directory page.
+    let value = serde_json::Value::deserialize(de)?;
+    Ok(value
+        .as_array()
+        .is_some_and(|tags| tags.iter().any(|tag| tag["name"].as_str() == Some("STAR"))))
 }
 
 impl DriveFile {
-    fn is_starred(&self) -> bool {
-        self.tags.iter().any(|t| t.name == "STAR")
-    }
-
     pub(super) fn into_entry(self) -> Entry {
-        let starred = self.is_starred();
         Entry {
             kind: if self.kind.contains("folder") {
                 EntryKind::Folder
@@ -91,7 +89,7 @@ impl DriveFile {
             size: self.size.unwrap_or(0),
             created_time: self.created_time.unwrap_or_default(),
             modified_time: self.modified_time.unwrap_or_default(),
-            starred,
+            starred: self.starred,
             thumbnail_link: self.thumbnail_link,
             phase: self.phase,
             audit: self.audit,
@@ -99,7 +97,7 @@ impl DriveFile {
     }
 
     pub(super) fn into_folder_entry(self) -> Entry {
-        let starred = self.is_starred();
+        let starred = self.starred;
         Entry {
             kind: EntryKind::Folder,
             id: self.id,

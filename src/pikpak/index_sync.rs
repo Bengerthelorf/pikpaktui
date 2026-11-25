@@ -15,7 +15,7 @@ use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use super::drive::{de_modified_time, de_opt_u64};
 use super::drive_stats::RootListing;
 use super::folder_stats::check_cancelled;
-use super::index_store::{Checkpoint, IndexChange, IndexStore, NeedsFull};
+use super::index_store::{Checkpoint, IndexChange, IndexStore, NeedsFull, Presentation};
 use super::{EntryKind, FolderStats, FolderStatsError, PikPak, now_unix};
 
 // Permanently removed items can disappear without a delta tombstone. The next
@@ -24,6 +24,16 @@ const RECONCILE_SECONDS: i64 = 72 * 60 * 60;
 
 #[derive(Deserialize)]
 struct IndexRow {
+    #[serde(default, deserialize_with = "de_modified_time")]
+    created_time: Option<String>,
+    #[serde(
+        default,
+        rename = "tags",
+        deserialize_with = "super::drive::de_starred"
+    )]
+    starred: bool,
+    #[serde(default, deserialize_with = "de_modified_time")]
+    thumbnail_link: Option<String>,
     #[serde(default)]
     name: String,
     id: String,
@@ -67,6 +77,11 @@ impl IndexRow {
             "invalid parent in drive index listing"
         );
         Ok(IndexChange::Upsert {
+            presentation: Presentation {
+                created_time: self.created_time,
+                starred: self.starred,
+                thumbnail_link: self.thumbnail_link,
+            },
             id: self.id,
             name: self.name,
             parent_id,
@@ -173,6 +188,50 @@ impl Drop for Leader<'_> {
 }
 
 impl PikPak {
+    #[cfg(pikpak_android_jni)]
+    pub fn mobile_search_cached(
+        &self,
+        query: &super::MobileSearchQuery,
+    ) -> Result<Option<super::MobileSearchPage>> {
+        query.validate()?;
+        let generation = self.listing_generation();
+        let account = self.index_account()?;
+        let path = self.index_path(&account)?;
+        let results = if path.try_exists()? {
+            IndexStore::open_readonly(&path)?.mobile_search(query)?
+        } else {
+            None
+        };
+        ensure!(
+            generation.strong_count() > 0 && self.index_account()? == account,
+            FolderStatsError::Cancelled
+        );
+        Ok(results)
+    }
+
+    #[cfg(pikpak_android_jni)]
+    pub fn clear_mobile_search_cache(&self) -> Result<()> {
+        let account = self.index_account()?;
+        let path = self.index_path(&account)?;
+        self.clear_ls_cache();
+        if path.try_exists()? {
+            // Writers use the same order: database first, then the session lock.
+            IndexStore::clear_search(&path, || {
+                let lock = self.lock_session_file()?;
+                ensure!(
+                    self.index_account()? == account,
+                    FolderStatsError::Cancelled
+                );
+                Ok(lock)
+            })?;
+        }
+        ensure!(
+            self.index_account()? == account,
+            FolderStatsError::Cancelled
+        );
+        Ok(())
+    }
+
     pub fn search_drive(
         &self,
         query: &super::SearchQuery,
@@ -303,13 +362,13 @@ impl PikPak {
         force_full: bool,
         expected: Option<&RootListing>,
     ) -> Result<()> {
-        check_cancelled(cancelled)?;
-        let account = self.index_account()?;
-        let path = self.index_path(&account)?;
         let generation = {
             let cache = self.ls_cache.lock().unwrap_or_else(|e| e.into_inner());
             Arc::downgrade(&cache.generation)
         };
+        check_cancelled(cancelled)?;
+        let account = self.index_account()?;
+        let path = self.index_path(&account)?;
         loop {
             check_cancelled(cancelled)?;
             ensure!(generation.strong_count() > 0, FolderStatsError::Cancelled);
@@ -406,6 +465,7 @@ impl PikPak {
         let previous = store.checkpoint()?;
         let now = now_unix();
         let mut full = force_full
+            || (cfg!(pikpak_android_jni) && !store.presentation_ready()?)
             || previous.as_ref().is_none_or(|p| {
                 now < p.full_at || now.saturating_sub(p.full_at) >= RECONCILE_SECONDS
             });
@@ -576,6 +636,113 @@ mod tests {
             .query_pairs()
             .into_owned()
             .collect()
+    }
+
+    #[cfg(pikpak_android_jni)]
+    #[test]
+    fn display_only_deltas_update_rows_and_bad_display_fields_do_not_block_stats() {
+        let first = json!({"id":"f","name":"photo","parent_id":"","kind":"drive#file","size":"11",
+            "created_time":42,"thumbnail_link":{},"tags":null});
+        let mut second = first.clone();
+        second["created_time"] = json!("2026-11-01T00:00:00Z");
+        second["tags"] = json!([{"name":"STAR"}]);
+        second["thumbnail_link"] = json!("https://img.invalid/new");
+        let (base, _, server) = scripted_server(vec![
+            (200, page(json!([first]), "2026-11-01T00:00:01Z", "")),
+            (200, page(json!([second]), "2026-11-01T00:00:02Z", "")),
+        ]);
+        let dir = temp_test_dir("presentation-delta");
+        let client = test_client(base, dir.join("session.json"));
+        account(&client, "owner");
+        let query = serde_json::from_value(json!({"query":"PHOTO"})).unwrap();
+        let page = || client.mobile_search_cached(&query).unwrap().unwrap();
+        client.sync_folder_index(&false.into(), false).unwrap();
+        assert!(!page().files[0].starred);
+        assert_eq!(
+            client
+                .cached_folder_stats("")
+                .unwrap()
+                .unwrap()
+                .total_size_bytes,
+            11
+        );
+        client.sync_folder_index(&false.into(), false).unwrap();
+        let file = page().files.pop().unwrap();
+        assert!(file.starred);
+        assert_eq!(
+            file.thumbnail_link.as_deref(),
+            Some("https://img.invalid/new")
+        );
+        assert_eq!(file.created_time, "2026-11-01T00:00:00Z");
+        server.join().unwrap();
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(pikpak_android_jni)]
+    #[test]
+    fn clear_during_in_flight_delta_preserves_stats_and_prevents_repopulation() {
+        use crate::pikpak::{read_test_http_request, tests::write_response};
+        use std::{net::TcpListener, sync::mpsc, thread};
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let dir = temp_test_dir("clear-in-flight-search");
+        let client = Arc::new(test_client(
+            format!("http://{}", listener.local_addr().unwrap()),
+            dir.join("session.json"),
+        ));
+        account(&client, "owner");
+        let (started, waiting) = mpsc::channel();
+        let (release, resume) = mpsc::channel();
+        let server = thread::spawn(move || {
+            for bytes in [11, 22] {
+                let (mut stream, _) = listener.accept().unwrap();
+                read_test_http_request(&mut stream).unwrap();
+                if bytes == 22 {
+                    started.send(()).unwrap();
+                    resume.recv_timeout(Duration::from_secs(6)).unwrap();
+                }
+                let files = json!([{"id":"f","parent_id":"","name":"file","kind":"drive#file","size":bytes}]);
+                write_response(
+                    &mut stream,
+                    200,
+                    "OK",
+                    page(files, "2026-11-01T00:00:00Z", "").as_bytes(),
+                );
+            }
+        });
+        client.sync_folder_index(&false.into(), false).unwrap();
+        let generation = client.listing_generation();
+        let sync = {
+            let client = client.clone();
+            thread::spawn(move || client.sync_folder_index(&false.into(), false))
+        };
+        waiting.recv_timeout(Duration::from_secs(6)).unwrap();
+        let clear = {
+            let client = client.clone();
+            thread::spawn(move || client.clear_mobile_search_cache())
+        };
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while generation.strong_count() > 0 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "clear did not invalidate the running sync"
+            );
+            thread::yield_now();
+        }
+        release.send(()).unwrap();
+        assert!(sync.join().unwrap().unwrap_err().is::<FolderStatsError>());
+        clear.join().unwrap().unwrap();
+        let query = serde_json::from_value(json!({"query":"file"})).unwrap();
+        assert!(client.mobile_search_cached(&query).unwrap().is_none());
+        assert_eq!(
+            client
+                .cached_folder_stats("")
+                .unwrap()
+                .unwrap()
+                .total_size_bytes,
+            11
+        );
+        server.join().unwrap();
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

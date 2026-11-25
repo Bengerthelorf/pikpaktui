@@ -11,6 +11,10 @@ mod folder_stats;
 mod index_store;
 mod index_sync;
 pub(crate) mod interactive;
+#[cfg(pikpak_android_jni)]
+mod mobile_search;
+#[cfg(pikpak_android_jni)]
+pub(crate) use mobile_search::{MobileSearchPage, MobileSearchQuery};
 mod models;
 mod mutation;
 mod offline;
@@ -40,7 +44,6 @@ pub(crate) use download::{
 pub(crate) use drive_stats::RootListing;
 pub use file_info::{FileInfoResponse, PlayOption};
 pub use folder_stats::{FolderStats, FolderStatsError};
-#[cfg(not(pikpak_android_jni))]
 pub(crate) use index_sync::UnsupportedIndex;
 #[cfg(pikpak_android_jni)]
 pub(crate) use mobile_session::{
